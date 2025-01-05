@@ -7,6 +7,11 @@
     "check:fix": "tsc --noEmit --project tsconfig.json && npx @biomejs/biome check --write .",
     "check": "tsc --noEmit --project tsconfig.json && npx @biomejs/biome check ."
   },
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:Censkh/zodbase.git"
+  },
+  "homepage": "https://github.com/Censkh/zodbase",
   "exports": {
     ".": {
       "workerd": "./src/index.ts",
@@ -19,6 +24,7 @@
       "default": "./src/adaptors/*/index.ts"
     }
   },
+  "license": "MIT",
   "peerDependencies": {
     "zod": "^3.22.4"
   },
