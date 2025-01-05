@@ -1,7 +1,7 @@
 import type * as zod from "zod";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
 import type { Statement, ToSql } from "./Statement";
-//import {Table} from "src/zod-sql/index.ts";
+//import {Table} from "src/zodbase/index.ts";
 /*export class QueryBuilder<T> {
   where(field: keyof T): this {
     return this;

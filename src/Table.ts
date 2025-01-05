@@ -60,7 +60,7 @@ export const createTable = <
         const valid = metaItem.type.check(fieldSchema, metaItem.data);
         if (valid.success === false) {
           console.error(
-            `[zod-sql] Invalid meta '${metaItem.type.id}' for field '${key}': ${valid.message}`,
+            `[zodbase] Invalid meta '${metaItem.type.id}' for field '${key}': ${valid.message}`,
           );
           //return undefined;
         }

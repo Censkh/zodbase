@@ -54,7 +54,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
           if (backfillMeta) {
             const backfillValue = backfillMeta.data.value;
             if (!backfillValue) {
-              throw new Error("[zod-sql] Backfill value is required when adding a required field");
+              throw new Error("[zodbase] Backfill value is required when adding a required field");
             }
 
             await this.execute(
