@@ -210,10 +210,16 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     values: Partial<ValueOfTable<TTable>>,
     where: SelectCondition<ValueOfTable<TTable>>,
   ): Statement {
-    const statement = sql`UPDATE ${table}
-                 SET ${raw(Object.entries(values).map(([key, value]) => sql`${raw(key)} = ${value}`))}
+    return sql`UPDATE ${table}
+                 SET ${raw(
+                   Object.entries(values).reduce((acc, [key, value]) => {
+                     if (value !== undefined) {
+                       acc.push(sql`${raw(key)} = ${value}`);
+                     }
+                     return acc;
+                   }, [] as Statement[]),
+                 )}
                  WHERE ${buildConditionSql(this, where)}`;
-    return statement;
   }
 
   protected buildUpsertSql<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
