@@ -1,3 +1,5 @@
+export type Class<T> = new (...args: any[]) => T;
+
 export type FlattenObject<TValue> = CollapseEntries<CreateObjectEntries<TValue, TValue>>;
 
 type Entry = { key: string; value: unknown };

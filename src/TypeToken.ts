@@ -4,6 +4,6 @@ export type TypeToken<T> = {
 
 export type TypeOfToken<T> = T extends TypeToken<infer U> ? U : never;
 
-export const createTypeToken = <T>(): TypeToken<T> => {
+export const typeToken = <T>(): TypeToken<T> => {
   return {} as TypeToken<T>;
 };

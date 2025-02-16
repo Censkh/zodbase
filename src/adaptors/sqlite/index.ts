@@ -1,5 +1,7 @@
-import { getMetaItem } from "zod-meta";
+import type * as zod from "zod";
+import { type ZodMetaItem, getMetaItem } from "zod-meta";
 import {
+  type BackfillOptions,
   type Table,
   type TableColumnInfo,
   type TableDiff,
@@ -27,6 +29,15 @@ import type { Statement } from "../../Statement";
 const JSON_START = /[{\[]/;
 const JSON_END = /[\]}]/;
 
+type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
+
+const getRequiredBackfillMeta = (schema: zod.Schema<any>): BackfillMetaItem | undefined => {
+  if (isZodRequired(schema)) {
+    return getMetaItem(schema, backfill);
+  }
+  return undefined;
+};
+
 export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDriver> {
   async processDiff(table: Table, diff: TableDiff): Promise<void> {
     let hasModified = false;
@@ -42,15 +53,30 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
 
         const statement = sql`
             ALTER TABLE ${table.id}
-              ADD COLUMN ${fieldDiff.key} ${this.typeToSql(schema)}${
-                primaryKeyMeta ? " PRIMARY KEY" : ""
-              }`;
+              ADD COLUMN ${fieldDiff.key} ${this.typeToSql(schema)}${primaryKeyMeta ? " PRIMARY KEY" : ""}${isZodRequired(schema) ? " NOT NULL" : ""}`;
 
         await this.execute(statement);
 
-        // try to backfill
-        if (isZodRequired(schema)) {
-          const backfillMeta = getMetaItem(schema, backfill);
+        const backfillMeta = getRequiredBackfillMeta(schema);
+        if (backfillMeta) {
+          const backfillValue = backfillMeta.data.value;
+          if (!backfillValue) {
+            throw new Error("[zodbase] Backfill value is required when adding a required field");
+          }
+
+          await this.execute(
+            sql`UPDATE ${table.id}
+                 SET ${raw(fieldDiff.key)} = ${backfillValue} WHERE ${raw(fieldDiff.key)} IS NULL`,
+          );
+        }
+      } else if (fieldDiff.type === "removed") {
+        await this.execute(sql`ALTER TABLE ${table.id}
+            DROP COLUMN ${fieldDiff.key}`);
+      } else if (fieldDiff.type === "modified") {
+        hasModified = true;
+        const schema = field?.schema;
+        if (schema) {
+          const backfillMeta = getRequiredBackfillMeta(schema);
           if (backfillMeta) {
             const backfillValue = backfillMeta.data.value;
             if (!backfillValue) {
@@ -61,17 +87,8 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
               sql`UPDATE ${table.id}
                  SET ${raw(fieldDiff.key)} = ${backfillValue} WHERE ${raw(fieldDiff.key)} IS NULL`,
             );
-
-            await this.execute(
-              sql`ALTER TABLE ${table.id} ALTER COLUMN ${fieldDiff.key} SET NOT NULL`,
-            );
           }
         }
-      } else if (fieldDiff.type === "removed") {
-        await this.execute(sql`ALTER TABLE ${table.id}
-            DROP COLUMN ${fieldDiff.key}`);
-      } else if (fieldDiff.type === "modified") {
-        hasModified = true;
       }
     }
 
@@ -108,13 +125,9 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
 
   buildSelectSql(select: SelectQuery): Statement {
     return sql`SELECT ${raw(select.fields.map((field) => `${field.key}`))}
-            FROM ${select.table} ${
-              select.where ? sql` WHERE ${buildConditionSql(this, select.where)}` : raw("")
-            }${
+            FROM ${select.table} ${select.where ? sql` WHERE ${buildConditionSql(this, select.where)}` : raw("")}${
               select.orderBy.length > 0
-                ? sql` ORDER BY ${raw(
-                    select.orderBy.map((order) => `${order.field} ${order.direction}`),
-                  )}`
+                ? sql` ORDER BY ${raw(select.orderBy.map((order) => `${order.field} ${order.direction}`))}`
                 : raw("")
             }${raw(select.limit ? ` LIMIT ${select.limit}` : "")}`;
   }
@@ -188,9 +201,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     fields: SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
     where: SelectCondition<ValueOfTable<TTable>> | undefined,
   ): Promise<SqlResult<Record<TKey, number>, 1>> {
-    const statement = sql`SELECT ${raw(
-      fields.map((field) => raw(`COUNT(ALL ${field.key}) as ${field.key}`)),
-    )}
+    const statement = sql`SELECT ${raw(fields.map((field) => raw(`COUNT(ALL ${field.key}) as ${field.key}`)))}
                  FROM ${table} ${where ? sql`WHERE ${buildConditionSql(this, where)}` : ""}`;
     return this.execute(statement) as any;
   }
@@ -230,8 +241,6 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     return sql`INSERT INTO ${table.id} (${raw(Object.keys(values))})
                  VALUES ${Object.values(values)}
                  ON CONFLICT (${raw(field.key)})
-                 DO UPDATE SET ${raw(
-                   Object.entries(values).map(([key, value]) => sql`${raw(key)} = ${value}`),
-                 )}`;
+                 DO UPDATE SET ${raw(Object.entries(values).map(([key, value]) => sql`${raw(key)} = ${value}`))}`;
   }
 }

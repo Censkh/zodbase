@@ -1,5 +1,5 @@
 import * as util from "node:util";
-import * as zod from "zod";
+import type * as zod from "zod";
 import { findFieldMetaItems } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
 import { escapeSqlValue } from "./Escaping";
@@ -20,21 +20,20 @@ import type {
 } from "./QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL, type ToSql } from "./Statement";
 import type { Table } from "./Table";
+import { isZodRequired } from "./ZodUtils";
+
+export * from "./ZodUtils";
 
 export * from "./index.common";
 
+const IS_REACT_NATIVE = typeof navigator !== "undefined" && navigator.product === "ReactNative";
+
 // @ts-ignore
-if (typeof window !== "undefined") {
-  throw new Error("This package is not intended for browser usage");
+if (typeof window !== "undefined" && !IS_REACT_NATIVE) {
+  throw new Error("[zodbase] This package is not intended for browser usage");
 }
 
 export type { InputOfTable } from "./QueryBuilder";
-
-type Class<T> = new (...args: any[]) => T;
-
-export const isZodRequired = (type: zod.ZodType): boolean => {
-  return !isZodTypeExtends(type, zod.ZodOptional) && !isZodTypeExtends(type, zod.ZodNullable);
-};
 
 const valueToSql = (value: any): string => {
   if (value?.[TO_SQL_SYMBOL]) {
@@ -65,31 +64,6 @@ const valueToSql = (value: any): string => {
   }
 
   return escapeSqlValue(value?.toString());
-};
-
-export const isZodTypeExtends = (
-  type: zod.ZodType,
-  zodType: Class<zod.ZodType>,
-): zod.ZodType | false => {
-  if (type instanceof zodType) {
-    return type;
-  }
-  // @ts-ignore
-  if (type instanceof zod.ZodUnion) {
-    // @ts-ignore
-    for (const option of type._def.options) {
-      if (isZodTypeExtends(option, zodType)) {
-        return option;
-      }
-    }
-    return false;
-  }
-  // @ts-ignore
-  const rootType = type._def.innerType;
-  if (rootType) {
-    return isZodTypeExtends(rootType, zodType);
-  }
-  return false;
 };
 
 /*export const upsertSql = <T extends zod.ZodObject<any>>(schema: T, entity: zod.input<T>): string => {
