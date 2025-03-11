@@ -26,7 +26,7 @@ export * from "./ZodUtils";
 
 export * from "./index.common";
 
-const IS_REACT_NATIVE = typeof navigator !== "undefined" && navigator.product === "ReactNative";
+const IS_REACT_NATIVE = typeof navigator !== "undefined" && (navigator as any).product === "ReactNative";
 
 // @ts-ignore
 if (typeof window !== "undefined" && !IS_REACT_NATIVE) {
@@ -145,9 +145,7 @@ const getFieldBindingsByKeys = <TTable extends Table>(
   });
 };
 
-type CountBuilder<TTable extends Table, TResultValue> = Promise<
-  SqlDefiniteResult<TResultValue, 1>
-> & {
+type CountBuilder<TTable extends Table, TResultValue> = Promise<SqlDefiniteResult<TResultValue, 1>> & {
   where(condition: SelectCondition<ValueOfTable<TTable>>): CountBuilder<TTable, TResultValue>;
 };
 
@@ -251,10 +249,7 @@ export class Database {
     return toLazyPromise(() => this.options.adaptor.executeSelect(query), selectBuilder) as any;
   }
 
-  count<TTable extends Table, TKey extends BindingKeys<ValueOfTable<TTable>>>(
-    table: TTable,
-    ...fields: TKey[]
-  ) {
+  count<TTable extends Table, TKey extends BindingKeys<ValueOfTable<TTable>>>(table: TTable, ...fields: TKey[]) {
     let where: SelectCondition<ValueOfTable<TTable>> | undefined = undefined;
     const adapator = this.options.adaptor;
     const countBuilder = {
@@ -578,4 +573,3 @@ export const mapSqlResult = <TFrom, TTo, TResultLimit extends number>(
 
 export * from "./MetaTypes";
 export { meta } from "zod-meta";
-export * from "./TypeToken";

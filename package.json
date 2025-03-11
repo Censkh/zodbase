@@ -30,10 +30,10 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
-    "@cloudflare/workers-types": "^4.20250214.0",
-    "@types/bun": "^1.2.2",
-    "@types/node": "^22.13.4",
-    "typescript": "^5.7.3"
+    "@cloudflare/workers-types": "^4.20250311.0",
+    "@types/bun": "^1.2.5",
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2"
   },
   "dependencies": {
     "server-only": "^0.0.1",
