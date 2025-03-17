@@ -526,13 +526,27 @@ const mapArray = <TFrom, TTo>(array: TFrom[], mapper: (from: TFrom) => TTo): TTo
     },
   });
 
+  let mappedCount = 0;
+
   const result = new Proxy(mapped, {
     get: (target, prop: any) => {
       if (prop === "length") {
         return array.length;
       }
       const item = mapped[prop];
+      if (typeof item === "function") {
+        if (mappedCount !== array.length && (prop === "map" || prop === "filter" || prop === "reduce")) {
+          // we need to map all the items
+          for (let i = 0; i < array.length; i++) {
+            mapped[i] = mapper(array[i]);
+          }
+          mappedCount = array.length;
+        }
+        return item;
+      }
+
       if (item === undefined) {
+        mappedCount++;
         mapped[prop] = mapValue(array[prop], mapper);
       }
       return mapped[prop];
