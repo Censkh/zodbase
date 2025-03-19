@@ -22,7 +22,7 @@ export default class D1Adaptor extends SqliteAdaptor<D1Database> {
     const preparedStatement = this.driver.prepare(rawSql);
     const res = await preparedStatement.all();
     const durationMs = Date.now() - startTimestamp;
-    console.log(`Executing SQL in ${durationMs.toFixed(1)}ms: ${rawSql}`);
+    //console.log(`Executing SQL in ${durationMs.toFixed(1)}ms: ${rawSql}`);
 
     return this.mapResult({
       results: res.results,
