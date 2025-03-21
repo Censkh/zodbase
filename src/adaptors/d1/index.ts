@@ -16,12 +16,12 @@ export default class D1Adaptor extends SqliteAdaptor<D1Database> {
     if (typeof statement?.[TO_SQL_SYMBOL] !== "function") {
       throw new Error("Invalid statement");
     }
-    const startTimestamp = Date.now();
+    //const startTimestamp = Date.now();
     const rawSql = statement[TO_SQL_SYMBOL]();
     //console.log(rawSql);
     const preparedStatement = this.driver.prepare(rawSql);
     const res = await preparedStatement.all();
-    const durationMs = Date.now() - startTimestamp;
+    //const durationMs = Date.now() - startTimestamp;
     //console.log(`Executing SQL in ${durationMs.toFixed(1)}ms: ${rawSql}`);
 
     return this.mapResult({

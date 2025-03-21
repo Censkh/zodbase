@@ -26,7 +26,8 @@ export * from "./ZodUtils";
 
 export * from "./index.common";
 
-const IS_REACT_NATIVE = typeof navigator !== "undefined" && (navigator as any).product === "ReactNative";
+const IS_REACT_NATIVE =
+  typeof navigator !== "undefined" && (navigator as any).product === "ReactNative";
 
 // @ts-ignore
 if (typeof window !== "undefined" && !IS_REACT_NATIVE) {
@@ -145,7 +146,9 @@ const getFieldBindingsByKeys = <TTable extends Table>(
   });
 };
 
-type CountBuilder<TTable extends Table, TResultValue> = Promise<SqlDefiniteResult<TResultValue, 1>> & {
+type CountBuilder<TTable extends Table, TResultValue> = Promise<
+  SqlDefiniteResult<TResultValue, 1>
+> & {
   where(condition: SelectCondition<ValueOfTable<TTable>>): CountBuilder<TTable, TResultValue>;
 };
 
@@ -249,7 +252,10 @@ export class Database {
     return toLazyPromise(() => this.options.adaptor.executeSelect(query), selectBuilder) as any;
   }
 
-  count<TTable extends Table, TKey extends BindingKeys<ValueOfTable<TTable>>>(table: TTable, ...fields: TKey[]) {
+  count<TTable extends Table, TKey extends BindingKeys<ValueOfTable<TTable>>>(
+    table: TTable,
+    ...fields: TKey[]
+  ) {
     let where: SelectCondition<ValueOfTable<TTable>> | undefined = undefined;
     const adapator = this.options.adaptor;
     const countBuilder = {
@@ -535,7 +541,10 @@ const mapArray = <TFrom, TTo>(array: TFrom[], mapper: (from: TFrom) => TTo): TTo
       }
       const item = mapped[prop];
       if (typeof item === "function") {
-        if (mappedCount !== array.length && (prop === "map" || prop === "filter" || prop === "reduce")) {
+        if (
+          mappedCount !== array.length &&
+          (prop === "map" || prop === "filter" || prop === "reduce")
+        ) {
           // we need to map all the items
           for (let i = 0; i < array.length; i++) {
             mapped[i] = mapper(array[i]);
