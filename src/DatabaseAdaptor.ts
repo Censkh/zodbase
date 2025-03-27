@@ -1,6 +1,6 @@
 // @ts-ignore
 import * as zod from "zod";
-import { getMetaItem } from "zod-meta";
+import {getMetaItem} from "zod-meta";
 import type {
   InputOfTable,
   SelectCondition,
@@ -11,17 +11,17 @@ import type {
   StringKeys,
   ValueOfTable,
 } from "./QueryBuilder";
-import type { Statement } from "./Statement";
+import type {Statement} from "./Statement";
 import {
-  type Table,
-  type TableColumnInfo,
-  type TableDiff,
   isZodRequired,
   isZodTypeExtends,
   join,
   primaryKey,
   raw,
   sql,
+  type Table,
+  type TableColumnInfo,
+  type TableDiff,
 } from "./index";
 
 export default abstract class DatabaseAdaptor<TDriver = any> {
@@ -59,11 +59,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
-  >(
-    table: TTable,
-    values: TValue[],
-    field: SingleFieldBinding<TValue, TKey>,
-  ): Promise<SqlResult<void, 0>>;
+  >(table: TTable, values: TValue[], field: SingleFieldBinding<TValue, TKey>): Promise<SqlResult<void, 0>>;
   abstract executeCount<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     fields: SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
@@ -116,12 +112,20 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     const statement = sql`CREATE TABLE IF NOT EXISTS ${name ?? table.id}
       (
         ${join(
-          Object.entries(table.schema.shape).map(([key, value]) => {
-            const schema = value as zod.ZodType;
+          Object.values(table.fields).map((field) => {
+            const schema = field.schema;
             const primaryKeyMeta = getMetaItem(schema, primaryKey);
-            return sql`  ${raw(key)} ${raw(this.typeToSql(schema))}${primaryKeyMeta ? raw(" PRIMARY KEY") : ""}${
-              isZodRequired(schema) ? raw(" NOT NULL") : ""
-            }`;
+            //const autoIncrementMeta = getMetaItem(schema, autoIncrement);
+            return raw(
+              [
+                field.key,
+                this.typeToSql(schema),
+                primaryKeyMeta ? "PRIMARY KEY" : "",
+                isZodRequired(schema) ? " NOT NULL" : "",
+              ]
+                .filter(Boolean)
+                .join(" "),
+            );
           }),
           ",",
         )}

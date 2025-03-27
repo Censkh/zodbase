@@ -1,6 +1,6 @@
 import type * as zod from "zod";
 import type { ZodType } from "zod";
-import { getMetaStore } from "zod-meta";
+import { getMetaStore, getZodTypeFields } from "zod-meta";
 import { createTableBinding } from "./Bindings";
 import type { SingleFieldBinding, StringKeys } from "./QueryBuilder";
 import { TO_SQL_SYMBOL, type ToSql } from "./Statement";
@@ -24,7 +24,7 @@ export type PrefixKeys<T, P extends string> = {
 export type Table<
   TValue extends zod.infer<TSchema> = any,
   TName extends string = string,
-  TSchema extends zod.ZodObject<any> = zod.ZodObject<any>,
+  TSchema extends zod.ZodType = zod.ZodType,
 > = PrefixKeys<Bindings<TValue>, "$"> &
   ToSql &
   Omit<TableOptions<TValue, TName, TSchema>, "id"> & {
@@ -35,7 +35,7 @@ export type Table<
 export interface TableOptions<
   TValue extends zod.infer<TSchema>,
   TName extends string,
-  TSchema extends zod.ZodObject<any>,
+  TSchema extends zod.ZodType,
 > {
   id: TName;
   as?: TypeToken<TValue>;
@@ -45,12 +45,12 @@ export interface TableOptions<
 export const createTable = <
   TValue extends zod.infer<TSchema>,
   TName extends string,
-  TSchema extends zod.ZodObject<any>,
+  TSchema extends zod.ZodType,
 >(
   options: TableOptions<TValue, TName, TSchema>,
 ): Table<TValue, TName, TSchema> => {
-  for (const [key, value] of Object.entries(options.schema._def.shape())) {
-    const fieldSchema = value as zod.ZodType;
+  for (const field of getZodTypeFields(options.schema)) {
+    const fieldSchema = field.schema;
     const metaStore = getMetaStore(fieldSchema);
     if (!metaStore) {
       continue;
@@ -60,7 +60,7 @@ export const createTable = <
         const valid = metaItem.type.check(fieldSchema, metaItem.data);
         if (valid.success === false) {
           console.error(
-            `[zodbase] Invalid meta '${metaItem.type.id}' for field '${key}': ${valid.message}`,
+            `[zodbase] Invalid meta '${metaItem.type.id}' for field '${field.key}': ${valid.message}`,
           );
           //return undefined;
         }

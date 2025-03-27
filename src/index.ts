@@ -36,7 +36,7 @@ if (typeof window !== "undefined" && !IS_REACT_NATIVE) {
 
 export type { InputOfTable } from "./QueryBuilder";
 
-const valueToSql = (value: any): string => {
+export const valueToSql = (value: any, nested?: boolean): string => {
   if (value?.[TO_SQL_SYMBOL]) {
     return value[TO_SQL_SYMBOL]();
   }
@@ -49,8 +49,8 @@ const valueToSql = (value: any): string => {
     return value;
   }
 
-  if (Array.isArray(value)) {
-    return `(${value.map((value) => valueToSql(value)).join(", ")})`;
+  if (Array.isArray(value) && !nested) {
+    return `(${value.map((value) => valueToSql(value, true)).join(", ")})`;
   }
 
   if (typeof value === "undefined" || value === null) {
@@ -115,10 +115,12 @@ export interface RemoveConstraint extends BaseFieldModification<"remove-constrai
 
 export type FieldModification = AddConstraint | RemoveConstraint;
 
+export type FieldDiffType = "added" | "removed" | "modified";
+
 export interface FieldDiff {
   key: string;
   field?: SingleFieldBinding;
-  type: "added" | "removed" | "modified";
+  type: FieldDiffType;
   modifications?: FieldModification[];
 }
 
@@ -418,14 +420,16 @@ export class Database {
   }
 
   async syncTable<TTable extends Table>(table: TTable): Promise<void> {
+
+
+    await this.options.adaptor.createTable(table);
+
     const diff = await this.diffTable(table);
 
     if (diff.fields.length > 0) {
       await this.adaptor.processDiff(table, diff);
       //this.options.adaptor.executeSql(sql);
     }
-
-    await this.options.adaptor.createTable(table);
   }
 
   private get adaptor() {
@@ -481,107 +485,6 @@ export class Database {
   }
 }
 
-const mapValue = <TFrom, TTo>(value: TFrom, mapper: (from: TFrom) => TTo): TTo => {
-  let mapped: any = undefined;
-  const getMapped = () => {
-    if (mapped === undefined) {
-      mapped = mapper(value);
-    }
-    return mapped;
-  };
-
-  const result = new Proxy(
-    {},
-    {
-      get: (target, prop) => {
-        const mapped = getMapped();
-        return mapped[prop];
-      },
-      set: (target, prop, value) => {
-        const mapped = getMapped();
-        mapped[prop] = value;
-        return true;
-      },
-      ownKeys(target: {}): ArrayLike<string | symbol> {
-        return Object.keys(getMapped());
-      },
-      getOwnPropertyDescriptor(target, prop) {
-        return Object.getOwnPropertyDescriptor(getMapped(), prop);
-      },
-      has(target, prop) {
-        return prop in getMapped();
-      },
-    },
-  ) as TTo;
-  return result;
-};
-
-const mapArray = <TFrom, TTo>(array: TFrom[], mapper: (from: TFrom) => TTo): TTo[] => {
-  const mapped: any = [];
-  Object.assign(mapped, {
-    [util.inspect.custom]: (depth: any, inspectOptions: any) => {
-      return util.inspect(
-        array.map((item) => mapper(item)),
-        inspectOptions,
-      );
-    },
-    [Symbol.iterator]: function* () {
-      for (let i = 0; i < array.length; i++) {
-        yield mapper(array[i]);
-      }
-    },
-  });
-
-  let mappedCount = 0;
-
-  const result = new Proxy(mapped, {
-    get: (target, prop: any) => {
-      if (prop === "length") {
-        return array.length;
-      }
-      const item = mapped[prop];
-      if (typeof item === "function") {
-        if (
-          mappedCount !== array.length &&
-          (prop === "map" || prop === "filter" || prop === "reduce")
-        ) {
-          // we need to map all the items
-          for (let i = 0; i < array.length; i++) {
-            mapped[i] = mapper(array[i]);
-          }
-          mappedCount = array.length;
-        }
-        return item;
-      }
-
-      if (item === undefined) {
-        mappedCount++;
-        mapped[prop] = mapValue(array[prop], mapper);
-      }
-      return mapped[prop];
-    },
-    set: (target, prop, value) => {
-      mapped[prop] = value;
-      return true;
-    },
-    ownKeys(target: {}): ArrayLike<string | symbol> {
-      return Object.keys(mapped);
-    },
-    getOwnPropertyDescriptor(target, prop) {
-      return Object.getOwnPropertyDescriptor(mapped, prop);
-    },
-
-    has(target, prop) {
-      return prop in mapped;
-    },
-  }) as TTo[];
-  /*result.toJSON = () => {
-    return array.map((item, index) => {
-      return result[index].toJSON();
-    });
-  }*/
-  return result;
-};
 
 export const mapSqlResult = <TFrom, TTo, TResultLimit extends number>(
   result: SqlResult<TFrom, TResultLimit>,
@@ -589,8 +492,8 @@ export const mapSqlResult = <TFrom, TTo, TResultLimit extends number>(
 ): SqlResult<TTo, TResultLimit> => {
   return {
     ...result,
-    first: result.first !== undefined ? mapValue(result.first as any, mapper) : undefined,
-    results: mapArray(result.results, mapper),
+    first: result.first !== undefined ? mapper(result.first as any) : undefined,
+    results: result.results.map(mapper),
   } as SqlResult<TTo, TResultLimit>;
 };
 

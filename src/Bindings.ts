@@ -1,19 +1,23 @@
 import type { SelectCondition, SingleFieldBinding, ValueOfTable } from "./QueryBuilder";
 import { TO_SQL_SYMBOL } from "./Statement";
 import type { Bindings, Table } from "./Table";
+import {getZodTypeFields} from "zod-meta";
 
 export const createTableBinding = <TTable extends Table>(
   table: TTable,
 ): Bindings<ValueOfTable<TTable>> => {
   const binding: Bindings<ValueOfTable<TTable>> = {} as any;
-  for (const field of Object.keys(table.schema.shape)) {
+
+  const fields = getZodTypeFields(table.schema);
+
+  for (const field of fields) {
     const fieldBinding: SingleFieldBinding<any, any> = {
-      key: Object.assign(field, {
-        [TO_SQL_SYMBOL]: () => field,
+      key: Object.assign(field.key, {
+        [TO_SQL_SYMBOL]: () => field.key,
       }),
-      [TO_SQL_SYMBOL]: () => field,
+      [TO_SQL_SYMBOL]: () => field.key,
       table: table as any,
-      schema: table.schema.shape[field],
+      schema: field.schema,
 
       equals(value) {
         return createSelectCondition({
@@ -80,7 +84,7 @@ export const createTableBinding = <TTable extends Table>(
       },
     };
     // @ts-ignore
-    binding[field] = fieldBinding;
+    binding[field.key] = fieldBinding;
   }
 
   return binding as Bindings<ValueOfTable<TTable>>;

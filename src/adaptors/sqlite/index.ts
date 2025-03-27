@@ -10,7 +10,7 @@ import {
   mapSqlResult,
   primaryKey,
   raw,
-  sql,
+  sql, valueToSql, FieldDiffType,
 } from "../..";
 import DatabaseAdaptor from "../../DatabaseAdaptor";
 import {
@@ -24,7 +24,8 @@ import {
   type ValueOfTable,
   buildConditionSql,
 } from "../../QueryBuilder";
-import type { Statement } from "../../Statement";
+import {Statement, TO_SQL_SYMBOL} from "../../Statement";
+import {escapeSqlValue} from "../../Escaping";
 
 const JSON_START = /[{\[]/;
 const JSON_END = /[\]}]/;
@@ -38,9 +39,18 @@ const getRequiredBackfillMeta = (schema: zod.Schema<any>): BackfillMetaItem | un
   return undefined;
 };
 
+const TYPE_ORDERING: Record<FieldDiffType, number> = {
+  modified: 0,
+  added: 1,
+  removed: 2,
+}
+
 export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDriver> {
   async processDiff(table: Table, diff: TableDiff): Promise<void> {
     let hasModified = false;
+
+    // do removes after adds so we don't end up with 0 columns
+    diff.fields = diff.fields.sort((a, b) => TYPE_ORDERING[a.type] - TYPE_ORDERING[b.type]);
 
     for (const fieldDiff of diff.fields) {
       const field = fieldDiff.field;
@@ -53,7 +63,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
 
         const statement = sql`
             ALTER TABLE ${table.id}
-              ADD COLUMN ${fieldDiff.key} ${this.typeToSql(schema)}${primaryKeyMeta ? " PRIMARY KEY" : ""}${isZodRequired(schema) ? " NOT NULL" : ""}`;
+              ADD COLUMN ${fieldDiff.key} ${raw(this.typeToSql(schema))}${raw(primaryKeyMeta ? " PRIMARY KEY" : "")}${raw(isZodRequired(schema) ? " NOT NULL" : "")}`;
 
         await this.execute(statement);
 
@@ -127,7 +137,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     return sql`SELECT ${raw(select.fields.map((field) => `${field.key}`))}
             FROM ${select.table} ${select.where ? sql` WHERE ${buildConditionSql(this, select.where)}` : raw("")}${
               select.orderBy.length > 0
-                ? sql` ORDER BY ${raw(select.orderBy.map((order) => `${order.field} ${order.direction}`))}`
+                ? sql` ORDER BY ${raw(select.orderBy.map((order) => `${order.field.key} ${order.direction}`))}`
                 : raw("")
             }${raw(select.limit ? ` LIMIT ${select.limit}` : "")}`;
   }
@@ -225,7 +235,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
                  SET ${raw(
                    Object.entries(values).reduce((acc, [key, value]) => {
                      if (value !== undefined) {
-                       acc.push(sql`${raw(key)} = ${value}`);
+                       acc.push(raw(`${escapeSqlValue(key)} = ${valueToSql(value, true)}`));
                      }
                      return acc;
                    }, [] as Statement[]),

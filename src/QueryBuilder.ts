@@ -46,7 +46,7 @@ export interface SingleFieldBinding<
 
   lessThanOrEquals(value: TValue[TKey]): SelectFieldCondition<TValue, TKey>;
 
-  notEquals(value: TValue[TKey]): SelectFieldCondition<TValue, TKey>;
+  notEquals(value: TValue[TKey] | null): SelectFieldCondition<TValue, TKey>;
 
   in(values: TValue[TKey][]): SelectFieldCondition<TValue, TKey>;
 }

@@ -1,7 +1,7 @@
 import * as zod from "zod";
-import { createMetaType } from "zod-meta";
-import type { SingleFieldBinding } from "./QueryBuilder";
-import { isZodTypeExtends } from "./ZodUtils";
+import {createMetaType} from "zod-meta";
+import type {SingleFieldBinding} from "./QueryBuilder";
+import {isZodTypeExtends} from "./ZodUtils";
 
 export const foreignKey = createMetaType<{
   field: SingleFieldBinding;
@@ -27,23 +27,26 @@ export const foreignKey = createMetaType<{
     };
   },
 });
-export const primaryKey = createMetaType<{
-  autoIncrement?: boolean;
-}>({
+
+/*export const autoIncrement = createMetaType<{}>({
+  id: "autoIncrement",
+  check: (type, options) => {
+    if (isZodTypeExtends(type, zod.ZodNumber)) {
+      return {
+        success: true,
+      };
+    }
+    return {
+      success: false,
+      message: "Primary key must be a number when using 'autoIncrement'",
+    };
+  },
+});*/
+
+export const primaryKey = createMetaType<{}>({
   id: "primaryKey",
   check: (type, options) => {
     if (isZodTypeExtends(type, zod.ZodString) || isZodTypeExtends(type, zod.ZodNumber)) {
-      if (options?.autoIncrement) {
-        if (isZodTypeExtends(type, zod.ZodNumber)) {
-          return {
-            success: true,
-          };
-        }
-        return {
-          success: false,
-          message: "Primary key must be a number when using 'autoIncrement'",
-        };
-      }
       return {
         success: true,
       };
