@@ -1,7 +1,7 @@
+import { getZodTypeFields } from "zod-meta";
 import type { SelectCondition, SingleFieldBinding, ValueOfTable } from "./QueryBuilder";
 import { TO_SQL_SYMBOL } from "./Statement";
 import type { Bindings, Table } from "./Table";
-import {getZodTypeFields} from "zod-meta";
 
 export const createTableBinding = <TTable extends Table>(
   table: TTable,

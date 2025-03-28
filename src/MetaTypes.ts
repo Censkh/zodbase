@@ -1,7 +1,7 @@
 import * as zod from "zod";
-import {createMetaType} from "zod-meta";
-import type {SingleFieldBinding} from "./QueryBuilder";
-import {isZodTypeExtends} from "./ZodUtils";
+import { createMetaType } from "zod-meta";
+import type { SingleFieldBinding } from "./QueryBuilder";
+import { isZodTypeExtends } from "./ZodUtils";
 
 export const foreignKey = createMetaType<{
   field: SingleFieldBinding;

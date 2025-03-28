@@ -1,6 +1,6 @@
 // @ts-ignore
 import * as zod from "zod";
-import {getMetaItem} from "zod-meta";
+import { getMetaItem } from "zod-meta";
 import type {
   InputOfTable,
   SelectCondition,
@@ -11,17 +11,17 @@ import type {
   StringKeys,
   ValueOfTable,
 } from "./QueryBuilder";
-import type {Statement} from "./Statement";
+import type { Statement } from "./Statement";
 import {
+  type Table,
+  type TableColumnInfo,
+  type TableDiff,
   isZodRequired,
   isZodTypeExtends,
   join,
   primaryKey,
   raw,
   sql,
-  type Table,
-  type TableColumnInfo,
-  type TableDiff,
 } from "./index";
 
 export default abstract class DatabaseAdaptor<TDriver = any> {
@@ -59,7 +59,11 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
-  >(table: TTable, values: TValue[], field: SingleFieldBinding<TValue, TKey>): Promise<SqlResult<void, 0>>;
+  >(
+    table: TTable,
+    values: TValue[],
+    field: SingleFieldBinding<TValue, TKey>,
+  ): Promise<SqlResult<void, 0>>;
   abstract executeCount<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     fields: SingleFieldBinding<ValueOfTable<TTable>, TKey>[],

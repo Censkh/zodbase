@@ -1,4 +1,3 @@
-import * as util from "node:util";
 import type * as zod from "zod";
 import { findFieldMetaItems } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
@@ -420,8 +419,6 @@ export class Database {
   }
 
   async syncTable<TTable extends Table>(table: TTable): Promise<void> {
-
-
     await this.options.adaptor.createTable(table);
 
     const diff = await this.diffTable(table);
@@ -484,7 +481,6 @@ export class Database {
     return diff;
   }
 }
-
 
 export const mapSqlResult = <TFrom, TTo, TResultLimit extends number>(
   result: SqlResult<TFrom, TResultLimit>,

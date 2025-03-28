@@ -2,6 +2,7 @@ import type * as zod from "zod";
 import { type ZodMetaItem, getMetaItem } from "zod-meta";
 import {
   type BackfillOptions,
+  type FieldDiffType,
   type Table,
   type TableColumnInfo,
   type TableDiff,
@@ -10,9 +11,11 @@ import {
   mapSqlResult,
   primaryKey,
   raw,
-  sql, valueToSql, FieldDiffType,
+  sql,
+  valueToSql,
 } from "../..";
 import DatabaseAdaptor from "../../DatabaseAdaptor";
+import { escapeSqlValue } from "../../Escaping";
 import {
   type InputOfTable,
   type SelectCondition,
@@ -24,8 +27,7 @@ import {
   type ValueOfTable,
   buildConditionSql,
 } from "../../QueryBuilder";
-import {Statement, TO_SQL_SYMBOL} from "../../Statement";
-import {escapeSqlValue} from "../../Escaping";
+import type { Statement } from "../../Statement";
 
 const JSON_START = /[{\[]/;
 const JSON_END = /[\]}]/;
@@ -43,7 +45,7 @@ const TYPE_ORDERING: Record<FieldDiffType, number> = {
   modified: 0,
   added: 1,
   removed: 2,
-}
+};
 
 export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDriver> {
   async processDiff(table: Table, diff: TableDiff): Promise<void> {
