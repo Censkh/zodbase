@@ -49,7 +49,8 @@ export const createTable = <
 >(
   options: TableOptions<TValue, TName, TSchema>,
 ): Table<TValue, TName, TSchema> => {
-  for (const field of getZodTypeFields(options.schema)) {
+  const fields = getZodTypeFields(options.schema);
+  for (const field of fields) {
     const fieldSchema = field.schema;
     const metaStore = getMetaStore(fieldSchema);
     if (!metaStore) {
