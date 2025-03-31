@@ -63,25 +63,25 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
         }
         const primaryKeyMeta = getMetaItem(schema, primaryKey);
 
-          const statement = sql`
+        const statement = sql`
             ALTER TABLE ${table.id}
               ADD COLUMN ${fieldDiff.key} ${raw(this.typeToSql(schema))}${raw(primaryKeyMeta ? " PRIMARY KEY" : "")}`;
 
-          await this.execute(statement);
+        await this.execute(statement);
 
-          const backfillMeta = getRequiredBackfillMeta(schema);
-          if (backfillMeta) {
-            const backfillValue = backfillMeta.data.value;
-            if (!backfillValue) {
-              throw new Error("[zodbase] Backfill value is required when adding a required field");
-            }
+        const backfillMeta = getRequiredBackfillMeta(schema);
+        if (backfillMeta) {
+          const backfillValue = backfillMeta.data.value;
+          if (!backfillValue) {
+            throw new Error("[zodbase] Backfill value is required when adding a required field");
+          }
 
-            await this.execute(
-              sql`UPDATE ${table.id}
+          await this.execute(
+            sql`UPDATE ${table.id}
                   SET ${raw(fieldDiff.key)} = ${backfillValue}
                   WHERE ${raw(fieldDiff.key)} IS NULL`,
-            );
-          }
+          );
+        }
       } else if (fieldDiff.type === "removed") {
         await this.execute(sql`ALTER TABLE ${table.id}
             DROP COLUMN ${fieldDiff.key}`);
