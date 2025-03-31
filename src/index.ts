@@ -215,7 +215,7 @@ export class Database {
     fields: TKey[],
   ): SelectQueryBuilder<
     TTable,
-    TKey extends "*" ? ValueOfTable<TTable> : Pick<ValueOfTable<TTable>, Exclude<TKey, "*">>,
+    TKey extends "*" ? ValueOfTable<TTable> : Pick<ValueOfTable<TTable>, TKey>,
     number
   > {
     const query = {

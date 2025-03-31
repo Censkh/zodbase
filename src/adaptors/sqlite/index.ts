@@ -49,7 +49,7 @@ const TYPE_ORDERING: Record<FieldDiffType, number> = {
 
 export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDriver> {
   async processDiff(table: Table, diff: TableDiff): Promise<void> {
-    let hasModified = false;
+    let remake = false;
 
     // do removes after adds so we don't end up with 0 columns
     diff.fields = diff.fields.sort((a, b) => TYPE_ORDERING[a.type] - TYPE_ORDERING[b.type]);
@@ -63,29 +63,30 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
         }
         const primaryKeyMeta = getMetaItem(schema, primaryKey);
 
-        const statement = sql`
+          const statement = sql`
             ALTER TABLE ${table.id}
-              ADD COLUMN ${fieldDiff.key} ${raw(this.typeToSql(schema))}${raw(primaryKeyMeta ? " PRIMARY KEY" : "")}${raw(isZodRequired(schema) ? " NOT NULL" : "")}`;
+              ADD COLUMN ${fieldDiff.key} ${raw(this.typeToSql(schema))}${raw(primaryKeyMeta ? " PRIMARY KEY" : "")}`;
 
-        await this.execute(statement);
+          await this.execute(statement);
 
-        const backfillMeta = getRequiredBackfillMeta(schema);
-        if (backfillMeta) {
-          const backfillValue = backfillMeta.data.value;
-          if (!backfillValue) {
-            throw new Error("[zodbase] Backfill value is required when adding a required field");
+          const backfillMeta = getRequiredBackfillMeta(schema);
+          if (backfillMeta) {
+            const backfillValue = backfillMeta.data.value;
+            if (!backfillValue) {
+              throw new Error("[zodbase] Backfill value is required when adding a required field");
+            }
+
+            await this.execute(
+              sql`UPDATE ${table.id}
+                  SET ${raw(fieldDiff.key)} = ${backfillValue}
+                  WHERE ${raw(fieldDiff.key)} IS NULL`,
+            );
           }
-
-          await this.execute(
-            sql`UPDATE ${table.id}
-                 SET ${raw(fieldDiff.key)} = ${backfillValue} WHERE ${raw(fieldDiff.key)} IS NULL`,
-          );
-        }
       } else if (fieldDiff.type === "removed") {
         await this.execute(sql`ALTER TABLE ${table.id}
             DROP COLUMN ${fieldDiff.key}`);
       } else if (fieldDiff.type === "modified") {
-        hasModified = true;
+        remake = true;
         const schema = field?.schema;
         if (schema) {
           const backfillMeta = getRequiredBackfillMeta(schema);
@@ -104,7 +105,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
       }
     }
 
-    if (hasModified) {
+    if (remake) {
       // sqlite does not support modifying columns, so we need to create a new table
       const tempTableId = `${table.id}_temp_${crypto.randomUUID().split("-")[0]}`;
       await this.createTable(table, tempTableId);
