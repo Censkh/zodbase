@@ -1,6 +1,5 @@
 import type * as zod from "zod";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
-import type { Statement, ToSql } from "./Statement";
 //import {Table} from "src/zodbase/index.ts";
 /*export class QueryBuilder<T> {
   where(field: keyof T): this {
@@ -12,7 +11,8 @@ export const query = <T extends object>(table: Table<T>) => QueryBuilder<T> => {
 
 }
 */
-import { type Table, join, raw, sql } from "./index";
+import { join, raw, sql, type Table } from "./index";
+import type { Statement, ToSql } from "./Statement";
 
 export type StringKeys<T> = {
   [K in keyof T]: K extends string ? K : never;

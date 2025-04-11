@@ -1,8 +1,8 @@
 import type { Database as BunDatabase } from "bun:sqlite";
 import type * as zod from "zod";
+import type { Table } from "../../index";
 import type { InputOfTable, SingleFieldBinding, SqlResult, StringKeys, ValueOfTable } from "../../QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
-import type { Table } from "../../index";
 import SqliteAdaptor from "../sqlite";
 
 export default class BunSqliteAdaptor extends SqliteAdaptor<BunDatabase> {

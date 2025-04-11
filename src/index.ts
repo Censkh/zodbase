@@ -21,9 +21,8 @@ import { type Statement, TO_SQL_SYMBOL, type ToSql } from "./Statement";
 import type { Table } from "./Table";
 import { isZodRequired } from "./ZodUtils";
 
-export * from "./ZodUtils";
-
 export * from "./index.common";
+export * from "./ZodUtils";
 
 const IS_REACT_NATIVE = typeof navigator !== "undefined" && (navigator as any).product === "ReactNative";
 
@@ -483,5 +482,5 @@ export const mapSqlResult = <TFrom, TTo, TResultLimit extends number>(
   } as SqlResult<TTo, TResultLimit>;
 };
 
-export * from "./MetaTypes";
 export { meta } from "zod-meta";
+export * from "./MetaTypes";

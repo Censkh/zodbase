@@ -1,22 +1,23 @@
 import type * as zod from "zod";
-import { type ZodMetaItem, getMetaItem } from "zod-meta";
+import { getMetaItem, type ZodMetaItem } from "zod-meta";
 import {
   type BackfillOptions,
-  type FieldDiffType,
-  type Table,
-  type TableColumnInfo,
-  type TableDiff,
   backfill,
+  type FieldDiffType,
   isZodRequired,
   mapSqlResult,
   primaryKey,
   raw,
   sql,
+  type Table,
+  type TableColumnInfo,
+  type TableDiff,
   valueToSql,
 } from "../..";
 import DatabaseAdaptor from "../../DatabaseAdaptor";
 import { escapeSqlValue } from "../../Escaping";
 import {
+  buildConditionSql,
   type InputOfTable,
   type SelectCondition,
   type SelectQuery,
@@ -25,7 +26,6 @@ import {
   type SqlResult,
   type StringKeys,
   type ValueOfTable,
-  buildConditionSql,
 } from "../../QueryBuilder";
 import type { Statement } from "../../Statement";
 

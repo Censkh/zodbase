@@ -1,6 +1,6 @@
 import BunDatabase from "bun:sqlite";
 import * as zod from "zod";
-import { Database, createTable } from "../src";
+import { createTable, Database } from "../src";
 import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
 
 it("select only field", async () => {

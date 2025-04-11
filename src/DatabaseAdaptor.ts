@@ -1,6 +1,17 @@
 // @ts-ignore
 import * as zod from "zod";
 import { getMetaItem } from "zod-meta";
+import {
+  isZodRequired,
+  isZodTypeExtends,
+  join,
+  primaryKey,
+  raw,
+  sql,
+  type Table,
+  type TableColumnInfo,
+  type TableDiff,
+} from "./index";
 import type {
   InputOfTable,
   SelectCondition,
@@ -12,17 +23,6 @@ import type {
   ValueOfTable,
 } from "./QueryBuilder";
 import type { Statement } from "./Statement";
-import {
-  type Table,
-  type TableColumnInfo,
-  type TableDiff,
-  isZodRequired,
-  isZodTypeExtends,
-  join,
-  primaryKey,
-  raw,
-  sql,
-} from "./index";
 
 export default abstract class DatabaseAdaptor<TDriver = any> {
   protected readonly driver: TDriver;
