@@ -59,11 +59,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
-  >(
-    table: TTable,
-    values: TValue[],
-    field: SingleFieldBinding<TValue, TKey>,
-  ): Promise<SqlResult<void, 0>>;
+  >(table: TTable, values: TValue[], field: SingleFieldBinding<TValue, TKey>): Promise<SqlResult<void, 0>>;
   abstract executeCount<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     fields: SingleFieldBinding<ValueOfTable<TTable>, TKey>[],

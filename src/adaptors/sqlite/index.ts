@@ -119,11 +119,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     return mapSqlResult(value, (value) => {
       return Object.fromEntries(
         Object.entries(value).map(([key, value]) => {
-          if (
-            typeof value === "string" &&
-            JSON_START.test(value[0]) &&
-            JSON_END.test(value[value.length - 1])
-          ) {
+          if (typeof value === "string" && JSON_START.test(value[0]) && JSON_END.test(value[value.length - 1])) {
             try {
               // @ts-ignore
               const parsedValue = JSON.parse(value);

@@ -20,15 +20,13 @@ export type StringKeys<T> = {
 
 export type BindingKeys<TValue> = "*" | StringKeys<TValue>;
 
-export interface BaseFieldBinding<TValue extends zod.ZodRawShape, TKey extends BindingKeys<TValue>>
-  extends ToSql {
+export interface BaseFieldBinding<TValue extends zod.ZodRawShape, TKey extends BindingKeys<TValue>> extends ToSql {
   key: TKey & ToSql;
   table: Table<TValue, string, zod.ZodObject<TValue>>;
   schema: zod.ZodType<TValue>;
 }
 
-export interface AllFieldsBinding<TValue extends zod.ZodRawShape>
-  extends BaseFieldBinding<TValue, "*"> {}
+export interface AllFieldsBinding<TValue extends zod.ZodRawShape> extends BaseFieldBinding<TValue, "*"> {}
 
 export interface SingleFieldBinding<
   TValue extends zod.ZodRawShape = any,
@@ -65,15 +63,12 @@ export interface BaseSelectCondition<TValue extends zod.ZodRawShape> {
   or(...condition: SelectCondition<TValue>[]): SelectCondition<TValue>;
 }
 
-export interface SelectCompoundCondition<TValue extends zod.ZodRawShape>
-  extends BaseSelectCondition<TValue> {
+export interface SelectCompoundCondition<TValue extends zod.ZodRawShape> extends BaseSelectCondition<TValue> {
   type: "AND" | "OR";
   conditions: SelectCondition<TValue>[];
 }
 
-export type ValueOfTable<TTable extends Table> = TTable extends Table<infer TValue, any, any>
-  ? TValue
-  : never;
+export type ValueOfTable<TTable extends Table> = TTable extends Table<infer TValue, any, any> ? TValue : never;
 export type InputOfTable<TTable extends Table> = TTable extends Table<any, any, infer TSchema>
   ? zod.input<TSchema>
   : never;
@@ -87,10 +82,7 @@ export interface SelectFieldCondition<
   value: TValue[TKey];
 }
 
-export const buildConditionSql = (
-  adaptor: DatabaseAdaptor,
-  condition: SelectCondition,
-): Statement => {
+export const buildConditionSql = (adaptor: DatabaseAdaptor, condition: SelectCondition): Statement => {
   if ("conditions" in condition) {
     return sql`${join(
       condition.conditions.map((childCondition) => buildConditionSql(adaptor, childCondition)),
@@ -120,14 +112,10 @@ export interface SelectQuery<TTable extends Table = Table, TLimit extends number
   limit: TLimit | undefined;
 }
 
-export type SelectQueryBuilder<
-  TTable extends Table,
-  TResultValue,
-  TResultLimit extends number,
-> = Promise<SqlResult<TResultValue, TResultLimit>> & {
-  where(
-    condition: SelectCondition<ValueOfTable<TTable>>,
-  ): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
+export type SelectQueryBuilder<TTable extends Table, TResultValue, TResultLimit extends number> = Promise<
+  SqlResult<TResultValue, TResultLimit>
+> & {
+  where(condition: SelectCondition<ValueOfTable<TTable>>): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
 
   limit<TLimit extends number>(limit: TLimit): SelectQueryBuilder<TTable, TResultValue, TLimit>;
 
@@ -148,8 +136,7 @@ export interface SqlResult<TValue = any, TLimit extends number = number> {
   limit?: TLimit;
 }
 
-export interface SqlDefiniteResult<TValue, TLimit extends number>
-  extends Omit<SqlResult<TValue, TLimit>, "first"> {
+export interface SqlDefiniteResult<TValue, TLimit extends number> extends Omit<SqlResult<TValue, TLimit>, "first"> {
   first: TValue;
 }
 

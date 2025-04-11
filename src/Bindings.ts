@@ -3,9 +3,7 @@ import type { SelectCondition, SingleFieldBinding, ValueOfTable } from "./QueryB
 import { TO_SQL_SYMBOL } from "./Statement";
 import type { Bindings, Table } from "./Table";
 
-export const createTableBinding = <TTable extends Table>(
-  table: TTable,
-): Bindings<ValueOfTable<TTable>> => {
+export const createTableBinding = <TTable extends Table>(table: TTable): Bindings<ValueOfTable<TTable>> => {
   const binding: Bindings<ValueOfTable<TTable>> = {} as any;
 
   const fields = getZodTypeFields(table.schema);

@@ -32,21 +32,13 @@ export type Table<
     fields: Bindings<TValue>;
   };
 
-export interface TableOptions<
-  TValue extends zod.infer<TSchema>,
-  TName extends string,
-  TSchema extends zod.ZodType,
-> {
+export interface TableOptions<TValue extends zod.infer<TSchema>, TName extends string, TSchema extends zod.ZodType> {
   id: TName;
   as?: TypeToken<TValue>;
   schema: TSchema;
 }
 
-export const createTable = <
-  TValue extends zod.infer<TSchema>,
-  TName extends string,
-  TSchema extends zod.ZodType,
->(
+export const createTable = <TValue extends zod.infer<TSchema>, TName extends string, TSchema extends zod.ZodType>(
   options: TableOptions<TValue, TName, TSchema>,
 ): Table<TValue, TName, TSchema> => {
   const fields = getZodTypeFields(options.schema);
@@ -60,9 +52,7 @@ export const createTable = <
       if (metaItem?.type.check) {
         const valid = metaItem.type.check(fieldSchema, metaItem.data);
         if (valid.success === false) {
-          console.error(
-            `[zodbase] Invalid meta '${metaItem.type.id}' for field '${field.key}': ${valid.message}`,
-          );
+          console.error(`[zodbase] Invalid meta '${metaItem.type.id}' for field '${field.key}': ${valid.message}`);
           //return undefined;
         }
       }

@@ -7,10 +7,9 @@ type EmptyEntry<TValue> = { key: ""; value: TValue };
 type ExcludedTypes = Date | Set<unknown> | Map<unknown, unknown>;
 type ArrayEncoder = `[${bigint}]`;
 
-type EscapeArrayKey<TKey extends string> =
-  TKey extends `${infer TKeyBefore}.${ArrayEncoder}${infer TKeyAfter}`
-    ? EscapeArrayKey<`${TKeyBefore}${ArrayEncoder}${TKeyAfter}`>
-    : TKey;
+type EscapeArrayKey<TKey extends string> = TKey extends `${infer TKeyBefore}.${ArrayEncoder}${infer TKeyAfter}`
+  ? EscapeArrayKey<`${TKeyBefore}${ArrayEncoder}${TKeyAfter}`>
+  : TKey;
 
 // Transforms entries to one flattened type
 type CollapseEntries<TEntry extends Entry> = {
