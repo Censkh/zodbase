@@ -88,7 +88,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     const numberType = isZodTypeExtends(type, zod.ZodNumber);
     if (numberType) {
       // @ts-ignore
-      const isInt = numberType._def.checks?.find((check) => check.kind === "int");
+      const isInt = numberType.def.checks?.find((check) => check.kind === "int");
       return isInt ? "INTEGER" : "REAL";
     }
     if (isZodTypeExtends(type, zod.ZodBoolean)) {

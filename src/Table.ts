@@ -13,7 +13,7 @@ export interface TableColumnInfo {
   primaryKey: boolean;
 }
 
-export type Bindings<TValue extends zod.ZodRawShape> = {
+export type Bindings<TValue> = {
   [K in keyof TValue]-?: K extends StringKeys<TValue> ? SingleFieldBinding<TValue, K> : never;
 };
 

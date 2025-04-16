@@ -6,9 +6,9 @@ export const isZodTypeExtends = (type: zod.ZodType, zodType: Class<zod.ZodType>)
     return type;
   }
   // @ts-ignore
-  if (type instanceof zod.ZodUnion) {
+  if (type.def.type === "union") {
     // @ts-ignore
-    for (const option of type._def.options) {
+    for (const option of type.def.options) {
       if (isZodTypeExtends(option, zodType)) {
         return option;
       }
@@ -16,7 +16,7 @@ export const isZodTypeExtends = (type: zod.ZodType, zodType: Class<zod.ZodType>)
     return false;
   }
   // @ts-ignore
-  const rootType = type._def.innerType;
+  const rootType = type.def.innerType;
   if (rootType) {
     return isZodTypeExtends(rootType, zodType);
   }

@@ -150,7 +150,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     table: TTable,
     values: InputOfTable<TTable>,
   ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
-    const parsedValues = table.schema.parse(values);
+    const parsedValues = table.schema.parse(values) as any;
     const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(parsedValues))})
                  VALUES ${Object.values(parsedValues)}`;
     await this.execute(statement);
@@ -164,9 +164,9 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     table: TTable,
     values: InputOfTable<TTable>[],
   ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, number>> {
-    const parsedValues = values.map((value) => table.schema.parse(value));
+    const parsedValues = values.map((value) => table.schema.parse(value)) as any;
     const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(parsedValues[0]))})
-                 VALUES ${raw(parsedValues.map((value) => sql`${Object.values(value)}`))}`;
+                 VALUES ${raw(parsedValues.map((value: any) => sql`${Object.values(value)}`))}`;
     await this.execute(statement);
     return {
       first: parsedValues[0] as any,
@@ -227,7 +227,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
 
   protected buildUpdateSql<TTable extends Table>(
     table: TTable,
-    values: Partial<ValueOfTable<TTable>>,
+    values: Partial<InputOfTable<TTable>>,
     where: SelectCondition<ValueOfTable<TTable>>,
   ): Statement {
     return sql`UPDATE ${table}

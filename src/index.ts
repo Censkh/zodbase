@@ -344,7 +344,7 @@ export class Database {
             table,
             // @ts-ignore
             fields: getFieldBindingsByKeys(table, keys.length === 0 ? ["*"] : keys),
-            where: field.equals(values[field.key]),
+            where: field.equals((values as any)[field.key]),
             orderBy: [],
             limit: 1,
           }) as any;
