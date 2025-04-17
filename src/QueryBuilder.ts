@@ -20,18 +20,16 @@ export type StringKeys<T> = {
 
 export type BindingKeys<TValue> = "*" | StringKeys<TValue>;
 
-export interface BaseFieldBinding<TValue , TKey extends BindingKeys<TValue>> extends ToSql {
+export interface BaseFieldBinding<TValue, TKey extends BindingKeys<TValue>> extends ToSql {
   key: TKey & ToSql;
   table: Table<TValue, string, zod.ZodType<TValue>>;
   schema: zod.ZodType<TValue>;
 }
 
-export interface AllFieldsBinding<TValue > extends BaseFieldBinding<TValue, "*"> {}
+export interface AllFieldsBinding<TValue> extends BaseFieldBinding<TValue, "*"> {}
 
-export interface SingleFieldBinding<
-  TValue  = any,
-  TKey extends StringKeys<TValue> = StringKeys<TValue>,
-> extends BaseFieldBinding<TValue, TKey> {
+export interface SingleFieldBinding<TValue = any, TKey extends StringKeys<TValue> = StringKeys<TValue>>
+  extends BaseFieldBinding<TValue, TKey> {
   equals(value: TValue[TKey]): SelectFieldCondition<TValue, TKey>;
 
   like(value: TValue[TKey]): SelectFieldCondition<TValue, TKey>;
@@ -49,21 +47,19 @@ export interface SingleFieldBinding<
   in(values: TValue[TKey][]): SelectFieldCondition<TValue, TKey>;
 }
 
-export type FieldBinding<TValue > =
-  | SingleFieldBinding<TValue, StringKeys<TValue>>
-  | AllFieldsBinding<TValue>;
+export type FieldBinding<TValue> = SingleFieldBinding<TValue, StringKeys<TValue>> | AllFieldsBinding<TValue>;
 
-export type SelectCondition<TValue  = any> =
+export type SelectCondition<TValue = any> =
   | SelectFieldCondition<TValue, StringKeys<TValue>>
   | SelectCompoundCondition<TValue>;
 
-export interface BaseSelectCondition<TValue > {
+export interface BaseSelectCondition<TValue> {
   and(...condition: SelectCondition<TValue>[]): SelectCondition<TValue>;
 
   or(...condition: SelectCondition<TValue>[]): SelectCondition<TValue>;
 }
 
-export interface SelectCompoundCondition<TValue > extends BaseSelectCondition<TValue> {
+export interface SelectCompoundCondition<TValue> extends BaseSelectCondition<TValue> {
   type: "AND" | "OR";
   conditions: SelectCondition<TValue>[];
 }
@@ -73,10 +69,8 @@ export type InputOfTable<TTable extends Table> = TTable extends Table<any, any, 
   ? zod.input<TSchema>
   : never;
 
-export interface SelectFieldCondition<
-  TValue  = any,
-  TKey extends StringKeys<TValue> = StringKeys<TValue>,
-> extends BaseSelectCondition<TValue> {
+export interface SelectFieldCondition<TValue = any, TKey extends StringKeys<TValue> = StringKeys<TValue>>
+  extends BaseSelectCondition<TValue> {
   field: SingleFieldBinding<TValue, TKey>;
   operator: SqlOperator;
   value: TValue[TKey];
