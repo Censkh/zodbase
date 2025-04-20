@@ -53,10 +53,12 @@ export type SelectCondition<TValue = any> =
   | SelectFieldCondition<TValue, StringKeys<TValue>>
   | SelectCompoundCondition<TValue>;
 
-export interface BaseSelectCondition<TValue> {
-  and(...condition: SelectCondition<TValue>[]): SelectCondition<TValue>;
+export type Falsy = false | null | undefined | "" | 0;
 
-  or(...condition: SelectCondition<TValue>[]): SelectCondition<TValue>;
+export interface BaseSelectCondition<TValue> {
+  and(...condition: Array<SelectCondition<TValue> | Falsy>): SelectCondition<TValue>;
+
+  or(...condition: Array<SelectCondition<TValue> | Falsy>): SelectCondition<TValue>;
 }
 
 export interface SelectCompoundCondition<TValue> extends BaseSelectCondition<TValue> {

@@ -484,3 +484,4 @@ export const mapSqlResult = <TFrom, TTo, TResultLimit extends number>(
 
 export { meta } from "zod-meta";
 export * from "./MetaTypes";
+export { type SelectCondition } from "./QueryBuilder";
