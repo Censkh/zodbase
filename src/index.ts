@@ -196,6 +196,56 @@ export function raw(value: string | string[] | Statement | Statement[]): Stateme
   };
 }
 
+const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys<ValueOfTable<TTable>>>(
+  query: SelectQuery<TTable>,
+  adaptor: DatabaseAdaptor,
+): SelectQueryBuilder<TTable, TKey extends "*" ? ValueOfTable<TTable> : Pick<ValueOfTable<TTable>, TKey>, number> => {
+  const builder = {
+    table: query.table,
+
+    clone() {
+      return createSelectQueryBuilder({ ...query }, adaptor);
+    },
+
+    where(condition: SelectCondition<ValueOfTable<TTable>>) {
+      query.where = condition;
+      return this;
+    },
+    limit<TLimit extends number>(limit: TLimit) {
+      query.limit = limit;
+      return this;
+    },
+    offset(offset: number) {
+      query.offset = offset;
+      return this;
+    },
+    one() {
+      return this.limit(1);
+    },
+    orderBy(field: SingleFieldBinding<ValueOfTable<TTable>>, direction: "ASC" | "DESC") {
+      query.orderBy.push({
+        field: field,
+        direction,
+      });
+      return this;
+    },
+    fields(...fields: TKey[]) {
+      query.fields = getFieldBindingsByKeys(query.table, fields) as any;
+      return this;
+    },
+
+    async execute() {
+      return adaptor.executeSelect(query);
+    },
+    async count() {
+      // @ts-ignore
+      return adaptor.executeCount(query.table, query.fields, query.where);
+    },
+  };
+
+  return toLazyPromise(() => adaptor.executeSelect(query), builder) as any;
+};
+
 export class Database {
   constructor(private readonly options: DatabaseOptions) {}
 
@@ -216,33 +266,10 @@ export class Database {
       where: undefined,
       orderBy: [],
       limit: undefined,
+      offset: undefined,
     } as SelectQuery<TTable>;
 
-    const selectBuilder = {
-      where(condition: SelectCondition<ValueOfTable<TTable>>) {
-        query.where = condition;
-        return selectBuilder as any;
-      },
-
-      limit<TLimit extends number>(limit: TLimit) {
-        query.limit = limit;
-        return selectBuilder as any;
-      },
-
-      one() {
-        return this.limit(1);
-      },
-
-      orderBy(field: SingleFieldBinding<ValueOfTable<TTable>>, direction: "ASC" | "DESC") {
-        query.orderBy.push({
-          field: field,
-          direction,
-        });
-        return this as any;
-      },
-    } as SelectQueryBuilder<TTable, TKey, number>;
-
-    return toLazyPromise(() => this.options.adaptor.executeSelect(query), selectBuilder) as any;
+    return createSelectQueryBuilder(query, this.options.adaptor);
   }
 
   count<TTable extends Table, TKey extends BindingKeys<ValueOfTable<TTable>>>(table: TTable, ...fields: TKey[]) {
@@ -318,6 +345,7 @@ export class Database {
             where,
             orderBy: [],
             limit: 1,
+            offset: undefined,
           }) as any;
         },
       },
@@ -347,6 +375,7 @@ export class Database {
             where: field.equals((values as any)[field.key]),
             orderBy: [],
             limit: 1,
+            offset: undefined,
           }) as any;
         },
       },
@@ -387,6 +416,7 @@ export class Database {
             where: field.in(values.map((value) => value[field.key])),
             orderBy: [],
             limit: undefined,
+            offset: undefined,
           }) as any;
         },
       },
@@ -484,4 +514,4 @@ export const mapSqlResult = <TFrom, TTo, TResultLimit extends number>(
 
 export { meta } from "zod-meta";
 export * from "./MetaTypes";
-export { type SelectCondition } from "./QueryBuilder";
+export { type SelectCondition, type SelectQueryBuilder } from "./QueryBuilder";

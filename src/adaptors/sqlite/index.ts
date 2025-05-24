@@ -140,7 +140,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
               select.orderBy.length > 0
                 ? sql` ORDER BY ${raw(select.orderBy.map((order) => `${order.field.key} ${order.direction}`))}`
                 : raw("")
-            }${raw(select.limit ? ` LIMIT ${select.limit}` : "")}`;
+            }${raw(select.limit ? ` LIMIT ${select.limit}` : "")}${raw(select.offset ? ` OFFSET ${select.offset}` : "")}`;
   }
 
   executeSelect<R>(select: SelectQuery): R {
@@ -212,8 +212,13 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     fields: SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
     where: SelectCondition<ValueOfTable<TTable>> | undefined,
   ): Promise<SqlResult<Record<TKey, number>, 1>> {
-    const statement = sql`SELECT ${raw(fields.map((field) => raw(`COUNT(ALL ${field.key}) as ${field.key}`)))}
-                 FROM ${table} ${where ? sql`WHERE ${buildConditionSql(this, where)}` : ""}`;
+    const statement = sql`SELECT ${raw(fields.map((field) => raw(`COUNT(${field.key === "*" ? "*" : `ALL ${field.key}`}) as ${field.key === "*" ? "_count" : field.key}`)))}
+                          FROM ${table} ${
+                            where
+                              ? sql`WHERE
+                          ${buildConditionSql(this, where)}`
+                              : ""
+                          }`;
     return this.execute(statement) as any;
   }
 

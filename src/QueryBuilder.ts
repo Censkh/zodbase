@@ -106,14 +106,23 @@ export interface SelectQuery<TTable extends Table = Table, TLimit extends number
     direction: "ASC" | "DESC";
   }>;
   limit: TLimit | undefined;
+  offset: number | undefined;
 }
 
 export type SelectQueryBuilder<TTable extends Table, TResultValue, TResultLimit extends number> = Promise<
   SqlResult<TResultValue, TResultLimit>
 > & {
+  table: TTable;
+
+  fields(...fields: BindingKeys<ValueOfTable<TTable>>[]): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
+
+  clone(): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
+
   where(condition: SelectCondition<ValueOfTable<TTable>>): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
 
   limit<TLimit extends number>(limit: TLimit): SelectQueryBuilder<TTable, TResultValue, TLimit>;
+
+  offset(offset: number): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
 
   one(): SelectQueryBuilder<TTable, TResultValue, 1>;
 
@@ -121,6 +130,8 @@ export type SelectQueryBuilder<TTable extends Table, TResultValue, TResultLimit 
     field: SingleFieldBinding<ValueOfTable<TTable>>,
     direction: "ASC" | "DESC",
   ): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
+
+  count(): Promise<SqlResult<Record<StringKeys<ValueOfTable<TTable>>, number>, 1>>;
 };
 
 export type SqlOperator = "=" | "<" | ">" | "<=" | ">=" | "!=" | "LIKE" | "IN";
