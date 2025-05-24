@@ -1,4 +1,4 @@
-import * as zod from "zod";
+import * as zod from "zod/v4";
 import { createMetaType } from "zod-meta";
 import type { SingleFieldBinding } from "./QueryBuilder";
 import { isZodTypeExtends } from "./ZodUtils";

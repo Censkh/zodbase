@@ -1,4 +1,4 @@
-import type * as zod from "zod";
+import type * as zod from "zod/v4";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
 //import {Table} from "src/zodbase/index.ts";
 /*export class QueryBuilder<T> {

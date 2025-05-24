@@ -1,4 +1,4 @@
-import type * as zod from "zod";
+import type * as zod from "zod/v4";
 import { findFieldMetaItems } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
 import { escapeSqlValue } from "./Escaping";
@@ -273,7 +273,7 @@ export class Database {
   }
 
   count<TTable extends Table, TKey extends BindingKeys<ValueOfTable<TTable>>>(table: TTable, ...fields: TKey[]) {
-    let where: SelectCondition<ValueOfTable<TTable>> | undefined = undefined;
+    let where: SelectCondition<ValueOfTable<TTable>> | undefined;
     const adapator = this.options.adaptor;
     const countBuilder = {
       where(condition: SelectCondition<ValueOfTable<TTable>>) {
@@ -288,7 +288,7 @@ export class Database {
   }
 
   delete<TTable extends Table>(table: TTable) {
-    let where: SelectCondition<ValueOfTable<TTable>> | undefined = undefined;
+    let where: SelectCondition<ValueOfTable<TTable>> | undefined;
     const adapator = this.options.adaptor;
     const deleteBuilder = {
       where(condition: SelectCondition<ValueOfTable<TTable>>) {
@@ -514,4 +514,4 @@ export const mapSqlResult = <TFrom, TTo, TResultLimit extends number>(
 
 export { meta } from "zod-meta";
 export * from "./MetaTypes";
-export { type SelectCondition, type SelectQueryBuilder } from "./QueryBuilder";
+export type { SelectCondition, SelectQueryBuilder } from "./QueryBuilder";

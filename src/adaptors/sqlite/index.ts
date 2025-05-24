@@ -1,4 +1,4 @@
-import type * as zod from "zod";
+import type * as zod from "zod/v4";
 import { getMetaItem, type ZodMetaItem } from "zod-meta";
 import {
   type BackfillOptions,
@@ -29,7 +29,7 @@ import {
 } from "../../QueryBuilder";
 import type { Statement } from "../../Statement";
 
-const JSON_START = /[{\[]/;
+const JSON_START = /[{[]/;
 const JSON_END = /[\]}]/;
 
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;

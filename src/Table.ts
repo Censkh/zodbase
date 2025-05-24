@@ -1,5 +1,5 @@
-import type * as zod from "zod";
-import type { ZodType } from "zod";
+import type * as zod from "zod/v4";
+import type { ZodType } from "zod/v4";
 import { getMetaStore, getZodTypeFields } from "zod-meta";
 import { createTableBinding } from "./Bindings";
 import type { SingleFieldBinding, StringKeys } from "./QueryBuilder";

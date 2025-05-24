@@ -1,5 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
-import type * as zod from "zod";
+import type * as zod from "zod/v4";
 import type { InputOfTable, SingleFieldBinding, SqlResult, StringKeys, ValueOfTable } from "../../QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
 import type { Table } from "../../Table";

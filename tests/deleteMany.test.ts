@@ -1,6 +1,6 @@
 import BunDatabase from "bun:sqlite";
 import * as crypto from "node:crypto";
-import * as zod from "zod";
+import * as zod from "zod/v4";
 import { createTable, Database, sql } from "../src";
 import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
 
