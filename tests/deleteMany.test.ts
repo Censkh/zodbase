@@ -17,7 +17,7 @@ describe("delete many", () => {
     const rawDb = new BunDatabase(":memory:");
     const db = new Database({
       adaptor: new BunSqliteAdaptor({
-        driver: rawDb
+        driver: rawDb,
       }),
     });
 
