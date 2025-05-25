@@ -18,6 +18,15 @@ export default class D1Adaptor extends SqliteAdaptor<D1Database> {
     //const durationMs = Date.now() - startTimestamp;
     //console.log(`Executing SQL in ${durationMs.toFixed(1)}ms: ${rawSql}`);
 
+    if (this.options.debug) {
+      console.debug("D1Adaptor.execute", "Executed SQL", {
+        sql: rawSql,
+        timings: {
+          durationMs: res.meta.duration,
+        },
+      });
+    }
+
     return this.mapResult({
       results: res.results,
       first: res.results[0],

@@ -24,11 +24,16 @@ import type {
 } from "./QueryBuilder";
 import type { Statement } from "./Statement";
 
-export default abstract class DatabaseAdaptor<TDriver = any> {
-  protected readonly driver: TDriver;
+export interface DatabaseAdaptorOptions<TDriver = any> {
+  driver: TDriver;
+  debug?: boolean;
+}
 
-  constructor(driver: TDriver) {
-    this.driver = driver;
+export default abstract class DatabaseAdaptor<TDriver = any> {
+  constructor(protected readonly options: DatabaseAdaptorOptions<TDriver>) {}
+
+  protected get driver() {
+    return this.options.driver;
   }
 
   //typeToSql: (type: zod.ZodType<any>) => string;
