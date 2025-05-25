@@ -56,7 +56,9 @@ describe("delete many", () => {
     });
     const rawDb = new BunDatabase(":memory:");
     const db = new Database({
-      adaptor: new BunSqliteAdaptor(rawDb),
+      adaptor: new BunSqliteAdaptor({
+        driver: rawDb,
+      }),
     });
 
     await db.syncTable(BoardTable);
