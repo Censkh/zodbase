@@ -1,1 +1,1 @@
-export default class Stub {} 
+export default class Stub {}

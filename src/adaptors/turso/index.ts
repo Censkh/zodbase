@@ -1,11 +1,11 @@
-import type { Database } from "@libsql/client";
+import type { Client } from "@libsql/client";
 import type * as zod from "zod/v4";
 import type { InputOfTable, SingleFieldBinding, SqlResult, StringKeys, ValueOfTable } from "../../QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
 import type { Table } from "../../Table";
 import SqliteAdaptor from "../sqlite";
 
-export default class TursoAdaptor extends SqliteAdaptor<Database> {
+export default class TursoAdaptor extends SqliteAdaptor<Client> {
   async execute(statement: Statement): Promise<SqlResult> {
     if (typeof statement?.[TO_SQL_SYMBOL] !== "function") {
       throw new Error("Invalid statement");
@@ -45,4 +45,4 @@ export default class TursoAdaptor extends SqliteAdaptor<Database> {
       first: undefined,
     };
   }
-} 
+}
