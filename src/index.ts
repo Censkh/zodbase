@@ -54,7 +54,7 @@ export const valueToSql = (value: any, nested?: boolean): string => {
     return "null";
   }
   if (typeof value === "object") {
-    return `json(${escapeSqlValue(JSON.stringify(value))})`;
+    return `(${escapeSqlValue(JSON.stringify(value))})`;
   }
 
   if (typeof value === "boolean") {
@@ -464,7 +464,7 @@ export class Database {
     }
 
     for (const column of tableRemoteSchema.results) {
-      const field: SingleFieldBinding = (table.fields as any)[column.name];
+      const field = Object.entries(table.fields).find(([key]) => key === column.name)?.[1];
       if (!field) {
         diff.fields.push({ key: column.name, type: "removed" });
       }
@@ -503,12 +503,20 @@ export class Database {
 
 export const mapSqlResult = <TFrom, TTo, TResultLimit extends number>(
   result: SqlResult<TFrom, TResultLimit>,
-  mapper: (from: TFrom) => TTo,
+  mapper: (from: TFrom) => TTo | undefined,
 ): SqlResult<TTo, TResultLimit> => {
+  const mapped = (result.results as any).reduce((acc: TTo[], result: any) => {
+    const mapped = mapper(result);
+    if (mapped !== undefined) {
+      acc.push(mapped);
+    }
+    return acc;
+  }, []);
+
   return {
     ...result,
-    first: result.first !== undefined ? mapper(result.first as any) : undefined,
-    results: result.results.map(mapper),
+    first: mapped.length > 0 ? mapped[0] : undefined,
+    results: mapped,
   } as SqlResult<TTo, TResultLimit>;
 };
 

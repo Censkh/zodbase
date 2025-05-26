@@ -78,15 +78,20 @@ export interface SelectFieldCondition<TValue = any, TKey extends StringKeys<TVal
   value: TValue[TKey];
 }
 
-export const buildConditionSql = (adaptor: DatabaseAdaptor, condition: SelectCondition): Statement => {
+export const buildConditionSql = (
+  adaptor: DatabaseAdaptor,
+  condition: SelectCondition,
+  doubleQuote?: boolean,
+): Statement => {
   if ("conditions" in condition) {
     return sql`${join(
-      condition.conditions.map((childCondition) => buildConditionSql(adaptor, childCondition)),
+      condition.conditions.map((childCondition) => buildConditionSql(adaptor, childCondition, doubleQuote)),
       ` ${condition.type} `,
     )}`;
   }
 
-  let check = sql`${raw(condition.operator)} ${condition.value}`;
+  let check = sql`${raw(condition.operator)}
+  ${condition.value}`;
 
   if (condition.operator === "=" && condition.value === null) {
     check = sql`IS NULL`;
@@ -94,7 +99,9 @@ export const buildConditionSql = (adaptor: DatabaseAdaptor, condition: SelectCon
     check = sql`IS NOT NULL`;
   }
 
-  return sql`${raw(condition.field.table.id)}.${raw(condition.field.key)} ${check}`;
+  return sql`${raw(condition.field.table.id)}.${
+    doubleQuote ? raw(`"${condition.field.key}"`) : raw(condition.field.key)
+  } ${check}`;
 };
 
 export interface SelectQuery<TTable extends Table = Table, TLimit extends number = number> {
