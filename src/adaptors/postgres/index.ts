@@ -164,10 +164,10 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
         FROM information_schema.table_constraints tc
         JOIN information_schema.key_column_usage kcu
           ON tc.constraint_name = kcu.constraint_name
-        WHERE tc.table_name = ${raw(`"${table.id}"`)}
+        WHERE tc.table_name = ${raw(`'${table.id}'`)}
           AND tc.constraint_type = 'PRIMARY KEY'
       ) pk ON c.column_name = pk.column_name
-      WHERE c.table_name = ${raw(`"${table.id}"`)}
+      WHERE c.table_name = ${raw(`'${table.id}'`)}
     `);
 
     return mapSqlResult<any, TableColumnInfo, number>(columnResult, (row) => {
