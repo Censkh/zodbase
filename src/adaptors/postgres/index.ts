@@ -152,36 +152,32 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
 
   async fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>> {
     const columnResult = await this.execute(sql`
-      SHOW
-      COLUMNS FROM
-      ${table.id}
+      SELECT 
+        c.column_name,
+        c.is_nullable,
+        c.column_default,
+        c.is_identity,
+        CASE WHEN pk.constraint_type = 'PRIMARY KEY' THEN true ELSE false END as is_primary_key
+      FROM information_schema.columns c
+      LEFT JOIN (
+        SELECT kcu.column_name, tc.constraint_type
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+        WHERE tc.table_name = ${table.id}
+          AND tc.constraint_type = 'PRIMARY KEY'
+      ) pk ON c.column_name = pk.column_name
+      WHERE c.table_name = ${table.id}
     `);
-    const indexResult = await this.execute(sql`
-      SHOW
-      INDEX FROM
-      ${table.id}
-    `);
-
-    const indexColumns: Record<string, any> = {};
-    for (const index of indexResult.results) {
-      indexColumns[index.column_name] = index;
-    }
 
     return mapSqlResult<any, TableColumnInfo, number>(columnResult, (row) => {
-      if (row.is_hidden) {
-        return;
-      }
-
-      const index = indexColumns[row.column_name];
-      const isPrimaryKey = !index?.storing;
-
       return {
         name: row.column_name,
         type: {} as any,
-        notNull: row.is_nullable,
+        notNull: row.is_nullable === "NO",
         hasDefault: row.column_default !== null,
-        isIdentity: undefined,
-        primaryKey: isPrimaryKey,
+        isIdentity: row.is_identity === "YES",
+        primaryKey: row.is_primary_key,
       };
     });
   }
