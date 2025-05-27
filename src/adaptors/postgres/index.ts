@@ -5,6 +5,7 @@ import DatabaseAdaptor from "../../DatabaseAdaptor";
 import {
   type BackfillOptions,
   backfill,
+  type ExecuteStatementEvent,
   type FieldDiffType,
   isZodRequired,
   join,
@@ -25,6 +26,7 @@ import {
   type SingleFieldBinding,
   type SqlDefiniteResult,
   type SqlResult,
+  type SqlResultTimings,
   type StringKeys,
   type ValueOfTable,
 } from "../../QueryBuilder";
@@ -57,23 +59,33 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
     const startTimestamp = Date.now();
     const rawSql = statement[TO_SQL_SYMBOL]();
     let success = false;
+    let timings: SqlResultTimings | undefined;
 
     try {
       const res = await this.driver.query(rawSql);
       success = true;
+
+      timings = {
+        wallTimeMs: Date.now() - startTimestamp,
+      };
+
       return this.mapResult({
         results: res.rows,
         first: res.rows[0],
+        timings: timings,
       });
     } finally {
+      const event: ExecuteStatementEvent = {
+        sql: rawSql,
+        timings: timings ?? {
+          wallTimeMs: Date.now() - startTimestamp,
+        },
+        success: success,
+      };
+      this.options.events?.onExecuteStatement?.(event);
+
       if (this.options.debug) {
-        console.debug("PostgresAdaptor.execute", "Executed SQL", {
-          success,
-          sql: rawSql,
-          timings: {
-            totalDurationMs: Date.now() - startTimestamp,
-          },
-        });
+        console.debug("PostgresAdaptor.execute", "Executed SQL", event);
       }
     }
   }
@@ -96,11 +108,17 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
 
   buildSelectSql(select: SelectQuery): Statement {
     return sql`SELECT ${raw(select.fields.map((field) => (field.key === "*" ? "*" : `"${field.key}"`)))}
-            FROM ${select.table} ${select.where ? sql` WHERE ${buildConditionSql(this, select.where, true)}` : raw("")}${
-              select.orderBy.length > 0
-                ? sql` ORDER BY ${raw(select.orderBy.map((order) => `"${order.field.key}" ${order.direction}`))}`
-                : raw("")
-            }${raw(select.limit ? ` LIMIT ${select.limit}` : "")}${raw(select.offset ? ` OFFSET ${select.offset}` : "")}`;
+               FROM ${select.table} ${
+                 select.where
+                   ? sql` WHERE
+               ${buildConditionSql(this, select.where, true)}`
+                   : raw("")
+               }${
+                 select.orderBy.length > 0
+                   ? sql` ORDER BY
+                   ${raw(select.orderBy.map((order) => `"${order.field.key}" ${order.direction}`))}`
+                   : raw("")
+               }${raw(select.limit ? ` LIMIT ${select.limit}` : "")}${raw(select.offset ? ` OFFSET ${select.offset}` : "")}`;
   }
 
   async executeSelect<R>(select: SelectQuery): Promise<R> {
@@ -114,13 +132,8 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
   ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
     const parsedValues = table.schema.parse(values) as any;
     const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(parsedValues).map((k) => `"${k}"`))})
-                 VALUES (${raw(Object.values(parsedValues).map((v) => valueToSql(v, true)))})
-                 RETURNING *`;
-    const result = await this.execute(statement);
-    return {
-      first: result.first as any,
-      results: result.results as any,
-    };
+                          VALUES (${raw(Object.values(parsedValues).map((v) => valueToSql(v, true)))}) RETURNING *`;
+    return (await this.execute(statement)) as any;
   }
 
   async executeInsertMany<TTable extends Table>(
@@ -129,26 +142,25 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
   ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, number>> {
     const parsedValues = values.map((value) => table.schema.parse(value)) as any;
     const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(parsedValues[0]).map((k) => `"${k}"`))})
-                 VALUES ${raw(
-                   parsedValues.map(
-                     (value: any) => sql`(${raw(Object.values(value).map((v) => valueToSql(v, true)))})`,
-                   ),
-                 )}
-                 RETURNING *`;
-    const result = await this.execute(statement);
-    return {
-      first: result.first as any,
-      results: result.results as any,
-    };
+                          VALUES ${raw(
+                            parsedValues.map(
+                              (value: any) => sql`(${raw(Object.values(value).map((v) => valueToSql(v, true)))})`,
+                            ),
+                          )} RETURNING *`;
+    return (await this.execute(statement)) as any;
   }
 
   async fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>> {
     const columnResult = await this.execute(sql`
-     SHOW COLUMNS FROM ${table.id}
+      SHOW
+      COLUMNS FROM
+      ${table.id}
     `);
     const indexResult = await this.execute(sql`
-    SHOW INDEX FROM ${table.id}
-`);
+      SHOW
+      INDEX FROM
+      ${table.id}
+    `);
 
     const indexColumns: Record<string, any> = {};
     for (const index of indexResult.results) {
@@ -205,7 +217,12 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
         ),
       ),
     )}
-                          FROM ${table} ${where ? sql`WHERE ${buildConditionSql(this, where, true)}` : raw("")}`;
+                          FROM ${table} ${
+                            where
+                              ? sql`WHERE
+                          ${buildConditionSql(this, where, true)}`
+                              : raw("")
+                          }`;
     return this.execute(statement) as any;
   }
 
@@ -214,8 +231,8 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
     where: SelectCondition<ValueOfTable<TTable>>,
   ): Promise<SqlResult<void, 0>> {
     const statement = sql`DELETE
-                 FROM ${table}
-                 WHERE ${buildConditionSql(this, where, true)}`;
+                          FROM ${table}
+                          WHERE ${buildConditionSql(this, where, true)}`;
     return this.execute(statement) as any;
   }
 
@@ -236,9 +253,8 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
     );
 
     return sql`UPDATE ${table}
-                 SET (${raw(keys)}) = (${raw(values)})
-                 WHERE ${buildConditionSql(this, where, true)}
-                 RETURNING *`;
+               SET (${raw(keys)}) = (${raw(values)})
+               WHERE ${buildConditionSql(this, where, true)} RETURNING *`;
   }
 
   protected buildUpsertSql<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
@@ -247,12 +263,16 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
     field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
   ): Statement {
     return sql`INSERT INTO ${table.id} (${raw(Object.keys(values).map((k) => `"${k}"`))})
-                 VALUES (${raw(Object.values(values).map((v) => valueToSql(v, true)))})
-                 ON CONFLICT ("${field.key}")
-                 DO UPDATE SET ${raw(
-                   Object.entries(values).map(([key, value]) => sql`"${key}" = ${valueToSql(value, true)}`),
-                 )}
-                 RETURNING *`;
+               VALUES (${raw(Object.values(values).map((v) => valueToSql(v, true)))}) ON CONFLICT ("${field.key}")
+                 DO
+    UPDATE SET ${raw(
+      Object.entries(values).map(
+        ([key, value]) => sql`"${key}"
+      =
+      ${valueToSql(value, true)}`,
+      ),
+    )}
+      RETURNING *`;
   }
 
   async processDiff(table: Table, diff: TableDiff): Promise<void> {
@@ -269,8 +289,8 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
         const primaryKeyMeta = getMetaItem(schema, primaryKey);
 
         const statement = sql`
-            ALTER TABLE ${table.id}
-              ADD COLUMN "${fieldDiff.key}" ${raw(this.typeToSql(schema))}${raw(primaryKeyMeta ? " PRIMARY KEY" : "")}`;
+          ALTER TABLE ${table.id}
+            ADD COLUMN "${fieldDiff.key}" ${raw(this.typeToSql(schema))}${raw(primaryKeyMeta ? " PRIMARY KEY" : "")}`;
 
         await this.execute(statement);
 
@@ -283,8 +303,8 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
 
           await this.execute(
             sql`UPDATE ${table.id}
-                  SET "${fieldDiff.key}" = ${backfillValue}
-                  WHERE "${fieldDiff.key}" IS NULL`,
+                SET "${fieldDiff.key}" = ${backfillValue}
+                WHERE "${fieldDiff.key}" IS NULL`,
           );
         }
       } else if (fieldDiff.type === "removed") {
@@ -301,7 +321,8 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
 
             await this.execute(
               sql`UPDATE ${table.id}
-                 SET "${fieldDiff.key}" = ${backfillValue} WHERE "${fieldDiff.key}" IS NULL`,
+                  SET "${fieldDiff.key}" = ${backfillValue}
+                  WHERE "${fieldDiff.key}" IS NULL`,
             );
           }
         }
@@ -314,6 +335,7 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
   >(table: TTable, values: TValue[], field: SingleFieldBinding<TValue, TKey>): Promise<SqlResult<void, 0>> {
+    const startTimestamp = Date.now();
     const statements = values.map((value) => {
       return this.driver.query(
         this.buildUpdateSql(table, value, field.equals(value[field.key] as any) as any)[TO_SQL_SYMBOL](),
@@ -324,31 +346,34 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
     return {
       results: [],
       first: undefined,
+      timings: {
+        wallTimeMs: Date.now() - startTimestamp,
+      },
     };
   }
 
   createTable(table: Table, name?: string) {
     const statement = sql`CREATE TABLE IF NOT EXISTS ${name ?? table.id}
-      (
-        ${join(
-          Object.values(table.fields).map((field) => {
-            const schema = field.schema;
-            const primaryKeyMeta = getMetaItem(schema, primaryKey);
-            //const autoIncrementMeta = getMetaItem(schema, autoIncrement);
-            return raw(
-              [
-                `"${field.key}"`,
-                this.typeToSql(schema),
-                primaryKeyMeta ? "PRIMARY KEY" : "",
-                isZodRequired(schema) ? " NOT NULL" : "",
-              ]
-                .filter(Boolean)
-                .join(" "),
-            );
-          }),
-          ",",
-        )}
-      )`;
+                          (
+                            ${join(
+                              Object.values(table.fields).map((field) => {
+                                const schema = field.schema;
+                                const primaryKeyMeta = getMetaItem(schema, primaryKey);
+                                //const autoIncrementMeta = getMetaItem(schema, autoIncrement);
+                                return raw(
+                                  [
+                                    `"${field.key}"`,
+                                    this.typeToSql(schema),
+                                    primaryKeyMeta ? "PRIMARY KEY" : "",
+                                    isZodRequired(schema) ? " NOT NULL" : "",
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" "),
+                                );
+                              }),
+                              ",",
+                            )}
+                          )`;
 
     return this.execute(statement);
   }

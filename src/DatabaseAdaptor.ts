@@ -2,6 +2,7 @@
 import * as zod from "zod/v4";
 import { getMetaItem } from "zod-meta";
 import {
+  type DatabaseEvents,
   isZodRequired,
   isZodTypeExtends,
   join,
@@ -27,6 +28,7 @@ import type { Statement } from "./Statement";
 export interface DatabaseAdaptorOptions<TDriver = any> {
   driver: TDriver;
   debug?: boolean;
+  events?: DatabaseEvents;
 }
 
 export default abstract class DatabaseAdaptor<TDriver = any> {

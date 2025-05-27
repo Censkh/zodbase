@@ -14,6 +14,7 @@ import type {
   SingleFieldBinding,
   SqlDefiniteResult,
   SqlResult,
+  SqlResultTimings,
   StringKeys,
   ValueOfTable,
 } from "./QueryBuilder";
@@ -94,8 +95,19 @@ export const updateSql = <T extends zod.ZodObject<any>>(schema: T, entity: Parti
   )} WHERE ${primaryKeyName} = '${safeEntity[primaryKeyName]}'`;
 };*/
 
+export interface ExecuteStatementEvent {
+  success: boolean;
+  timings: SqlResultTimings;
+  sql: string;
+}
+
+export interface DatabaseEvents {
+  onExecuteStatement?: (event: ExecuteStatementEvent) => void;
+}
+
 export interface DatabaseOptions {
   adaptor: DatabaseAdaptor;
+  events?: DatabaseEvents;
 }
 
 interface BaseFieldModification<M> {
@@ -394,6 +406,9 @@ export class Database {
           return Promise.resolve({
             results: [],
             first: undefined,
+            timings: {
+              wallTimeMs: 0,
+            },
           });
         }
         return adapator.executeUpdateMany(table, values, field);

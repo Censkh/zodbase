@@ -144,10 +144,16 @@ export type SelectQueryBuilder<TTable extends Table, TResultValue, TResultLimit 
 export type SqlOperator = "=" | "<" | ">" | "<=" | ">=" | "!=" | "LIKE" | "IN";
 export type StringOrNever<T> = T extends string ? T : never;
 
+export interface SqlResultTimings {
+  wallTimeMs: number;
+  databaseTimeMs?: number;
+}
+
 export interface SqlResult<TValue = any, TLimit extends number = number> {
   results: TLimit extends 0 ? [] : TValue[];
   first: TLimit extends 0 ? void : TValue | undefined;
   limit?: TLimit;
+  timings?: SqlResultTimings;
 }
 
 export interface SqlDefiniteResult<TValue, TLimit extends number> extends Omit<SqlResult<TValue, TLimit>, "first"> {
