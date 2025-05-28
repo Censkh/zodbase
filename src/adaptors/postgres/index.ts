@@ -146,7 +146,7 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
                             parsedValues.map(
                               (value: any) => sql`(${raw(Object.values(value).map((v) => valueToSql(v, true)))})`,
                             ),
-                           )} RETURNING *`;
+                          )} RETURNING *`;
     return (await this.execute(statement)) as any;
   }
 
