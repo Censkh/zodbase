@@ -304,7 +304,7 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
           );
         }
       } else if (fieldDiff.type === "removed") {
-        await this.execute(sql`ALTER TABLE ${table.id} DROP COLUMN "${fieldDiff.key}"`);
+        await this.execute(sql`ALTER TABLE ${table.id} DROP COLUMN "${raw(fieldDiff.key)}"`);
       } else if (fieldDiff.type === "modified") {
         const schema = field?.schema;
         if (schema) {
