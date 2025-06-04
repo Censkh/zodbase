@@ -56,7 +56,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     table: TTable,
     values: Partial<InputOfTable<TTable>>,
     where: SelectCondition<ValueOfTable<TTable>>,
-  ): Promise<SqlResult<void, 0>>;
+  ): Promise<SqlResult<ValueOfTable<TTable> | void, 1 | 0>>;
   abstract executeUpsert<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>,

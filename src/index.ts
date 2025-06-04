@@ -341,14 +341,21 @@ export class Database {
 
     const adapator = this.options.adaptor;
     return toLazyPromise(
-      (): Promise<SqlResult<void, 0>> => {
-        return adapator.executeUpdate(table, values, where);
+      async (): Promise<SqlResult<void, 0>> => {
+        await adapator.executeUpdate(table, values, where);
+        return {
+          results: [],
+          first: undefined,
+        };
       },
       {
         async selectMutated<TKey extends BindingKeys<TTable>>(
           ...keys: TKey[]
         ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
-          await adapator.executeUpdate(table, values, where);
+          const result = await adapator.executeUpdate(table, values, where);
+          if (result.results.length > 0) {
+            return result as any;
+          }
 
           return adapator.executeSelect({
             table,
@@ -372,14 +379,21 @@ export class Database {
     const adaptor = this.options.adaptor;
     return toLazyPromise(
       async () => {
-        const result = await adaptor.executeUpsert(table, values, field);
-        return result;
+        await adaptor.executeUpsert(table, values, field);
+        return {
+          results: [],
+          first: undefined,
+        };
       },
       {
         async selectMutated<TKey extends BindingKeys<TTable>>(
           ...keys: TKey[]
         ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
-          await adaptor.executeUpsert(table, values, field);
+          const result = await adaptor.executeUpsert(table, values, field);
+          if (result.results.length > 0) {
+            return result as any;
+          }
+
           return adaptor.executeSelect({
             table,
             // @ts-ignore
@@ -401,17 +415,21 @@ export class Database {
   >(table: TTable, values: TValue[], field: SingleFieldBinding<TValue, TFieldKey>) {
     const adapator = this.options.adaptor;
     return toLazyPromise(
-      (): Promise<SqlResult<void, 0>> => {
+      async (): Promise<SqlResult<void, 0>> => {
         if (values.length === 0) {
-          return Promise.resolve({
+          return {
             results: [],
             first: undefined,
             timings: {
               wallTimeMs: 0,
             },
-          });
+          };
         }
-        return adapator.executeUpdateMany(table, values, field);
+        await adapator.executeUpdateMany(table, values, field);
+        return {
+          results: [],
+          first: undefined,
+        };
       },
       {
         async selectMutated<TKey extends BindingKeys<TTable>>(
@@ -423,7 +441,10 @@ export class Database {
               first: undefined,
             } as any;
           }
-          await adapator.executeUpdateMany(table, values, field);
+          const result = await adapator.executeUpdateMany(table, values, field);
+          if (result.results.length > 0) {
+            return result as any;
+          }
 
           return adapator.executeSelect({
             table,
