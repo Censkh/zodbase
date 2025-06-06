@@ -342,7 +342,7 @@ export class Database {
     const adapator = this.options.adaptor;
     return toLazyPromise(
       async (): Promise<SqlResult<void, 0>> => {
-        await adapator.executeUpdate(table, values, where);
+        await adapator.executeUpdate(table, values, where, false);
         return {
           results: [],
           first: undefined,
@@ -352,7 +352,7 @@ export class Database {
         async selectMutated<TKey extends BindingKeys<TTable>>(
           ...keys: TKey[]
         ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
-          const result = await adapator.executeUpdate(table, values, where);
+          const result = await adapator.executeUpdate(table, values, where, true);
           if (result.results.length > 0) {
             return result as any;
           }

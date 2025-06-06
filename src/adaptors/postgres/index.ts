@@ -186,8 +186,9 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
     table: TTable,
     values: Partial<InputOfTable<TTable>>,
     where: SelectCondition<ValueOfTable<TTable>>,
+    shouldReturn = false,
   ): Promise<SqlResult<void, 0>> {
-    const sql = this.buildUpdateSql(table, values, where);
+    const sql = this.buildUpdateSql(table, values, where, shouldReturn);
     return (await this.execute(sql)) as any;
   }
 
@@ -236,6 +237,7 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
     table: TTable,
     valueMap: Partial<InputOfTable<TTable>>,
     where: SelectCondition<ValueOfTable<TTable>>,
+    shouldReturn = false,
   ): Statement {
     const { keys, values } = Object.entries(valueMap).reduce(
       (acc, [key, value]) => {
@@ -250,7 +252,7 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
 
     return sql`UPDATE ${table}
                SET (${raw(keys)}) = (${raw(values)})
-               WHERE ${buildConditionSql(this, where, true)} RETURNING *`;
+               WHERE ${buildConditionSql(this, where, true)}${raw(shouldReturn ? " RETURNING *" : "")}`;
   }
 
   protected buildUpsertSql<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
@@ -334,7 +336,7 @@ export default class PostgresAdaptor<TDriver extends pg.Client> extends Database
     const startTimestamp = Date.now();
     const statements = values.map((value) => {
       return this.driver.query(
-        this.buildUpdateSql(table, value, field.equals(value[field.key] as any) as any)[TO_SQL_SYMBOL](),
+        this.buildUpdateSql(table, value, field.equals(value[field.key] as any) as any, false)[TO_SQL_SYMBOL](),
       );
     });
 
