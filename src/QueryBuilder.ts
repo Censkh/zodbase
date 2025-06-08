@@ -85,7 +85,12 @@ export const buildConditionSql = (
 ): Statement => {
   if ("conditions" in condition) {
     return sql`${join(
-      condition.conditions.map((childCondition) => buildConditionSql(adaptor, childCondition, doubleQuote)),
+      condition.conditions.reduce((result, childCondition) => {
+        if (childCondition) {
+          result.push(buildConditionSql(adaptor, childCondition, doubleQuote));
+        }
+        return result;
+      }, [] as Statement[]),
       ` ${condition.type} `,
     )}`;
   }
