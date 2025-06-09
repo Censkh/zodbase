@@ -70,7 +70,6 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
         await this.execute(statement);
 
         const backfillMeta = getRequiredBackfillMeta(schema);
-        console.log(backfillMeta);
         if (backfillMeta) {
           const backfillValue = backfillMeta.data.value;
           if (backfillValue === undefined || backfillValue === null) {
@@ -93,7 +92,6 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
           const backfillMeta = getRequiredBackfillMeta(schema);
           if (backfillMeta) {
             const backfillValue = backfillMeta.data.value;
-            console.log(schema.meta());
             if (backfillValue === undefined || backfillValue === null) {
               throw new Error(`[zodbase] Backfill value is required when adding required field '${field?.key}'`);
             }
