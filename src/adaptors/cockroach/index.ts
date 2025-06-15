@@ -1,9 +1,8 @@
-import type * as pg from "pg";
 import { mapSqlResult, sql, type Table, type TableColumnInfo } from "../../index";
 import type { SqlResult } from "../../QueryBuilder";
 import PostgresAdaptor from "../postgres";
 
-export default class CockroachAdaptor<TDriver extends pg.Client> extends PostgresAdaptor<TDriver> {
+export default class CockroachAdaptor extends PostgresAdaptor {
   async fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>> {
     const columnResult = await this.execute(sql`
       SHOW

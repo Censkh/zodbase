@@ -50,7 +50,9 @@ const TYPE_ORDERING: Record<FieldDiffType, number> = {
   removed: 2,
 };
 
-export default class PostgresAdaptor<TDriver extends pg.Client> extends DatabaseAdaptor<TDriver> {
+export default class PostgresAdaptor<
+  TDriver extends pg.Client | pg.Pool = pg.Client | pg.Pool,
+> extends DatabaseAdaptor<TDriver> {
   async execute(statement: Statement): Promise<SqlResult> {
     if (typeof statement?.[TO_SQL_SYMBOL] !== "function") {
       throw new Error("Invalid statement");
