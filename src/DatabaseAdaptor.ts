@@ -135,7 +135,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
                 .join(" "),
             );
           }),
-          ",",
+          ", ",
         )}
       )`;
 

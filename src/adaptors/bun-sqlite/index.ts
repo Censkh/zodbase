@@ -27,12 +27,10 @@ export default class BunSqliteAdaptor extends SqliteAdaptor<BunDatabase> {
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
   >(table: TTable, values: TValue[], field: SingleFieldBinding<TValue, TKey>): Promise<SqlResult<void, 0>> {
-    /*const statements = values.map((value) => {
-      return this.driver.prepare(
-        this.buildUpdateSql(table, value, field.equals(value[field.key] as any)),
-      );
+    const statements = values.map((value) => {
+      return this.buildUpdateSql(table, value, field.equals(value[field.key] as any) as any);
     });
-    //const res = await this.driver.batch(statements);*/
+    await Promise.all(statements.map((statement) => this.execute(statement)));
     return {
       results: [],
       first: undefined,

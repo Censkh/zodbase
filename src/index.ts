@@ -1,4 +1,4 @@
-import type * as zod from "zod/v4";
+import * as zod from "zod/v4";
 import { findFieldMetaItems } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
 import { escapeSqlValue } from "./Escaping";
@@ -24,6 +24,7 @@ import { isZodRequired } from "./ZodUtils";
 
 export * from "./index.common";
 export * from "./ZodUtils";
+export { TO_SQL_SYMBOL };
 
 const IS_REACT_NATIVE = typeof navigator !== "undefined" && (navigator as any).product === "ReactNative";
 
@@ -55,7 +56,8 @@ export const valueToSql = (value: any, nested?: boolean): string => {
     return "null";
   }
   if (typeof value === "object") {
-    return `(${escapeSqlValue(JSON.stringify(value))})`;
+    const objectString = escapeSqlValue(JSON.stringify(value));
+    return nested ? objectString : `(${objectString})`;
   }
 
   if (typeof value === "boolean") {
@@ -293,10 +295,17 @@ export class Database {
         return countBuilder;
       },
     } as CountBuilder<TTable, Record<TKey, number>>;
-    return toLazyPromise(
-      () => adapator.executeCount(table, getFieldBindingsByKeys(table, fields) as any, where),
-      countBuilder,
-    );
+    let fieldBindings: any = getFieldBindingsByKeys(table, fields);
+    if (fieldBindings.length === 0) {
+      fieldBindings = [
+        {
+          table: table,
+          key: "*",
+          schema: zod.number(),
+        },
+      ];
+    }
+    return toLazyPromise(() => adapator.executeCount(table, fieldBindings, where), countBuilder);
   }
 
   delete<TTable extends Table>(table: TTable) {
@@ -321,7 +330,8 @@ export class Database {
     table: TTable,
     values: InputOfTable<TTable>,
   ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
-    return this.options.adaptor.executeInsert(table, values);
+    const parsedValues = table.schema.parse(values);
+    return this.options.adaptor.executeInsert(table, parsedValues as any);
   }
 
   update<TTable extends Table>(
@@ -333,16 +343,18 @@ export class Database {
       throw new Error("No values to update");
     }
 
+    const parsedValues: any = (table.schema as zod.ZodObject<any>).partial().parse(values);
+
     const updatedAtFields = findFieldMetaItems(table.schema, updatedAt);
     for (const field of updatedAtFields) {
       // @ts-ignore
-      values[field.key] = Date.now();
+      parsedValues[field.key] = Date.now();
     }
 
     const adapator = this.options.adaptor;
     return toLazyPromise(
       async (): Promise<SqlResult<void, 0>> => {
-        await adapator.executeUpdate(table, values, where, false);
+        await adapator.executeUpdate(table, parsedValues, where, false);
         return {
           results: [],
           first: undefined,
@@ -352,7 +364,7 @@ export class Database {
         async selectMutated<TKey extends BindingKeys<TTable>>(
           ...keys: TKey[]
         ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
-          const result = await adapator.executeUpdate(table, values, where, true);
+          const result = await adapator.executeUpdate(table, parsedValues, where, true);
           if (result.results.length > 0) {
             return result as any;
           }
@@ -376,10 +388,11 @@ export class Database {
     values: InputOfTable<TTable>,
     field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
   ) {
+    const parsedValues: any = (table.schema as zod.ZodObject<any>).parse(values);
     const adaptor = this.options.adaptor;
     return toLazyPromise(
       async () => {
-        await adaptor.executeUpsert(table, values, field);
+        await adaptor.executeUpsert(table, parsedValues, field);
         return {
           results: [],
           first: undefined,
@@ -389,7 +402,7 @@ export class Database {
         async selectMutated<TKey extends BindingKeys<TTable>>(
           ...keys: TKey[]
         ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
-          const result = await adaptor.executeUpsert(table, values, field);
+          const result = await adaptor.executeUpsert(table, parsedValues, field);
           if (result.results.length > 0) {
             return result as any;
           }
@@ -398,7 +411,7 @@ export class Database {
             table,
             // @ts-ignore
             fields: getFieldBindingsByKeys(table, keys.length === 0 ? ["*"] : keys),
-            where: field.equals((values as any)[field.key]),
+            where: field.equals(parsedValues[field.key]),
             orderBy: [],
             limit: 1,
             offset: undefined,
@@ -413,10 +426,11 @@ export class Database {
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TFieldKey extends StringKeys<ValueOfTable<TTable>>,
   >(table: TTable, values: TValue[], field: SingleFieldBinding<TValue, TFieldKey>) {
+    const parsedValues: any = values.map((value) => (table.schema as zod.ZodObject<any>).partial().parse(value));
     const adapator = this.options.adaptor;
     return toLazyPromise(
       async (): Promise<SqlResult<void, 0>> => {
-        if (values.length === 0) {
+        if (parsedValues.length === 0) {
           return {
             results: [],
             first: undefined,
@@ -425,7 +439,7 @@ export class Database {
             },
           };
         }
-        await adapator.executeUpdateMany(table, values, field);
+        await adapator.executeUpdateMany(table, parsedValues, field);
         return {
           results: [],
           first: undefined,
@@ -435,13 +449,13 @@ export class Database {
         async selectMutated<TKey extends BindingKeys<TTable>>(
           ...keys: TKey[]
         ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, number>> {
-          if (values.length === 0) {
+          if (parsedValues.length === 0) {
             return {
               results: [],
               first: undefined,
             } as any;
           }
-          const result = await adapator.executeUpdateMany(table, values, field);
+          const result = await adapator.executeUpdateMany(table, parsedValues, field);
           if (result.results.length > 0) {
             return result as any;
           }
@@ -449,7 +463,7 @@ export class Database {
           return adapator.executeSelect({
             table,
             fields: getFieldBindingsByKeys(table, keys),
-            where: field.in(values.map((value) => value[field.key])),
+            where: field.in(parsedValues.map((value: any) => value[field.key])),
             orderBy: [],
             limit: undefined,
             offset: undefined,
@@ -470,7 +484,8 @@ export class Database {
       } as any;
     }
 
-    return this.options.adaptor.executeInsertMany(table, values);
+    const parsedValues = values.map((v) => table.schema.parse(v));
+    return this.options.adaptor.executeInsertMany(table, parsedValues as any);
   }
 
   async syncTable<TTable extends Table>(table: TTable): Promise<void> {

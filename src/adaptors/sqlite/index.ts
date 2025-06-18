@@ -150,13 +150,12 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     table: TTable,
     values: InputOfTable<TTable>,
   ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
-    const parsedValues = table.schema.parse(values) as any;
-    const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(parsedValues))})
-                 VALUES ${Object.values(parsedValues)}`;
+    const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(values as any))})
+                 VALUES ${Object.values(values as any)}`;
     await this.execute(statement);
     return {
-      first: parsedValues as any,
-      results: [parsedValues as any],
+      first: values as any,
+      results: [values as any],
     };
   }
 
@@ -164,13 +163,12 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     table: TTable,
     values: InputOfTable<TTable>[],
   ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, number>> {
-    const parsedValues = values.map((value) => table.schema.parse(value)) as any;
-    const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(parsedValues[0]))})
-                 VALUES ${raw(parsedValues.map((value: any) => sql`${Object.values(value)}`))}`;
+    const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(values[0] as any))})
+                 VALUES ${raw(values.map((value: any) => sql`${Object.values(value)}`))}`;
     await this.execute(statement);
     return {
-      first: parsedValues[0] as any,
-      results: parsedValues as any,
+      first: values[0] as any,
+      results: values as any,
     };
   }
 
@@ -200,8 +198,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     values: Partial<InputOfTable<TTable>>,
     field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
   ): Promise<SqlResult<void, 0>> {
-    const parsedValues = table.schema.parse(values);
-    const sql = this.buildUpsertSql(table, parsedValues as any, field);
+    const sql = this.buildUpsertSql(table, values as any, field);
     return (await this.execute(sql)) as any;
   }
 

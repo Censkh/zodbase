@@ -34,6 +34,8 @@
     "@libsql/client": "^0.15.8",
     "@types/bun": "^1.2.15",
     "@types/node": "^22.15.29",
+    "pg": "^8.16.1",
+    "pg-mem": "^3.0.5",
     "typescript": "^5.8.3"
   },
   "dependencies": {

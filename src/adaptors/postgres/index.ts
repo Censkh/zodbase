@@ -60,6 +60,7 @@ export default class PostgresAdaptor<
 
     const startTimestamp = Date.now();
     const rawSql = statement[TO_SQL_SYMBOL]();
+    //console.log(rawSql);
     let success = false;
     let timings: SqlResultTimings | undefined;
 
@@ -132,9 +133,8 @@ export default class PostgresAdaptor<
     table: TTable,
     values: InputOfTable<TTable>,
   ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
-    const parsedValues = table.schema.parse(values) as any;
-    const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(parsedValues).map((k) => `"${k}"`))})
-                          VALUES (${raw(Object.values(parsedValues).map((v) => valueToSql(v, true)))}) RETURNING *`;
+    const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(values as any).map((k) => `"${k}"`))})
+                          VALUES (${raw(Object.values(values as any).map((v) => valueToSql(v, true)))}) RETURNING *`;
     return (await this.execute(statement)) as any;
   }
 
@@ -142,10 +142,9 @@ export default class PostgresAdaptor<
     table: TTable,
     values: InputOfTable<TTable>[],
   ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, number>> {
-    const parsedValues = values.map((value) => table.schema.parse(value)) as any;
-    const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(parsedValues[0]).map((k) => `"${k}"`))})
+    const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(values[0] as any).map((k) => `"${k}"`))})
                           VALUES ${raw(
-                            parsedValues.map(
+                            values.map(
                               (value: any) => sql`(${raw(Object.values(value).map((v) => valueToSql(v, true)))})`,
                             ),
                           )} RETURNING *`;
@@ -199,8 +198,7 @@ export default class PostgresAdaptor<
     values: Partial<InputOfTable<TTable>>,
     field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
   ): Promise<SqlResult<void, 0>> {
-    const parsedValues = table.schema.parse(values);
-    const sql = this.buildUpsertSql(table, parsedValues as any, field);
+    const sql = this.buildUpsertSql(table, values as any, field);
     return (await this.execute(sql)) as any;
   }
 
@@ -267,7 +265,7 @@ export default class PostgresAdaptor<
                  DO
     UPDATE SET ${raw(
       Object.entries(values).map(
-        ([key, value]) => sql`"${key}"
+        ([key, value]) => sql`"${raw(key)}"
       =
       ${valueToSql(value, true)}`,
       ),
@@ -365,13 +363,13 @@ export default class PostgresAdaptor<
                                     `"${field.key}"`,
                                     this.typeToSql(schema),
                                     primaryKeyMeta ? "PRIMARY KEY" : "",
-                                    isZodRequired(schema) ? " NOT NULL" : "",
+                                    isZodRequired(schema) ? "NOT NULL" : "",
                                   ]
                                     .filter(Boolean)
                                     .join(" "),
                                 );
                               }),
-                              ",",
+                              ", ",
                             )}
                           )`;
 
