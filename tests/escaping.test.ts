@@ -1,7 +1,7 @@
 import BunDatabase from "bun:sqlite";
 import { newDb } from "pg-mem";
 import * as zod from "zod/v4";
-import { createTable, Database, meta, primaryKey, sql, TO_SQL_SYMBOL } from "../src";
+import { and, createTable, Database, meta, or, primaryKey, sql, TO_SQL_SYMBOL } from "../src";
 import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
 import PostgresAdaptor from "../src/adaptors/postgres";
 
@@ -274,5 +274,52 @@ describe.each([
       // Clean up
       await db.delete(TestTable).where(TestTable.$id.in(["1", "2"]));
     }
+  });
+
+  it("11. should escape values in select with various conditions", async () => {
+    const evilItem = { id: "1", data: evilStrings[0] };
+    const safeItem1 = { id: "2", data: "safe1" };
+    const safeItem2 = { id: "3", data: "safe2" };
+    const evilItem2 = { id: "4", data: evilStrings[1] };
+
+    await db.insertMany(TestTable, [evilItem, safeItem1, safeItem2, evilItem2]);
+
+    // Test notEquals
+    const { results: notEqualsResults } = await db
+      .select(TestTable, ["*"])
+      .where(TestTable.$data.notEquals(evilStrings[0]));
+
+    const expectedNotEquals = [safeItem1, safeItem2, evilItem2];
+    expect(notEqualsResults).toHaveLength(expectedNotEquals.length);
+    expect(notEqualsResults).toEqual(expect.arrayContaining(expectedNotEquals));
+
+    // Test in
+    const { results: inResults } = await db
+      .select(TestTable, ["*"])
+      .where(TestTable.$data.in([evilStrings[0], "safe1"]));
+
+    const expectedIn = [evilItem, safeItem1];
+    expect(inResults).toHaveLength(expectedIn.length);
+    expect(inResults).toEqual(expect.arrayContaining(expectedIn));
+
+    // Test or
+    const { results: orResults } = await db
+      .select(TestTable, ["*"])
+      .where(TestTable.$data.equals(evilStrings[0]).or(TestTable.$data.equals(evilStrings[1])));
+
+    const expectedOr = [evilItem, evilItem2];
+    expect(orResults).toHaveLength(expectedOr.length);
+    expect(orResults).toEqual(expect.arrayContaining(expectedOr));
+
+    // Test and
+    const { results: andResults } = await db
+      .select(TestTable, ["*"])
+      .where(TestTable.$data.equals(evilStrings[0]).and(TestTable.$id.equals("1")));
+
+    expect(andResults).toHaveLength(1);
+    expect(andResults[0]).toEqual(evilItem);
+
+    // cleanup
+    await db.delete(TestTable).where(TestTable.$id.in(["1", "2", "3", "4"]));
   });
 });
