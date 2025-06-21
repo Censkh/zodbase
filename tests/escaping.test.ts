@@ -1,7 +1,7 @@
 import BunDatabase from "bun:sqlite";
 import { newDb } from "pg-mem";
 import * as zod from "zod/v4";
-import { and, createTable, Database, meta, or, primaryKey, sql, TO_SQL_SYMBOL } from "../src";
+import { createTable, Database, meta, primaryKey, sql } from "../src";
 import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
 import PostgresAdaptor from "../src/adaptors/postgres";
 
