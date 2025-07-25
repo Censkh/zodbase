@@ -84,7 +84,7 @@ export const buildConditionSql = (
   doubleQuote?: boolean,
 ): Statement => {
   if ("conditions" in condition) {
-    return sql`${join(
+    return sql`(${join(
       condition.conditions.reduce((result, childCondition) => {
         if (childCondition) {
           result.push(buildConditionSql(adaptor, childCondition, doubleQuote));
@@ -92,7 +92,7 @@ export const buildConditionSql = (
         return result;
       }, [] as Statement[]),
       ` ${condition.type} `,
-    )}`;
+    )})`;
   }
 
   let check = sql`${raw(condition.operator)}
