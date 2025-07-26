@@ -375,7 +375,7 @@ export class Database {
             fields: getFieldBindingsByKeys(table, keys.length === 0 ? ["*"] : keys),
             where,
             orderBy: [],
-            limit: 1,
+            limit: undefined,
             offset: undefined,
           }) as any;
         },
