@@ -27,12 +27,6 @@ describe("valueToSql", () => {
     expect(valueToSql(undefined)).toBe("null");
   });
 
-  it("should handle empty string", () => {
-    // This is a special case in the implementation.
-    // It returns an unquoted empty string.
-    expect(valueToSql("")).toBe("");
-  });
-
   it("should handle arrays of primitives", () => {
     const arr = [1, "hello", true, null];
     const expected = "(1, 'hello', true, null)";
@@ -89,5 +83,9 @@ describe("valueToSql", () => {
     const inner2 = valueToSql(["a", "b"], true);
     const expected = `(${inner1}, ${inner2})`;
     expect(valueToSql(arr)).toBe(expected);
+  });
+
+  it("should handle empty strings", () => {
+    expect(valueToSql("")).toBe("''");
   });
 });

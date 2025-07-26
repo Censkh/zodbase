@@ -45,7 +45,7 @@ export const valueToSql = (value: any, nested?: boolean): string => {
   }
 
   if (value === "") {
-    return value;
+    return "''";
   }
 
   if (Array.isArray(value) && !nested) {
