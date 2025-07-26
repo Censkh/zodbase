@@ -31,6 +31,11 @@ export interface DatabaseAdaptorOptions<TDriver = any> {
   events?: DatabaseEvents;
 }
 
+export interface PossiblySelectedResult<TValue = any, TLimit extends number = number>
+  extends SqlResult<TValue, TLimit> {
+  selected: boolean;
+}
+
 export default abstract class DatabaseAdaptor<TDriver = any> {
   constructor(protected readonly options: DatabaseAdaptorOptions<TDriver>) {}
 
@@ -57,7 +62,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     values: Partial<InputOfTable<TTable>>,
     where: SelectCondition<ValueOfTable<TTable>>,
     shouldReturn?: boolean,
-  ): Promise<SqlResult<ValueOfTable<TTable> | void, 1 | 0>>;
+  ): Promise<PossiblySelectedResult<ValueOfTable<TTable>>>;
   abstract executeUpsert<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>,

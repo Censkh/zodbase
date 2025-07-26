@@ -14,7 +14,7 @@ import {
   type TableDiff,
   valueToSql,
 } from "../..";
-import DatabaseAdaptor from "../../DatabaseAdaptor";
+import DatabaseAdaptor, { type PossiblySelectedResult } from "../../DatabaseAdaptor";
 import { escapeSqlValue } from "../../Escaping";
 import {
   buildConditionSql,
@@ -188,9 +188,11 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     table: TTable,
     values: Partial<InputOfTable<TTable>>,
     where: SelectCondition<ValueOfTable<TTable>>,
-  ): Promise<SqlResult<void, 0>> {
+  ): Promise<PossiblySelectedResult<ValueOfTable<TTable>>> {
     const sql = this.buildUpdateSql(table, values, where);
-    return (await this.execute(sql)) as any;
+    const result = (await this.execute(sql)) as PossiblySelectedResult<ValueOfTable<TTable>>;
+    result.selected = false;
+    return result;
   }
 
   async executeUpsert<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(

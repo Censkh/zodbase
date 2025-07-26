@@ -1,7 +1,7 @@
 import type * as pg from "pg";
 import type * as zod from "zod/v4";
 import { getMetaItem, type ZodMetaItem } from "zod-meta";
-import DatabaseAdaptor from "../../DatabaseAdaptor";
+import DatabaseAdaptor, { type PossiblySelectedResult } from "../../DatabaseAdaptor";
 import {
   type BackfillOptions,
   backfill,
@@ -188,9 +188,11 @@ export default class PostgresAdaptor<
     values: Partial<InputOfTable<TTable>>,
     where: SelectCondition<ValueOfTable<TTable>>,
     shouldReturn = false,
-  ): Promise<SqlResult<void, 0>> {
+  ): Promise<PossiblySelectedResult<ValueOfTable<TTable>>> {
     const sql = this.buildUpdateSql(table, values, where, shouldReturn);
-    return (await this.execute(sql)) as any;
+    const result = (await this.execute(sql)) as PossiblySelectedResult<ValueOfTable<TTable>>;
+    result.selected = shouldReturn;
+    return result;
   }
 
   async executeUpsert<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(

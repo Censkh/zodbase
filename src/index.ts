@@ -363,9 +363,9 @@ export class Database {
       {
         async selectMutated<TKey extends BindingKeys<TTable>>(
           ...keys: TKey[]
-        ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
+        ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, number>> {
           const result = await adapator.executeUpdate(table, parsedValues, where, true);
-          if (result.results.length > 0) {
+          if (result.selected) {
             return result as any;
           }
 
@@ -380,7 +380,7 @@ export class Database {
           }) as any;
         },
       },
-    ) satisfies MutationResult<SqlDefiniteResult<ValueOfTable<TTable>, 1>>;
+    ) satisfies MutationResult<SqlDefiniteResult<ValueOfTable<TTable>, number>>;
   }
 
   upsert<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
