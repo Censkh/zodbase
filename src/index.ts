@@ -154,7 +154,6 @@ const getFieldBindingsByKeys = <TTable extends Table>(
         key: "*",
       } as any;
     }
-    // @ts-expect-error
     return table.fields[key as string];
   });
 };
@@ -347,7 +346,6 @@ export class Database {
 
     const updatedAtFields = findFieldMetaItems(table.schema, updatedAt);
     for (const field of updatedAtFields) {
-      // @ts-expect-error
       parsedValues[field.key] = Date.now();
     }
 
@@ -371,7 +369,6 @@ export class Database {
 
           return adapator.executeSelect({
             table,
-            // @ts-expect-error
             fields: getFieldBindingsByKeys(table, keys.length === 0 ? ["*"] : keys),
             where,
             orderBy: [],
@@ -409,7 +406,6 @@ export class Database {
 
           return adaptor.executeSelect({
             table,
-            // @ts-expect-error
             fields: getFieldBindingsByKeys(table, keys.length === 0 ? ["*"] : keys),
             where: field.equals(parsedValues[field.key]),
             orderBy: [],

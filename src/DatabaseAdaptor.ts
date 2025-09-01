@@ -1,4 +1,3 @@
-// @ts-expect-error
 import * as zod from "zod/v4";
 import { getMetaItem } from "zod-meta";
 import {
