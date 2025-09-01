@@ -15,7 +15,7 @@ export const toLazyPromise = <TPromiseResult, TObject extends object>(
     },
 
     catch: (...args: any[]) => {
-      // @ts-ignore
+      // @ts-expect-error
       return getPromise().catch.apply(getPromise(), args);
     },
 

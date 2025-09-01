@@ -28,7 +28,7 @@ export { TO_SQL_SYMBOL };
 
 const IS_REACT_NATIVE = typeof navigator !== "undefined" && (navigator as any).product === "ReactNative";
 
-// @ts-ignore
+// @ts-expect-error
 if (typeof window !== "undefined" && !IS_REACT_NATIVE) {
   throw new Error("[zodbase] This package is not intended for browser usage");
 }
@@ -154,7 +154,7 @@ const getFieldBindingsByKeys = <TTable extends Table>(
         key: "*",
       } as any;
     }
-    // @ts-ignore
+    // @ts-expect-error
     return table.fields[key as string];
   });
 };
@@ -252,7 +252,7 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
       return adaptor.executeSelect(query);
     },
     async count() {
-      // @ts-ignore
+      // @ts-expect-error
       return adaptor.executeCount(query.table, query.fields, query.where);
     },
   };
@@ -347,7 +347,7 @@ export class Database {
 
     const updatedAtFields = findFieldMetaItems(table.schema, updatedAt);
     for (const field of updatedAtFields) {
-      // @ts-ignore
+      // @ts-expect-error
       parsedValues[field.key] = Date.now();
     }
 
@@ -371,7 +371,7 @@ export class Database {
 
           return adapator.executeSelect({
             table,
-            // @ts-ignore
+            // @ts-expect-error
             fields: getFieldBindingsByKeys(table, keys.length === 0 ? ["*"] : keys),
             where,
             orderBy: [],
@@ -409,7 +409,7 @@ export class Database {
 
           return adaptor.executeSelect({
             table,
-            // @ts-ignore
+            // @ts-expect-error
             fields: getFieldBindingsByKeys(table, keys.length === 0 ? ["*"] : keys),
             where: field.equals(parsedValues[field.key]),
             orderBy: [],

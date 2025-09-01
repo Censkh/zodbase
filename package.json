@@ -33,7 +33,7 @@
     "@cloudflare/workers-types": "^4.20250831.0",
     "@libsql/client": "^0.15.12",
     "@types/bun": "^1.2.21",
-    "@types/node": "^22.18.0",
+    "@types/node": "^24.3.0",
     "@types/pg": "^8.15.5",
     "pg": "^8.16.3",
     "pg-mem": "^3.0.5",

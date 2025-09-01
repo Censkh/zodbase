@@ -1,4 +1,4 @@
-// @ts-ignore
+// @ts-expect-error
 import * as zod from "zod/v4";
 import { getMetaItem } from "zod-meta";
 import {
@@ -100,7 +100,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     }
     const numberType = isZodTypeExtends(type, zod.ZodNumber);
     if (numberType) {
-      // @ts-ignore
+      // @ts-expect-error
       const isInt = numberType.def.checks?.find((check) => check.kind === "int");
       return isInt ? "INTEGER" : "REAL";
     }

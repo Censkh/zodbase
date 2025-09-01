@@ -81,7 +81,7 @@ export const createTableBinding = <TTable extends Table>(table: TTable): Binding
         }) as any;
       },
     };
-    // @ts-ignore
+    // @ts-expect-error
     binding[field.key] = fieldBinding;
   }
 

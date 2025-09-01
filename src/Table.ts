@@ -69,7 +69,7 @@ export const createTable = <TValue extends zod.infer<TSchema>, TName extends str
   } as any as Table<TValue, TName, TSchema>;
   table.fields = createTableBinding(table) as any;
   for (const [key, field] of Object.entries(table.fields)) {
-    // @ts-ignore
+    // @ts-expect-error
     table[`$${key}`] = field;
   }
   return table;
