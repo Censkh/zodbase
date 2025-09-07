@@ -28,7 +28,6 @@ export { TO_SQL_SYMBOL };
 
 const IS_REACT_NATIVE = typeof navigator !== "undefined" && (navigator as any).product === "ReactNative";
 
-// @ts-expect-error
 if (typeof window !== "undefined" && !IS_REACT_NATIVE) {
   throw new Error("[zodbase] This package is not intended for browser usage");
 }
