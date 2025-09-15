@@ -30,10 +30,10 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.3",
-    "@cloudflare/workers-types": "^4.20250906.0",
-    "@libsql/client": "^0.15.14",
+    "@cloudflare/workers-types": "^4.20250913.0",
+    "@libsql/client": "^0.15.15",
     "@types/bun": "^1.2.21",
-    "@types/node": "^24.3.1",
+    "@types/node": "^24.3.3",
     "@types/pg": "^8.15.5",
     "pg": "^8.16.3",
     "pg-mem": "^3.0.5",
