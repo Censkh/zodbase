@@ -366,14 +366,16 @@ export class Database {
             return result as any;
           }
 
-          return adapator.executeSelect({
+          const selectResult = (await adapator.executeSelect({
             table,
             fields: getFieldBindingsByKeys(table, keys.length === 0 ? ["*"] : keys),
             where,
             orderBy: [],
             limit: undefined,
             offset: undefined,
-          }) as any;
+          })) as any;
+          console.log(selectResult);
+          return selectResult;
         },
       },
     ) satisfies MutationResult<SqlDefiniteResult<ValueOfTable<TTable>, number>>;
