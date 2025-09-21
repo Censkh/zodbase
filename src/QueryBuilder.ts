@@ -11,7 +11,7 @@ export const query = <T extends object>(table: Table<T>) => QueryBuilder<T> => {
 
 }
 */
-import { join, raw, sql, type Table } from "./index";
+import { join, type OrderDirection, raw, sql, type Table } from "./index";
 import type { Statement, ToSql } from "./Statement";
 
 export type StringKeys<T> = {
@@ -115,7 +115,7 @@ export interface SelectQuery<TTable extends Table = Table, TLimit extends number
   where: SelectCondition<ValueOfTable<TTable>> | undefined;
   orderBy: Array<{
     field: FieldBinding<ValueOfTable<TTable>>;
-    direction: "ASC" | "DESC";
+    direction: OrderDirection;
   }>;
   limit: TLimit | undefined;
   offset: number | undefined;
@@ -140,7 +140,7 @@ export type SelectQueryBuilder<TTable extends Table, TResultValue, TResultLimit 
 
   orderBy(
     field: SingleFieldBinding<ValueOfTable<TTable>>,
-    direction: "ASC" | "DESC",
+    direction: OrderDirection,
   ): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
 
   count(): Promise<SqlResult<Record<StringKeys<ValueOfTable<TTable>>, number>, 1>>;

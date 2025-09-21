@@ -26,6 +26,8 @@ export * from "./index.common";
 export * from "./ZodUtils";
 export { TO_SQL_SYMBOL };
 
+export type OrderDirection = "ASC" | "DESC";
+
 const IS_REACT_NATIVE = typeof navigator !== "undefined" && (navigator as any).product === "ReactNative";
 
 if (typeof window !== "undefined" && !IS_REACT_NATIVE) {
@@ -220,7 +222,11 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
     },
 
     where(condition: SelectCondition<ValueOfTable<TTable>>) {
-      query.where = condition;
+      if (query.where) {
+        query.where = query.where.and(condition);
+      } else {
+        query.where = condition;
+      }
       return this;
     },
     limit<TLimit extends number>(limit: TLimit) {
@@ -234,7 +240,7 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
     one() {
       return this.limit(1);
     },
-    orderBy(field: SingleFieldBinding<ValueOfTable<TTable>>, direction: "ASC" | "DESC") {
+    orderBy(field: SingleFieldBinding<ValueOfTable<TTable>>, direction: OrderDirection) {
       query.orderBy.push({
         field: field,
         direction,
