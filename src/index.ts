@@ -380,7 +380,6 @@ export class Database {
             limit: undefined,
             offset: undefined,
           })) as any;
-          console.log(selectResult);
           return selectResult;
         },
       },
