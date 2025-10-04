@@ -26,22 +26,22 @@
   },
   "license": "MIT",
   "peerDependencies": {
-    "zod": "^3.25.76"
+    "zod": "~4"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.2.3",
-    "@cloudflare/workers-types": "^4.20250924.0",
+    "@biomejs/biome": "^2.2.5",
+    "@cloudflare/workers-types": "^4.20251001.0",
     "@libsql/client": "^0.15.15",
     "@types/bun": "^1.2.22",
-    "@types/node": "^24.5.2",
+    "@types/node": "^24.6.2",
     "@types/pg": "^8.15.5",
     "pg": "^8.16.3",
     "pg-mem": "^3.0.5",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.3"
   },
   "dependencies": {
     "server-only": "^0.0.1",
     "sql-escape-string": "^1.1.0",
-    "zod-meta": "^0.2.0"
+    "zod-meta": "^0.3.0"
   }
 }
