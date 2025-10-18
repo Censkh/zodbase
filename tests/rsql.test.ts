@@ -2,6 +2,7 @@ import BunDatabase from "bun:sqlite";
 import * as zod from "zod/v4";
 import { createTable, Database } from "../src";
 import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
+import { rsqlToCondition } from "../src/rsql";
 
 // Test table schema
 const AssetTable = createTable({
@@ -91,7 +92,7 @@ describe("RSQL Filter", () => {
   describe("Basic Comparison Operators", () => {
     it("should filter with equals operator (==)", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "status==approved");
+      const condition = rsqlToCondition(AssetTable, "status==approved");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(2);
@@ -100,7 +101,7 @@ describe("RSQL Filter", () => {
 
     it("should filter with not equals operator (!=)", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "status!=approved");
+      const condition = rsqlToCondition(AssetTable, "status!=approved");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(3);
@@ -109,7 +110,7 @@ describe("RSQL Filter", () => {
 
     it("should filter with greater than operator (>)", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "price>150");
+      const condition = rsqlToCondition(AssetTable, "price>150");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(2);
@@ -118,7 +119,7 @@ describe("RSQL Filter", () => {
 
     it("should filter with greater than or equals operator (>=)", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "price>=150");
+      const condition = rsqlToCondition(AssetTable, "price>=150");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(3);
@@ -127,7 +128,7 @@ describe("RSQL Filter", () => {
 
     it("should filter with less than operator (<)", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "price<150");
+      const condition = rsqlToCondition(AssetTable, "price<150");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(2);
@@ -136,7 +137,7 @@ describe("RSQL Filter", () => {
 
     it("should filter with less than or equals operator (<=)", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "price<=150");
+      const condition = rsqlToCondition(AssetTable, "price<=150");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(3);
@@ -147,7 +148,7 @@ describe("RSQL Filter", () => {
   describe("IN Operator", () => {
     it("should filter with in operator (=in=)", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "status=in=(approved,pending)");
+      const condition = rsqlToCondition(AssetTable, "status=in=(approved,pending)");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(3);
@@ -156,7 +157,7 @@ describe("RSQL Filter", () => {
 
     it("should filter with in operator with single value", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "status=in=(approved)");
+      const condition = rsqlToCondition(AssetTable, "status=in=(approved)");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(2);
@@ -167,7 +168,7 @@ describe("RSQL Filter", () => {
   describe("Logical Operators", () => {
     it("should filter with AND operator (;)", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "status==rejected;price>100");
+      const condition = rsqlToCondition(AssetTable, "status==rejected;price>100");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(1);
@@ -177,7 +178,7 @@ describe("RSQL Filter", () => {
 
     it("should filter with OR operator (,)", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "status==approved,status==pending");
+      const condition = rsqlToCondition(AssetTable, "status==approved,status==pending");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(3);
@@ -187,7 +188,7 @@ describe("RSQL Filter", () => {
     it("should filter with complex AND/OR combination", async () => {
       const db = await createTestDb();
       // (status==approved OR status==pending) AND price>100
-      const condition = applyRsqlFilter(AssetTable, "(status==approved,status==pending);price>100");
+      const condition = rsqlToCondition(AssetTable, "(status==approved,status==pending);price>100");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(2);
@@ -196,7 +197,7 @@ describe("RSQL Filter", () => {
 
     it("should filter with multiple AND conditions", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "status==approved;price>100;category==electronics");
+      const condition = rsqlToCondition(AssetTable, "status==approved;price>100;category==electronics");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(1);
@@ -207,7 +208,7 @@ describe("RSQL Filter", () => {
   describe("Type Coercion", () => {
     it("should parse numeric values correctly", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "quantity==10");
+      const condition = rsqlToCondition(AssetTable, "quantity==10");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(1);
@@ -216,7 +217,7 @@ describe("RSQL Filter", () => {
 
     it("should parse boolean values correctly", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "isActive==true");
+      const condition = rsqlToCondition(AssetTable, "isActive==true");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(3);
@@ -226,7 +227,7 @@ describe("RSQL Filter", () => {
 
     it("should parse null values correctly", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "parentId==null");
+      const condition = rsqlToCondition(AssetTable, "parentId==null");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(4);
@@ -235,7 +236,7 @@ describe("RSQL Filter", () => {
 
     it("should parse string values correctly", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "category==electronics");
+      const condition = rsqlToCondition(AssetTable, "category==electronics");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(3);
@@ -245,24 +246,24 @@ describe("RSQL Filter", () => {
 
   describe("Edge Cases", () => {
     it("should return undefined for empty filter string", () => {
-      const condition = applyRsqlFilter(AssetTable, "");
+      const condition = rsqlToCondition(AssetTable, "");
       expect(condition).toBeUndefined();
     });
 
     it("should return undefined for undefined filter", () => {
-      const condition = applyRsqlFilter(AssetTable, undefined);
+      const condition = rsqlToCondition(AssetTable, undefined);
       expect(condition).toBeUndefined();
     });
 
     it("should throw error for invalid field name", () => {
       expect(() => {
-        applyRsqlFilter(AssetTable, "nonExistentField==value");
+        rsqlToCondition(AssetTable, "nonExistentField==value");
       }).toThrow('Field "nonExistentField" not found in table');
     });
 
     it("should throw error for invalid filter syntax", () => {
       expect(() => {
-        applyRsqlFilter(AssetTable, "invalid filter syntax");
+        rsqlToCondition(AssetTable, "invalid filter syntax");
       }).toThrow("Failed to parse RSQL filter");
     });
   });
@@ -270,7 +271,7 @@ describe("RSQL Filter", () => {
   describe("Real-world Use Cases", () => {
     it("should filter assets by status and exclude sub-assets", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "status==rejected;parentId==null");
+      const condition = rsqlToCondition(AssetTable, "status==rejected;parentId==null");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(2);
@@ -279,7 +280,7 @@ describe("RSQL Filter", () => {
 
     it("should filter assets by price range", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "price>=100;price<=200");
+      const condition = rsqlToCondition(AssetTable, "price>=100;price<=200");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(3);
@@ -288,7 +289,7 @@ describe("RSQL Filter", () => {
 
     it("should filter active assets in multiple categories", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "isActive==true;category=in=(electronics,furniture)");
+      const condition = rsqlToCondition(AssetTable, "isActive==true;category=in=(electronics,furniture)");
       const { results } = await db.select(AssetTable, ["*"]).where(condition!);
 
       expect(results.length).toBe(3);
@@ -303,7 +304,7 @@ describe("RSQL Filter", () => {
 
     it("should combine with additional where clauses", async () => {
       const db = await createTestDb();
-      const condition = applyRsqlFilter(AssetTable, "status==approved");
+      const condition = rsqlToCondition(AssetTable, "status==approved");
       const { results } = await db
         .select(AssetTable, ["*"])
         .where(AssetTable.$category.equals("electronics"))
