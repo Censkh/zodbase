@@ -22,7 +22,8 @@
       "workerd": "./src/adaptors/*/index.ts",
       "browser": "./src/adaptors/*/index.browser.ts",
       "default": "./src/adaptors/*/index.ts"
-    }
+    },
+    "./rsql": "./src/rsql/index.ts"
   },
   "license": "MIT",
   "peerDependencies": {
@@ -33,7 +34,7 @@
     "@cloudflare/workers-types": "^4.20251011.0",
     "@libsql/client": "^0.15.15",
     "@types/bun": "^1.3.0",
-    "@types/node": "^24.8.0",
+    "@types/node": "^24.8.1",
     "@types/pg": "^8.15.5",
     "pg": "^8.16.3",
     "pg-mem": "^3.0.5",
@@ -42,6 +43,6 @@
   "dependencies": {
     "server-only": "^0.0.1",
     "sql-escape-string": "^1.1.0",
-    "zod-meta": "^0.3.0"
+    "zod-meta": "^0.4.0"
   }
 }

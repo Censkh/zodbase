@@ -573,7 +573,7 @@ export const mapSqlResult = <TFrom, TTo, TResultLimit extends number>(
   } as SqlResult<TTo, TResultLimit>;
 };
 
-export { meta } from "zod-meta";
+export { metaStore } from "zod-meta";
 export type { default as DatabaseAdaptor } from "./DatabaseAdaptor";
 export * from "./MetaTypes";
 export type { SelectCondition, SelectQueryBuilder } from "./QueryBuilder";

@@ -1,6 +1,6 @@
 import type * as zod from "zod/v4";
 import type { ZodType } from "zod/v4";
-import { getMetaStore, getZodTypeFields } from "zod-meta";
+import { getMetaStores, getZodTypeFields } from "zod-meta";
 import { createTableBinding } from "./Bindings";
 import type { SingleFieldBinding, StringKeys } from "./QueryBuilder";
 import { TO_SQL_SYMBOL, type ToSql } from "./Statement";
@@ -44,16 +44,15 @@ export const createTable = <TValue extends zod.infer<TSchema>, TName extends str
   const fields = getZodTypeFields(options.schema);
   for (const field of fields) {
     const fieldSchema = field.schema;
-    const metaStore = getMetaStore(fieldSchema);
-    if (!metaStore) {
-      continue;
-    }
-    for (const metaItem of metaStore.itemList) {
-      if (metaItem?.type.check) {
-        const valid = metaItem.type.check(fieldSchema, metaItem.data);
-        if (valid.success === false) {
-          console.error(`[zodbase] Invalid meta '${metaItem.type.id}' for field '${field.key}': ${valid.message}`);
-          //return undefined;
+    const metaStores = getMetaStores(fieldSchema);
+    for (const metaStore of metaStores) {
+      for (const metaItem of metaStore.itemList) {
+        if (metaItem?.type.check) {
+          const valid = metaItem.type.check(fieldSchema, metaItem.data);
+          if (valid.success === false) {
+            console.error(`[zodbase] Invalid meta '${metaItem.type.id}' for field '${field.key}': ${valid.message}`);
+            //return undefined;
+          }
         }
       }
     }
