@@ -1,7 +1,7 @@
 import BunDatabase from "bun:sqlite";
 import { newDb } from "pg-mem";
 import * as zod from "zod/v4";
-import { createTable, Database, meta, primaryKey, sql } from "../src";
+import { createTable, Database, metaStore, primaryKey, sql } from "../src";
 import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
 import PostgresAdaptor from "../src/adaptors/postgres";
 
@@ -15,7 +15,7 @@ const evilStrings = [
 const TestTable = createTable({
   id: "test",
   schema: zod.object({
-    id: zod.string().meta(meta([primaryKey()])),
+    id: zod.string().meta(metaStore([primaryKey()])),
     data: zod.any(),
   }),
 });
