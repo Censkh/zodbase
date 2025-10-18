@@ -43,6 +43,6 @@
   "dependencies": {
     "server-only": "^0.0.1",
     "sql-escape-string": "^1.1.0",
-    "zod-meta": "^0.4.0"
+    "zod-meta": "^0.4.1"
   }
 }
