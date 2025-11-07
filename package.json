@@ -31,7 +31,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.4",
-    "@cloudflare/workers-types": "^4.20251106.1",
+    "@cloudflare/workers-types": "^4.20251107.0",
     "@libsql/client": "^0.15.15",
     "@types/bun": "^1.3.1",
     "@types/node": "^24.10.0",
