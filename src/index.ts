@@ -30,7 +30,7 @@ export type OrderDirection = "ASC" | "DESC";
 
 const IS_REACT_NATIVE = typeof navigator !== "undefined" && (navigator as any).product === "ReactNative";
 
-if (typeof window !== "undefined" && !IS_REACT_NATIVE) {
+if (typeof (globalThis as any).window !== "undefined" && !IS_REACT_NATIVE) {
   throw new Error("[zodbase] This package is not intended for browser usage");
 }
 
