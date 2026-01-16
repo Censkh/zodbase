@@ -67,9 +67,8 @@ export interface SelectCompoundCondition<TValue> extends BaseSelectCondition<TVa
 }
 
 export type ValueOfTable<TTable extends Table> = TTable extends Table<infer TValue, any, any> ? TValue : never;
-export type InputOfTable<TTable extends Table> = TTable extends Table<any, any, infer TSchema>
-  ? zod.input<TSchema>
-  : never;
+export type InputOfTable<TTable extends Table> =
+  TTable extends Table<any, any, infer TSchema> ? zod.input<TSchema> : never;
 
 export interface SelectFieldCondition<TValue = any, TKey extends StringKeys<TValue> = StringKeys<TValue>>
   extends BaseSelectCondition<TValue> {
