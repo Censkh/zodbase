@@ -7,7 +7,7 @@ export const foreignKey = createMetaType<{
   field: SingleFieldBinding;
 }>({
   id: "foreignKey",
-  check: (type, options) => {
+  check: (type) => {
     if (isZodTypeExtends(type, zod.ZodString) || isZodTypeExtends(type, zod.ZodNumber)) {
       // is foreign key field binding the same type as the field type
       /*if (options?.field?.schema !== type) {
@@ -45,7 +45,7 @@ export const foreignKey = createMetaType<{
 
 export const primaryKey = createMetaType<{}>({
   id: "primaryKey",
-  check: (type, options) => {
+  check: (type) => {
     if (isZodTypeExtends(type, zod.ZodString) || isZodTypeExtends(type, zod.ZodNumber)) {
       return {
         success: true,
