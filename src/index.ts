@@ -368,6 +368,7 @@ export class Database {
           ...keys: TKey[]
         ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, number>> {
           const result = await adapator.executeUpdate(table, parsedValues, where, true);
+          console.log(result);
           if (result.selected) {
             return result as any;
           }
@@ -380,6 +381,7 @@ export class Database {
             limit: undefined,
             offset: undefined,
           })) as any;
+          console.log(where);
           return selectResult;
         },
       },

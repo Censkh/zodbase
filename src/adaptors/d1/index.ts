@@ -13,6 +13,7 @@ export default class D1Adaptor extends SqliteAdaptor<D1Database> {
 
     const startTimestamp = Date.now();
     const rawSql = statement[TO_SQL_SYMBOL]();
+    console.log(rawSql);
     const preparedStatement = this.driver.prepare(rawSql);
     const res = await preparedStatement.all();
     //const durationMs = Date.now() - startTimestamp;

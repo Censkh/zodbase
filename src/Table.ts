@@ -1,14 +1,14 @@
 import type * as zod from "zod/v4";
-import type { ZodType } from "zod/v4";
 import { getMetaStores, getZodTypeFields } from "zod-meta";
 import { createTableBinding } from "./Bindings";
 import type { SingleFieldBinding, StringKeys } from "./QueryBuilder";
 import { TO_SQL_SYMBOL, type ToSql } from "./Statement";
+import type { BaseSchema } from "./Types";
 import type { TypeToken } from "./TypeToken";
 
 export interface TableColumnInfo {
   name: string;
-  type: ZodType;
+  type: BaseSchema;
   notNull: boolean;
   primaryKey: boolean;
 }
@@ -24,7 +24,7 @@ export type PrefixKeys<T, P extends string> = {
 export type Table<
   TValue extends zod.infer<TSchema> = any,
   TName extends string = string,
-  TSchema extends zod.ZodType = zod.ZodType,
+  TSchema extends BaseSchema = BaseSchema,
 > = PrefixKeys<Bindings<TValue>, "$"> &
   ToSql &
   Omit<TableOptions<TValue, TName, TSchema>, "id"> & {
@@ -32,13 +32,13 @@ export type Table<
     fields: Bindings<TValue>;
   };
 
-export interface TableOptions<TValue extends zod.infer<TSchema>, TName extends string, TSchema extends zod.ZodType> {
+export interface TableOptions<TValue extends zod.infer<TSchema>, TName extends string, TSchema extends BaseSchema> {
   id: TName;
   as?: TypeToken<TValue>;
   schema: TSchema;
 }
 
-export const createTable = <TValue extends zod.infer<TSchema>, TName extends string, TSchema extends zod.ZodType>(
+export const createTable = <TValue extends zod.infer<TSchema>, TName extends string, TSchema extends BaseSchema>(
   options: TableOptions<TValue, TName, TSchema>,
 ): Table<TValue, TName, TSchema> => {
   const fields = getZodTypeFields(options.schema);
