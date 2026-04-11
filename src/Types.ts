@@ -1,4 +1,8 @@
+import type * as zod from "zod";
+
 export type Class<T> = new (...args: any[]) => T;
+
+export type BaseSchema<T = any> = zod.ZodSchema<T, T>;
 
 type Entry = { key: string; value: unknown };
 type EmptyEntry<TValue> = { key: ""; value: TValue };
