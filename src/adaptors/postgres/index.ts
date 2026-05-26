@@ -116,12 +116,12 @@ export default class PostgresAdaptor<
                    ? sql` WHERE
                ${buildConditionSql(this, select.where, true)}`
                    : raw("")
-               }${
+}${
                  select.orderBy.length > 0
                    ? sql` ORDER BY
                    ${raw(select.orderBy.map((order) => `"${order.field.key}" ${order.direction}`))}`
                    : raw("")
-               }${raw(select.limit ? ` LIMIT ${select.limit}` : "")}${raw(select.offset ? ` OFFSET ${select.offset}` : "")}`;
+}${raw(select.limit ? ` LIMIT ${select.limit}` : "")}${raw(select.offset ? ` OFFSET ${select.offset}` : "")}`;
   }
 
   async executeSelect<R>(select: SelectQuery): Promise<R> {
