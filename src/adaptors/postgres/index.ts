@@ -60,7 +60,10 @@ export default class PostgresAdaptor<
 
     const startTimestamp = Date.now();
     const rawSql = statement[TO_SQL_SYMBOL]();
-    //console.log(rawSql);
+    if (this.options.debug) {
+      console.log(`[sql] ${rawSql}`);
+    }
+
     let success = false;
     let timings: SqlResultTimings | undefined;
 
