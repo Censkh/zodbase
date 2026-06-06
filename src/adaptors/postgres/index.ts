@@ -350,6 +350,16 @@ export default class PostgresAdaptor<
     }
   }
 
+  async syncTableIndexes(table: Table): Promise<void> {
+    for (const index of table.indexes) {
+      await this.execute(sql`
+        CREATE ${raw(index.unique ? "UNIQUE " : "")}INDEX IF NOT EXISTS "${raw(index.id)}"
+          ON ${table.id} (${raw(index.fields.map((field) => `"${field.key}"`).join(", "))})
+          ${index.where ? sql`WHERE ${buildConditionSql(this, index.where, { doubleQuote: true, includeTable: false })}` : raw("")}
+      `);
+    }
+  }
+
   async executeUpdateMany<
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,

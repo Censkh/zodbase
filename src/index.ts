@@ -576,6 +576,16 @@ export class Database {
       //this.options.adaptor.executeSql(sql);
     }
 
+    if (table.indexes.length > 0) {
+      log("syncTableIndexes:start", {
+        indexCount: table.indexes.length,
+      });
+      await this.adaptor.syncTableIndexes(table);
+      log("syncTableIndexes:done", {
+        elapsedMs: Date.now() - start,
+      });
+    }
+
     log("done", {
       elapsedMs: Date.now() - start,
     });

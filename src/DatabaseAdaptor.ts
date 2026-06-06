@@ -84,6 +84,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   ): Promise<SqlResult<void, 0>>;
 
   abstract fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>>;
+  abstract syncTableIndexes(table: Table): Promise<void>;
 
   typeToSql(type: zod.ZodType<any>): string {
     if (isZodTypeExtends(type, zod.ZodObject)) {
