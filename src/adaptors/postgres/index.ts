@@ -24,7 +24,6 @@ import {
   type SelectCondition,
   type SelectQuery,
   type SingleFieldBinding,
-  type SqlDefiniteResult,
   type SqlResult,
   type SqlResultTimings,
   type StringKeys,
@@ -135,23 +134,41 @@ export default class PostgresAdaptor<
   async executeInsert<TTable extends Table>(
     table: TTable,
     values: InputOfTable<TTable>,
-  ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
+    shouldReturn = false,
+  ): Promise<SqlResult<ValueOfTable<TTable>, 1>> {
     const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(values as any).map((k) => `"${k}"`))})
-                          VALUES (${raw(Object.values(values as any).map((v) => valueToSql(v, true)))}) RETURNING *`;
-    return (await this.execute(statement)) as any;
+                          VALUES (${raw(Object.values(values as any).map((v) => valueToSql(v, true)))})${raw(
+                            shouldReturn ? " RETURNING *" : "",
+                          )}`;
+    if (shouldReturn) {
+      return (await this.execute(statement)) as any;
+    }
+    await this.execute(statement);
+    return {
+      first: undefined,
+      results: [],
+    };
   }
 
   async executeInsertMany<TTable extends Table>(
     table: TTable,
     values: InputOfTable<TTable>[],
-  ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, number>> {
+    shouldReturn = false,
+  ): Promise<SqlResult<ValueOfTable<TTable>, number>> {
     const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(values[0] as any).map((k) => `"${k}"`))})
                           VALUES ${raw(
                             values.map(
                               (value: any) => sql`(${raw(Object.values(value).map((v) => valueToSql(v, true)))})`,
                             ),
-                          )} RETURNING *`;
-    return (await this.execute(statement)) as any;
+                          )}${raw(shouldReturn ? " RETURNING *" : "")}`;
+    if (shouldReturn) {
+      return (await this.execute(statement)) as any;
+    }
+    await this.execute(statement);
+    return {
+      first: undefined,
+      results: [],
+    };
   }
 
   async fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>> {
@@ -330,6 +347,16 @@ export default class PostgresAdaptor<
           }
         }
       }
+    }
+  }
+
+  async syncTableIndexes(table: Table): Promise<void> {
+    for (const index of table.indexes) {
+      await this.execute(sql`
+        CREATE ${raw(index.unique ? "UNIQUE " : "")}INDEX IF NOT EXISTS "${raw(index.id)}"
+          ON ${table.id} (${raw(index.fields.map((field) => `"${field.key}"`).join(", "))})
+          ${index.where ? sql`WHERE ${buildConditionSql(this, index.where, { doubleQuote: true, includeTable: false })}` : raw("")}
+      `);
     }
   }
 

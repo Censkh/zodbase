@@ -80,13 +80,16 @@ export interface SelectFieldCondition<TValue = any, TKey extends StringKeys<TVal
 export const buildConditionSql = (
   adaptor: DatabaseAdaptor,
   condition: SelectCondition,
-  doubleQuote?: boolean,
+  options?: boolean | { doubleQuote?: boolean; includeTable?: boolean },
 ): Statement => {
+  const doubleQuote = typeof options === "boolean" ? options : options?.doubleQuote;
+  const includeTable = typeof options === "boolean" ? true : (options?.includeTable ?? true);
+
   if ("conditions" in condition) {
     return sql`(${join(
       condition.conditions.reduce((result, childCondition) => {
         if (childCondition) {
-          result.push(buildConditionSql(adaptor, childCondition, doubleQuote));
+          result.push(buildConditionSql(adaptor, childCondition, { doubleQuote, includeTable }));
         }
         return result;
       }, [] as Statement[]),
@@ -103,7 +106,7 @@ export const buildConditionSql = (
     check = sql`IS NOT NULL`;
   }
 
-  return sql`${raw(condition.field.table.id)}.${
+  return sql`${includeTable ? sql`${raw(condition.field.table.id)}.` : raw("")}${
     doubleQuote ? raw(`"${condition.field.key}"`) : raw(condition.field.key)
   } ${check}`;
 };

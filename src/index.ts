@@ -145,6 +145,11 @@ export interface MutationResult<TResult extends SqlResult> extends Promise<SqlRe
   selectMutated(): Promise<TResult>;
 }
 
+export interface InsertMutationResult<TResult extends SqlResult> extends Promise<SqlResult<void, 0>> {
+  selectParsed(): Promise<TResult>;
+  selectMutated(): Promise<TResult>;
+}
+
 const getFieldBindingsByKeys = <TTable extends Table>(
   table: TTable,
   keys: BindingKeys<ValueOfTable<TTable>>[],
@@ -331,12 +336,35 @@ export class Database {
     }, deleteBuilder);
   }
 
-  async insert<TTable extends Table>(
+  insert<TTable extends Table>(
     table: TTable,
     values: InputOfTable<TTable>,
-  ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
+  ): InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
     const parsedValues = table.schema.parse(values);
-    return this.options.adaptor.executeInsert(table, parsedValues as any);
+    const adaptor = this.options.adaptor;
+    return toLazyPromise(
+      async (): Promise<SqlResult<void, 0>> => {
+        await adaptor.executeInsert(table, parsedValues as any, false);
+        return {
+          results: [],
+          first: undefined,
+        };
+      },
+      {
+        async selectParsed() {
+          await adaptor.executeInsert(table, parsedValues as any, false);
+          return {
+            results: [parsedValues as ValueOfTable<TTable>],
+            first: parsedValues as ValueOfTable<TTable>,
+          };
+        },
+        selectMutated() {
+          return adaptor.executeInsert(table, parsedValues as any, true) as Promise<
+            SqlDefiniteResult<ValueOfTable<TTable>, 1>
+          >;
+        },
+      },
+    ) satisfies InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, 1>>;
   }
 
   update<TTable extends Table>(
@@ -476,19 +504,42 @@ export class Database {
     ) satisfies MutationResult<SqlDefiniteResult<ValueOfTable<TTable>, number>>;
   }
 
-  async insertMany<TTable extends Table>(
+  insertMany<TTable extends Table>(
     table: TTable,
     values: InputOfTable<TTable>[],
-  ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, number>> {
+  ): InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, number>> {
     if (values.length === 0) {
-      return {
+      return Promise.resolve({
         results: [],
         first: undefined,
-      } as any;
+      } as any) as InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, number>>;
     }
 
     const parsedValues = values.map((v) => table.schema.parse(v));
-    return this.options.adaptor.executeInsertMany(table, parsedValues as any);
+    const adaptor = this.options.adaptor;
+    return toLazyPromise(
+      async (): Promise<SqlResult<void, 0>> => {
+        await adaptor.executeInsertMany(table, parsedValues as any, false);
+        return {
+          results: [],
+          first: undefined,
+        };
+      },
+      {
+        async selectParsed() {
+          await adaptor.executeInsertMany(table, parsedValues as any, false);
+          return {
+            results: parsedValues as ValueOfTable<TTable>[],
+            first: parsedValues[0] as ValueOfTable<TTable>,
+          };
+        },
+        selectMutated() {
+          return adaptor.executeInsertMany(table, parsedValues as any, true) as Promise<
+            SqlDefiniteResult<ValueOfTable<TTable>, number>
+          >;
+        },
+      },
+    ) satisfies InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, number>>;
   }
 
   async syncTable<TTable extends Table>(table: TTable): Promise<void> {
@@ -523,6 +574,16 @@ export class Database {
         elapsedMs: Date.now() - start,
       });
       //this.options.adaptor.executeSql(sql);
+    }
+
+    if (table.indexes.length > 0) {
+      log("syncTableIndexes:start", {
+        indexCount: table.indexes.length,
+      });
+      await this.adaptor.syncTableIndexes(table);
+      log("syncTableIndexes:done", {
+        elapsedMs: Date.now() - start,
+      });
     }
 
     log("done", {

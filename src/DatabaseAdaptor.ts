@@ -17,7 +17,6 @@ import type {
   SelectCondition,
   SelectQuery,
   SingleFieldBinding,
-  SqlDefiniteResult,
   SqlResult,
   StringKeys,
   ValueOfTable,
@@ -51,11 +50,13 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   abstract executeInsert<TTable extends Table>(
     table: TTable,
     values: InputOfTable<TTable>,
-  ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, 1>>;
+    shouldReturn?: boolean,
+  ): Promise<SqlResult<ValueOfTable<TTable>, 1>>;
   abstract executeInsertMany<TTable extends Table>(
     table: TTable,
     values: InputOfTable<TTable>[],
-  ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, number>>;
+    shouldReturn?: boolean,
+  ): Promise<SqlResult<ValueOfTable<TTable>, number>>;
   abstract executeUpdate<TTable extends Table>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>,
@@ -83,6 +84,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   ): Promise<SqlResult<void, 0>>;
 
   abstract fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>>;
+  abstract syncTableIndexes(table: Table): Promise<void>;
 
   typeToSql(type: zod.ZodType<any>): string {
     if (isZodTypeExtends(type, zod.ZodObject)) {

@@ -1,7 +1,7 @@
 import type * as zod from "zod/v4";
 import { getMetaStores, getZodTypeFields } from "zod-meta";
 import { createTableBinding } from "./Bindings";
-import type { SingleFieldBinding, StringKeys } from "./QueryBuilder";
+import type { SelectCondition, SingleFieldBinding, StringKeys } from "./QueryBuilder";
 import { TO_SQL_SYMBOL, type ToSql } from "./Statement";
 import type { BaseSchema } from "./Types";
 import type { TypeToken } from "./TypeToken";
@@ -30,7 +30,19 @@ export type Table<
   Omit<TableOptions<TValue, TName, TSchema>, "id"> & {
     id: TName & ToSql;
     fields: Bindings<TValue>;
+    indexes: TableIndex[];
+    addIndex(id: string, fields: SingleFieldBinding[], options?: TableIndexOptions): Table<TValue, TName, TSchema>;
   };
+
+export interface TableIndexOptions {
+  unique?: boolean;
+  where?: SelectCondition;
+}
+
+export interface TableIndex extends TableIndexOptions {
+  id: string;
+  fields: SingleFieldBinding[];
+}
 
 export interface TableOptions<TValue extends zod.infer<TSchema>, TName extends string, TSchema extends BaseSchema> {
   id: TName;
@@ -61,10 +73,19 @@ export const createTable = <TValue extends zod.infer<TSchema>, TName extends str
   const table = {
     ...options,
     fields: {},
+    indexes: [],
     id: Object.assign(options.id, {
       [TO_SQL_SYMBOL]: () => options.id,
     }),
     [TO_SQL_SYMBOL]: () => options.id,
+    addIndex(id: string, fields: SingleFieldBinding[], indexOptions = {}) {
+      this.indexes.push({
+        id,
+        fields,
+        ...indexOptions,
+      });
+      return this;
+    },
   } as any as Table<TValue, TName, TSchema>;
   table.fields = createTableBinding(table) as any;
   for (const [key, field] of Object.entries(table.fields)) {

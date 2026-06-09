@@ -115,6 +115,16 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     }
   }
 
+  async syncTableIndexes(table: Table): Promise<void> {
+    for (const index of table.indexes) {
+      await this.execute(sql`
+        CREATE ${raw(index.unique ? "UNIQUE " : "")}INDEX IF NOT EXISTS ${raw(index.id)}
+          ON ${table.id} (${raw(index.fields.map((field) => field.key).join(", "))})
+          ${index.where ? sql`WHERE ${buildConditionSql(this, index.where, { includeTable: false })}` : raw("")}
+      `);
+    }
+  }
+
   protected mapResult(value: SqlResult): SqlResult {
     return mapSqlResult(value, (value) => {
       return Object.fromEntries(
