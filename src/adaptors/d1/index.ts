@@ -11,23 +11,9 @@ export default class D1Adaptor extends SqliteAdaptor<D1Database> {
       throw new Error("Invalid statement");
     }
 
-    const startTimestamp = Date.now();
     const rawSql = statement[TO_SQL_SYMBOL]();
-    //console.log(rawSql);
     const preparedStatement = this.driver.prepare(rawSql);
     const res = await preparedStatement.all();
-    //const durationMs = Date.now() - startTimestamp;
-    //console.log(`Executing SQL in ${durationMs.toFixed(1)}ms: ${rawSql}`);
-
-    if (this.options.debug) {
-      console.log("D1Adaptor.execute", "Executed SQL", {
-        sql: rawSql,
-        timings: {
-          sqlDurationMs: res.meta.duration,
-          totalDurationMs: Date.now() - startTimestamp,
-        },
-      });
-    }
 
     return this.mapResult({
       results: res.results,

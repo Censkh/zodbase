@@ -59,9 +59,6 @@ export default class PostgresAdaptor<
 
     const startTimestamp = Date.now();
     const rawSql = statement[TO_SQL_SYMBOL]();
-    if (this.options.debug) {
-      console.log(`[sql] ${rawSql}`);
-    }
 
     let success = false;
     let timings: SqlResultTimings | undefined;
@@ -88,10 +85,6 @@ export default class PostgresAdaptor<
         success: success,
       };
       this.options.events?.onExecuteStatement?.(event);
-
-      if (this.options.debug) {
-        console.debug("PostgresAdaptor.execute", "Executed SQL", event);
-      }
     }
   }
 
