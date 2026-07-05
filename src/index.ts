@@ -543,52 +543,17 @@ export class Database {
   }
 
   async syncTable<TTable extends Table>(table: TTable): Promise<void> {
-    const start = Date.now();
-    const log = (stage: string, extra?: Record<string, unknown>) => {
-      if (!this.options.debug) {
-        return;
-      }
-      console.info(`[zodbase.syncTable] ${stage}`, { table: table.id, ...extra });
-    };
-    log("start");
-
-    log("createTable:start");
     await this.options.adaptor.createTable(table);
-    log("createTable:done", {
-      elapsedMs: Date.now() - start,
-    });
 
-    log("diffTable:start");
     const diff = await this.diffTable(table);
-    log("diffTable:done", {
-      elapsedMs: Date.now() - start,
-      diffCount: diff.fields.length,
-    });
 
     if (diff.fields.length > 0) {
-      log("processDiff:start", {
-        diff: diff.fields.map((field) => ({ key: field.key, type: field.type })),
-      });
       await this.adaptor.processDiff(table, diff);
-      log("processDiff:done", {
-        elapsedMs: Date.now() - start,
-      });
-      //this.options.adaptor.executeSql(sql);
     }
 
     if (table.indexes.length > 0) {
-      log("syncTableIndexes:start", {
-        indexCount: table.indexes.length,
-      });
       await this.adaptor.syncTableIndexes(table);
-      log("syncTableIndexes:done", {
-        elapsedMs: Date.now() - start,
-      });
     }
-
-    log("done", {
-      elapsedMs: Date.now() - start,
-    });
   }
 
   private get adaptor() {

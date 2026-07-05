@@ -11,18 +11,8 @@ export default class TursoAdaptor extends SqliteAdaptor<Client> {
       throw new Error("Invalid statement");
     }
 
-    const startTimestamp = Date.now();
     const rawSql = statement[TO_SQL_SYMBOL]();
     const res = await this.driver.execute(rawSql);
-
-    if (this.options.debug) {
-      console.debug("TursoAdaptor.execute", "Executed SQL", {
-        sql: rawSql,
-        timings: {
-          totalDurationMs: Date.now() - startTimestamp,
-        },
-      });
-    }
 
     return this.mapResult({
       results: res.rows,

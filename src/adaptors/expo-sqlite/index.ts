@@ -18,7 +18,6 @@ export default class ExpoSQLiteAdaptor extends SqliteAdaptor<ExpoSQLiteDatabase>
       throw new Error("Invalid statement");
     }
 
-    const startTimestamp = Date.now();
     const rawSql = statement[TO_SQL_SYMBOL]();
 
     try {
@@ -34,15 +33,6 @@ export default class ExpoSQLiteAdaptor extends SqliteAdaptor<ExpoSQLiteDatabase>
         // For INSERT, UPDATE, DELETE, etc.
         await this.driver.runAsync(rawSql);
         results = [];
-      }
-
-      if (this.options.debug) {
-        console.log("ExpoSQLiteAdaptor.execute", "Executed SQL", {
-          sql: rawSql,
-          timings: {
-            totalDurationMs: Date.now() - startTimestamp,
-          },
-        });
       }
 
       return this.mapResult({
