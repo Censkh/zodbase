@@ -48,6 +48,10 @@ const TYPE_ORDERING: Record<FieldDiffType, number> = {
 };
 
 export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDriver> {
+  buildJsonArrayContainsSql(fieldSql: string, value: unknown): Statement {
+    return sql`EXISTS (SELECT 1 FROM json_each(${raw(fieldSql)}) WHERE value = ${value})`;
+  }
+
   async processDiff(table: Table, diff: TableDiff): Promise<void> {
     let remake = false;
 

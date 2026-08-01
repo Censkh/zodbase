@@ -83,6 +83,8 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     where: SelectCondition<ValueOfTable<TTable>>,
   ): Promise<SqlResult<void, 0>>;
 
+  abstract buildJsonArrayContainsSql(fieldSql: string, value: unknown): Statement;
+
   abstract fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>>;
   abstract syncTableIndexes(table: Table): Promise<void>;
 

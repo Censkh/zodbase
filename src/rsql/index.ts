@@ -1,6 +1,8 @@
 import { parse } from "@rsql/parser";
+import * as zod from "zod/v4";
 import type { SelectCondition, SingleFieldBinding, ValueOfTable } from "../QueryBuilder";
 import type { Table } from "../Table";
+import { isZodTypeExtends } from "../ZodUtils";
 
 const OPERATOR_MAP = {
   "==": "equals",
@@ -93,6 +95,14 @@ const astNodeToCondition = <TTable extends Table>(
       case "lessThanOrEquals":
         return fieldBinding.lessThanOrEquals(values[0] as any);
       case "in":
+        if (isZodTypeExtends(fieldBinding.schema, zod.ZodArray)) {
+          const conditions = values.map((value) => fieldBinding.contains(value));
+          let combinedCondition: SelectCondition<ValueOfTable<TTable>> = conditions[0]!;
+          for (const nextCondition of conditions.slice(1)) {
+            combinedCondition = combinedCondition.or(nextCondition);
+          }
+          return combinedCondition;
+        }
         return fieldBinding.in(values as any);
       case "like":
         return fieldBinding.like(values[0] as any);

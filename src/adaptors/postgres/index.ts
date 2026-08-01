@@ -52,6 +52,10 @@ const TYPE_ORDERING: Record<FieldDiffType, number> = {
 export default class PostgresAdaptor<
   TDriver extends pg.Client | pg.Pool = pg.Client | pg.Pool,
 > extends DatabaseAdaptor<TDriver> {
+  buildJsonArrayContainsSql(fieldSql: string, value: unknown): Statement {
+    return sql`${raw(fieldSql)} @> ${raw(valueToSql([value], true))}::jsonb`;
+  }
+
   async execute(statement: Statement): Promise<SqlResult> {
     if (typeof statement?.[TO_SQL_SYMBOL] !== "function") {
       throw new Error("Invalid statement");

@@ -45,6 +45,8 @@ export interface SingleFieldBinding<TValue = any, TKey extends StringKeys<TValue
   notEquals(value: TValue[TKey] | undefined | null): SelectFieldCondition<TValue, TKey>;
 
   in(values: TValue[TKey][]): SelectFieldCondition<TValue, TKey>;
+
+  contains(value: unknown): SelectFieldCondition<TValue, TKey>;
 }
 
 export type FieldBinding<TValue> = SingleFieldBinding<TValue, StringKeys<TValue>> | AllFieldsBinding<TValue>;
@@ -97,6 +99,14 @@ export const buildConditionSql = (
     )})`;
   }
 
+  const fieldSql = `${includeTable ? `${condition.field.table.id}.` : ""}${
+    doubleQuote ? `"${condition.field.key}"` : condition.field.key
+  }`;
+
+  if (condition.operator === "JSON_CONTAINS") {
+    return adaptor.buildJsonArrayContainsSql(fieldSql, condition.value);
+  }
+
   let check = sql`${raw(condition.operator)}
   ${condition.value}`;
 
@@ -106,9 +116,7 @@ export const buildConditionSql = (
     check = sql`IS NOT NULL`;
   }
 
-  return sql`${includeTable ? sql`${raw(condition.field.table.id)}.` : raw("")}${
-    doubleQuote ? raw(`"${condition.field.key}"`) : raw(condition.field.key)
-  } ${check}`;
+  return sql`${raw(fieldSql)} ${check}`;
 };
 
 export interface SelectQuery<TTable extends Table = Table, TLimit extends number = number> {
@@ -148,7 +156,7 @@ export type SelectQueryBuilder<TTable extends Table, TResultValue, TResultLimit 
   count(): Promise<SqlResult<Record<StringKeys<ValueOfTable<TTable>>, number>, 1>>;
 };
 
-export type SqlOperator = "=" | "<" | ">" | "<=" | ">=" | "!=" | "LIKE" | "IN";
+export type SqlOperator = "=" | "<" | ">" | "<=" | ">=" | "!=" | "LIKE" | "IN" | "JSON_CONTAINS";
 export type StringOrNever<T> = T extends string ? T : never;
 
 export interface SqlResultTimings {

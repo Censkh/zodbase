@@ -16,6 +16,7 @@ const AssetTable = createTable({
     isActive: zod.boolean(),
     category: zod.string(),
     parentId: zod.string().nullable(),
+    tags: zod.array(zod.string()).optional(),
   }),
 });
 
@@ -89,6 +90,39 @@ const createTestDb = async () => {
 };
 
 describe("RSQL Filter", () => {
+  it("filters JSON array fields by an exact member", async () => {
+    const db = await createTestDb();
+    await db.insertMany(AssetTable, [
+      {
+        id: "tagged-1",
+        name: "Tagged One",
+        status: "approved",
+        price: 1,
+        quantity: 1,
+        isActive: true,
+        category: "electronics",
+        parentId: null,
+        tags: ["keep", "archive"],
+      },
+      {
+        id: "tagged-2",
+        name: "Tagged Two",
+        status: "approved",
+        price: 1,
+        quantity: 1,
+        isActive: true,
+        category: "electronics",
+        parentId: null,
+        tags: ["keep-old"],
+      },
+    ]);
+
+    const condition = rsqlToCondition(AssetTable, "tags=in=(keep)");
+    const { results } = await db.select(AssetTable, ["*"]).where(condition!);
+
+    expect(results.map((asset) => asset.id)).toEqual(["tagged-1"]);
+  });
+
   describe("Basic Comparison Operators", () => {
     it("should filter with equals operator (==)", async () => {
       const db = await createTestDb();

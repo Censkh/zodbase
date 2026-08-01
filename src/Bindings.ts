@@ -80,6 +80,14 @@ export const createTableBinding = <TTable extends Table>(table: TTable): Binding
           value: values,
         }) as any;
       },
+
+      contains(value) {
+        return createSelectCondition({
+          field: fieldBinding,
+          operator: "JSON_CONTAINS",
+          value,
+        }) as any;
+      },
     };
     // @ts-expect-error
     binding[field.key] = fieldBinding;
