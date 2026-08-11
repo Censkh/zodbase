@@ -1,5 +1,7 @@
+import BunDatabase from "bun:sqlite";
 import * as zod from "zod/v4";
 import { createTable, Database } from "../src";
+import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
 import PostgresAdaptor from "../src/adaptors/postgres";
 
 const TestTable = createTable({
@@ -125,6 +127,34 @@ describe("returning", () => {
 
     expect(queries).toHaveLength(1);
     expect(queries[0]).toContain("RETURNING *");
+  });
+
+  it("returns updated rows when the update changes a where field", async () => {
+    const VersionedTable = createTable({
+      id: "versioned_returning_test",
+      schema: zod.object({
+        id: zod.string(),
+        version: zod.number(),
+        name: zod.string(),
+      }),
+    });
+    const rawDb = new BunDatabase(":memory:");
+    const db = new Database({
+      adaptor: new BunSqliteAdaptor({ driver: rawDb }),
+    });
+
+    await db.syncTable(VersionedTable);
+    await db.insert(VersionedTable, { id: "1", version: 1, name: "first" });
+
+    const updated = await db
+      .update(
+        VersionedTable,
+        { version: 2, name: "second" },
+        VersionedTable.$id.equals("1").and(VersionedTable.$version.equals(1)),
+      )
+      .selectMutated();
+
+    expect(updated.results).toEqual([{ id: "1", version: 2, name: "second" }]);
   });
 
   it("returns parsed insertMany rows without RETURNING when parsed rows are requested", async () => {

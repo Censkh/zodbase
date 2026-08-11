@@ -201,10 +201,11 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     table: TTable,
     values: Partial<InputOfTable<TTable>>,
     where: SelectCondition<ValueOfTable<TTable>>,
+    shouldReturn = false,
   ): Promise<PossiblySelectedResult<ValueOfTable<TTable>>> {
-    const sql = this.buildUpdateSql(table, values, where);
+    const sql = this.buildUpdateSql(table, values, where, shouldReturn);
     const result = (await this.execute(sql)) as PossiblySelectedResult<ValueOfTable<TTable>>;
-    result.selected = false;
+    result.selected = shouldReturn;
     return result;
   }
 
@@ -246,6 +247,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     table: TTable,
     values: Partial<InputOfTable<TTable>>,
     where: SelectCondition<ValueOfTable<TTable>>,
+    shouldReturn = false,
   ): Statement {
     return sql`UPDATE ${table}
                  SET ${raw(
@@ -256,7 +258,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
                      return acc;
                    }, [] as Statement[]),
                  )}
-                 WHERE ${buildConditionSql(this, where)}`;
+                 WHERE ${buildConditionSql(this, where)}${raw(shouldReturn ? " RETURNING *" : "")}`;
   }
 
   protected buildUpsertSql<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
