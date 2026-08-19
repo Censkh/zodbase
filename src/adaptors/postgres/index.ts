@@ -49,9 +49,7 @@ const TYPE_ORDERING: Record<FieldDiffType, number> = {
   removed: 2,
 };
 
-export default class PostgresAdaptor<
-  TDriver extends pg.Client | pg.Pool = pg.Client | pg.Pool,
-> extends DatabaseAdaptor<TDriver> {
+export default class PostgresAdaptor<TDriver extends pg.Client = pg.Client> extends DatabaseAdaptor<TDriver> {
   buildJsonArrayContainsSql(fieldSql: string, value: unknown): Statement {
     return sql`${raw(fieldSql)} @> ${raw(valueToSql([value], true))}::jsonb`;
   }
