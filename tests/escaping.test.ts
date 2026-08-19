@@ -78,7 +78,7 @@ describe.each([
       await db.insert(TestTable, item);
 
       const result = await db.count(TestTable).where(TestTable.$data.equals(evilString));
-      expect((result.first as any)?._count).toBe(1);
+      expect(result.first?._count).toBe(1);
 
       // Clean up for next iteration
       await db.delete(TestTable).where(TestTable.$id.equals("1"));
