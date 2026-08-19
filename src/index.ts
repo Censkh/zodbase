@@ -296,7 +296,12 @@ export class Database {
     return createSelectQueryBuilder(query, this.options.adaptor);
   }
 
-  count<TTable extends Table, TKey extends BindingKeys<ValueOfTable<TTable>>>(table: TTable, ...fields: TKey[]) {
+  count<TTable extends Table>(table: TTable): CountBuilder<TTable, { _count: number }>;
+  count<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
+    table: TTable,
+    ...fields: TKey[]
+  ): CountBuilder<TTable, Record<TKey, number>>;
+  count<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(table: TTable, ...fields: TKey[]) {
     let where: SelectCondition<ValueOfTable<TTable>> | undefined;
     const adapator = this.options.adaptor;
     const countBuilder = {
@@ -304,7 +309,7 @@ export class Database {
         where = condition;
         return countBuilder;
       },
-    } as CountBuilder<TTable, Record<TKey, number>>;
+    } as CountBuilder<TTable, { _count: number } | Record<TKey, number>>;
     let fieldBindings: any = getFieldBindingsByKeys(table, fields);
     if (fieldBindings.length === 0) {
       fieldBindings = [
@@ -315,7 +320,10 @@ export class Database {
         },
       ];
     }
-    return toLazyPromise(() => adapator.executeCount(table, fieldBindings, where), countBuilder);
+    return toLazyPromise(() => adapator.executeCount(table, fieldBindings, where), countBuilder) as CountBuilder<
+      TTable,
+      { _count: number } | Record<TKey, number>
+    >;
   }
 
   delete<TTable extends Table>(table: TTable) {
