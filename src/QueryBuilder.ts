@@ -46,6 +46,8 @@ export interface SingleFieldBinding<TValue = any, TKey extends StringKeys<TValue
 
   in(values: TValue[TKey][]): SelectFieldCondition<TValue, TKey>;
 
+  notIn(values: TValue[TKey][]): SelectFieldCondition<TValue, TKey>;
+
   contains(value: unknown): SelectFieldCondition<TValue, TKey>;
 }
 
@@ -84,14 +86,13 @@ export const buildConditionSql = (
   condition: SelectCondition,
   options?: boolean | { doubleQuote?: boolean; includeTable?: boolean },
 ): Statement => {
-  const doubleQuote = typeof options === "boolean" ? options : options?.doubleQuote;
   const includeTable = typeof options === "boolean" ? true : (options?.includeTable ?? true);
 
   if ("conditions" in condition) {
     return sql`(${join(
       condition.conditions.reduce((result, childCondition) => {
         if (childCondition) {
-          result.push(buildConditionSql(adaptor, childCondition, { doubleQuote, includeTable }));
+          result.push(buildConditionSql(adaptor, childCondition, { includeTable }));
         }
         return result;
       }, [] as Statement[]),
@@ -99,12 +100,14 @@ export const buildConditionSql = (
     )})`;
   }
 
-  const fieldSql = `${includeTable ? `${condition.field.table.id}.` : ""}${
-    doubleQuote ? `"${condition.field.key}"` : condition.field.key
-  }`;
+  const fieldSql = `${includeTable ? `${adaptor.quoteIdentifier(String(condition.field.table.id))}.` : ""}${adaptor.quoteIdentifier(String(condition.field.key))}`;
 
   if (condition.operator === "JSON_CONTAINS") {
     return adaptor.buildJsonArrayContainsSql(fieldSql, condition.value);
+  }
+
+  if ((condition.operator === "IN" || condition.operator === "NOT IN") && condition.value.length === 0) {
+    return sql`${raw(condition.operator === "IN" ? "1 = 0" : "1 = 1")}`;
   }
 
   let check = sql`${raw(condition.operator)}
@@ -136,7 +139,13 @@ export type SelectQueryBuilder<TTable extends Table, TResultValue, TResultLimit 
 > & {
   table: TTable;
 
-  fields(...fields: BindingKeys<ValueOfTable<TTable>>[]): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
+  fields<TKey extends BindingKeys<ValueOfTable<TTable>>>(
+    ...fields: TKey[]
+  ): SelectQueryBuilder<
+    TTable,
+    "*" extends TKey ? ValueOfTable<TTable> : Pick<ValueOfTable<TTable>, Exclude<TKey, "*">>,
+    TResultLimit
+  >;
 
   clone(): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
 
@@ -156,7 +165,7 @@ export type SelectQueryBuilder<TTable extends Table, TResultValue, TResultLimit 
   count(): Promise<SqlResult<Record<StringKeys<ValueOfTable<TTable>>, number>, 1>>;
 };
 
-export type SqlOperator = "=" | "<" | ">" | "<=" | ">=" | "!=" | "LIKE" | "IN" | "JSON_CONTAINS";
+export type SqlOperator = "=" | "<" | ">" | "<=" | ">=" | "!=" | "LIKE" | "IN" | "NOT IN" | "JSON_CONTAINS";
 export type StringOrNever<T> = T extends string ? T : never;
 
 export interface SqlResultTimings {

@@ -3,8 +3,9 @@
   "version": "0.0.1",
   "main": "src/index.ts",
   "scripts": {
-    "test": "bun test --parallel=4 --pass-with-no-tests",
-    "test:compiled": "bun test --preload zod/compile --parallel=4 --pass-with-no-tests",
+    "test": "bun test --parallel=2 --pass-with-no-tests && bun run test:types",
+    "test:compiled": "bun test --preload zod/compile --parallel=2 --pass-with-no-tests && bun run test:types",
+    "test:types": "tsc --noEmit --project tsconfig.types.json",
     "check:fix": "tsc --noEmit --project tsconfig.json && npx @biomejs/biome check --write .",
     "check": "tsc --noEmit --project tsconfig.json && npx @biomejs/biome check ."
   },
@@ -35,11 +36,14 @@
     "@biomejs/biome": "^2.5.11",
     "@cloudflare/workers-types": "^5.20260829.1",
     "@libsql/client": "^0.17.4",
+    "@testcontainers/cockroachdb": "^12.1.0",
+    "@testcontainers/mysql": "^12.1.0",
+    "@testcontainers/postgresql": "^12.1.0",
     "@types/bun": "^1.4.0",
     "@types/node": "^26.2.0",
     "@types/pg": "^8.23.1",
+    "mysql2": "^3.24.2",
     "pg": "^8.22.0",
-    "pg-mem": "^3.0.14",
     "typescript": "7.0.2",
     "zod": "^4.5.2"
   },

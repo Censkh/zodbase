@@ -216,15 +216,41 @@ export function raw(value: string | string[] | Statement | Statement[]): Stateme
   };
 }
 
+const selectResultFields = <TResult extends SqlResult>(result: TResult, keys: BindingKeys<any>[]): TResult => {
+  if (keys.length === 0 || keys.includes("*")) {
+    return result;
+  }
+
+  const selectedRows = result.results.map((row: any) =>
+    Object.fromEntries(keys.map((key) => [key, row[key as string]])),
+  );
+  return {
+    ...result,
+    results: selectedRows,
+    first: selectedRows[0],
+  } as TResult;
+};
+
 const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys<ValueOfTable<TTable>>>(
   query: SelectQuery<TTable>,
   adaptor: DatabaseAdaptor,
-): SelectQueryBuilder<TTable, TKey extends "*" ? ValueOfTable<TTable> : Pick<ValueOfTable<TTable>, TKey>, number> => {
+): SelectQueryBuilder<
+  TTable,
+  "*" extends TKey ? ValueOfTable<TTable> : Pick<ValueOfTable<TTable>, Exclude<TKey, "*">>,
+  number
+> => {
   const builder = {
     table: query.table,
 
     clone() {
-      return createSelectQueryBuilder({ ...query }, adaptor);
+      return createSelectQueryBuilder(
+        {
+          ...query,
+          fields: [...query.fields],
+          orderBy: [...query.orderBy],
+        },
+        adaptor,
+      );
     },
 
     where(condition: SelectCondition<ValueOfTable<TTable>>) {
@@ -283,7 +309,11 @@ export class Database {
   select<TTable extends Table, TKey extends BindingKeys<ValueOfTable<TTable>>>(
     table: TTable,
     fields: TKey[],
-  ): SelectQueryBuilder<TTable, TKey extends "*" ? ValueOfTable<TTable> : Pick<ValueOfTable<TTable>, TKey>, number> {
+  ): SelectQueryBuilder<
+    TTable,
+    "*" extends TKey ? ValueOfTable<TTable> : Pick<ValueOfTable<TTable>, Exclude<TKey, "*">>,
+    number
+  > {
     const query = {
       table: table as any,
       fields: getFieldBindingsByKeys(table, fields) as any,
@@ -406,7 +436,7 @@ export class Database {
         ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, number>> {
           const result = await adapator.executeUpdate(table, parsedValues, where, true);
           if (result.selected) {
-            return result as any;
+            return selectResultFields(result, keys) as any;
           }
 
           const selectResult = (await adapator.executeSelect({
@@ -460,7 +490,7 @@ export class Database {
     ) satisfies MutationResult<SqlDefiniteResult<ValueOfTable<TTable>, 1>>;
   }
 
-  async updateMany<
+  updateMany<
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TFieldKey extends StringKeys<ValueOfTable<TTable>>,
@@ -496,12 +526,12 @@ export class Database {
           }
           const result = await adapator.executeUpdateMany(table, parsedValues, field);
           if (result.results.length > 0) {
-            return result as any;
+            return selectResultFields(result, keys) as any;
           }
 
           return adapator.executeSelect({
             table,
-            fields: getFieldBindingsByKeys(table, keys),
+            fields: getFieldBindingsByKeys(table, keys.length === 0 ? ["*"] : keys),
             where: field.in(parsedValues.map((value: any) => value[field.key])),
             orderBy: [],
             limit: undefined,

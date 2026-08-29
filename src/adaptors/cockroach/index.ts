@@ -14,10 +14,23 @@ export default class CockroachAdaptor extends PostgresAdaptor {
       INDEX FROM
       ${table.id}
     `);
+    const constraintResult = await this.execute(sql`
+      SHOW
+      CONSTRAINTS FROM
+      ${table.id}
+    `);
 
-    const indexColumns: Record<string, any> = {};
+    const primaryKeyIndexes = new Set(
+      constraintResult.results
+        .filter((constraint) => constraint.constraint_type === "PRIMARY KEY")
+        .map((constraint) => constraint.constraint_name),
+    );
+
+    const primaryKeyColumns = new Set<string>();
     for (const index of indexResult.results) {
-      indexColumns[index.column_name] = index;
+      if (primaryKeyIndexes.has(index.index_name) && !index.storing && !index.implicit) {
+        primaryKeyColumns.add(index.column_name);
+      }
     }
 
     return mapSqlResult<any, TableColumnInfo, number>(columnResult, (row) => {
@@ -25,16 +38,13 @@ export default class CockroachAdaptor extends PostgresAdaptor {
         return;
       }
 
-      const index = indexColumns[row.column_name];
-      const isPrimaryKey = !index?.storing;
-
       return {
         name: row.column_name,
         type: {} as any,
-        notNull: row.is_nullable,
+        notNull: !row.is_nullable,
         hasDefault: row.column_default !== null,
         isIdentity: undefined,
-        primaryKey: isPrimaryKey,
+        primaryKey: primaryKeyColumns.has(row.column_name),
       };
     });
   }

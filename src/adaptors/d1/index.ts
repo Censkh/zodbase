@@ -13,7 +13,13 @@ export default class D1Adaptor extends SqliteAdaptor<D1Database> {
 
     const rawSql = statement[TO_SQL_SYMBOL]();
     const preparedStatement = this.driver.prepare(rawSql);
-    const res = await preparedStatement.all();
+    const normalizedSql = rawSql.trim().toUpperCase();
+    const returnsRows =
+      normalizedSql.startsWith("SELECT") ||
+      normalizedSql.startsWith("PRAGMA") ||
+      normalizedSql.startsWith("EXPLAIN") ||
+      /\bRETURNING\b/.test(normalizedSql);
+    const res = returnsRows ? await preparedStatement.all() : await preparedStatement.run();
 
     return this.mapResult({
       results: res.results,

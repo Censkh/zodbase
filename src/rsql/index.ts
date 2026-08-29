@@ -16,15 +16,27 @@ const OPERATOR_MAP = {
   "=like=": "like",
 } as const;
 
-const parseValue = (value: string): string | number | boolean | null => {
-  if (value === "null") return null;
-  // SQLite stores booleans as 1 and 0, so convert true/false to numbers
-  if (value === "true") return 1;
-  if (value === "false") return 0;
+const parseValue = (schema: zod.ZodType, value: string): string | number | boolean | null => {
+  const arrayType = isZodTypeExtends(schema, zod.ZodArray);
+  const valueSchema: zod.ZodType = arrayType ? ((arrayType as zod.ZodArray).element as unknown as zod.ZodType) : schema;
 
-  const num = Number(value);
-  if (!Number.isNaN(num) && value !== "") {
-    return num;
+  if (
+    value === "null" &&
+    (isZodTypeExtends(valueSchema, zod.ZodNull) || isZodTypeExtends(valueSchema, zod.ZodNullable))
+  ) {
+    return null;
+  }
+  if (isZodTypeExtends(valueSchema, zod.ZodBoolean)) {
+    if (value === "true") return true;
+    if (value === "false") return false;
+    throw new Error(`Invalid boolean value: ${value}`);
+  }
+  if (isZodTypeExtends(valueSchema, zod.ZodNumber)) {
+    const numberValue = Number(value);
+    if (!Number.isNaN(numberValue) && value !== "") {
+      return numberValue;
+    }
+    throw new Error(`Invalid numeric value: ${value}`);
   }
 
   return value;
@@ -77,8 +89,8 @@ const astNodeToCondition = <TTable extends Table>(
     // Extract the actual value from ComparisonNode or ValueNode
     const rightValue = rightNode?.arguments || rightNode?.value || rightNode;
     const values = Array.isArray(rightValue)
-      ? rightValue.map((arg: string) => parseValue(arg))
-      : [parseValue(rightValue)];
+      ? rightValue.map((arg: string) => parseValue(fieldBinding.schema, arg))
+      : [parseValue(fieldBinding.schema, rightValue)];
 
     // Handle different operators
     switch (method) {
@@ -104,6 +116,8 @@ const astNodeToCondition = <TTable extends Table>(
           return combinedCondition;
         }
         return fieldBinding.in(values as any);
+      case "notIn":
+        return fieldBinding.notIn(values as any);
       case "like":
         return fieldBinding.like(values[0] as any);
       default:

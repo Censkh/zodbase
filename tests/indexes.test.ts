@@ -52,7 +52,7 @@ describe("indexes", () => {
         .query("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'asset_project_external_id_unique'")
         .get(),
     ).toMatchObject({
-      sql: expect.stringContaining("WHERE externalId IS NOT NULL"),
+      sql: expect.stringContaining('WHERE "externalId" IS NOT NULL'),
     });
   });
 
@@ -158,6 +158,6 @@ describe("indexes", () => {
       .query("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'asset_project_external_pending_unique'")
       .get() as { sql: string };
 
-    expect(indexSql.sql.replace(/\s+/g, " ")).toContain("(externalId IS NOT NULL AND status = 'pending')");
+    expect(indexSql.sql.replace(/\s+/g, " ")).toContain('("externalId" IS NOT NULL AND "status" = \'pending\')');
   });
 });

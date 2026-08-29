@@ -22,12 +22,17 @@ export default class ExpoSQLiteAdaptor extends SqliteAdaptor<ExpoSQLiteDatabase>
 
     try {
       // Use getAllAsync for SELECT queries, runAsync for others
-      const isSelect = rawSql.trim().toUpperCase().startsWith("SELECT");
-      const isCount = rawSql.trim().toUpperCase().includes("COUNT(");
+      const normalizedSql = rawSql.trim().toUpperCase();
+      const returnsRows =
+        normalizedSql.startsWith("SELECT") ||
+        normalizedSql.startsWith("PRAGMA") ||
+        normalizedSql.startsWith("WITH") ||
+        normalizedSql.startsWith("EXPLAIN") ||
+        /\bRETURNING\b/.test(normalizedSql);
 
       let results: any[];
 
-      if (isSelect || isCount) {
+      if (returnsRows) {
         results = await this.driver.getAllAsync(rawSql);
       } else {
         // For INSERT, UPDATE, DELETE, etc.

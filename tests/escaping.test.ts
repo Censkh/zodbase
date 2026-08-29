@@ -1,9 +1,14 @@
-import BunDatabase from "bun:sqlite";
-import { newDb } from "pg-mem";
 import * as zod from "zod/v4";
-import { createTable, Database, metaStore, primaryKey, sql } from "../src";
-import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
-import PostgresAdaptor from "../src/adaptors/postgres";
+import { createTable, type Database, metaStore, primaryKey, sql } from "../src";
+import {
+  acquireTestDatabaseContainers,
+  releaseTestDatabaseContainers,
+  TEST_DATABASE_FACTORIES,
+  type TestDatabaseContext,
+} from "./helpers/databaseContract";
+
+beforeAll(acquireTestDatabaseContainers, 180_000);
+afterAll(releaseTestDatabaseContainers, 180_000);
 
 const evilStrings = [
   "' OR 1=1; --",
@@ -20,40 +25,18 @@ const TestTable = createTable({
   }),
 });
 
-const createBunDb = async () => {
-  const rawDb = new BunDatabase(":memory:");
-  const db = new Database({
-    adaptor: new BunSqliteAdaptor({
-      driver: rawDb,
-    }),
-  });
-  await db.syncTable(TestTable);
-  return db;
-};
-
-const createPgMockDb = async () => {
-  const mem = newDb();
-  const { Client } = mem.adapters.createPg();
-  const client = new Client();
-  await client.connect();
-
-  const db = new Database({
-    adaptor: new PostgresAdaptor({
-      driver: client,
-    }),
-  });
-  await db.syncTable(TestTable);
-  return db;
-};
-
-describe.each([
-  { name: "pg-mem", createDb: createPgMockDb },
-  { name: "bun-sqlite", createDb: createBunDb },
-])("SQL Escaping for $name", ({ createDb, name }) => {
+describe.each(TEST_DATABASE_FACTORIES)("SQL Escaping for $name", ({ create }) => {
   let db: Database;
+  let context: TestDatabaseContext;
 
   beforeEach(async () => {
-    db = await createDb();
+    context = await create();
+    db = context.db;
+    await db.syncTable(TestTable);
+  });
+
+  afterEach(async () => {
+    await context.close();
   });
 
   it("1. should escape values in insert and select", async () => {
@@ -108,7 +91,7 @@ describe.each([
 
   it("4. should escape values in upsert", async () => {
     for (const evilString of evilStrings) {
-      if (name !== "pg-mem") {
+      {
         // Test insert part of upsert
         const item = { id: "1", data: evilString };
         await db.upsert(TestTable, item, TestTable.$id);
@@ -230,7 +213,7 @@ describe.each([
       // Clean up for upsert test
       await db.delete(TestTable).where(TestTable.$id.equals("1"));
 
-      if (name !== "pg-mem") {
+      {
         // Test upsert
         const upsertItem = { id: "2", data: { [evilKey]: "upserted" } };
         await db.upsert(TestTable, upsertItem, TestTable.$id);

@@ -29,7 +29,7 @@ export default class TursoAdaptor extends SqliteAdaptor<Client> {
       return this.buildUpdateSql(table, value, field.equals(value[field.key] as any) as any)[TO_SQL_SYMBOL]();
     });
 
-    await this.driver.batch(statements);
+    await this.driver.batch(statements, "write");
     return {
       results: [],
       first: undefined,

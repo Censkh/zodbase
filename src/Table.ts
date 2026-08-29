@@ -1,6 +1,7 @@
 import type * as zod from "zod/v4";
 import { getMetaStores, getZodTypeFields } from "zod-meta";
 import { createTableBinding } from "./Bindings";
+import { quoteIdentifier } from "./Escaping";
 import type { SelectCondition, SingleFieldBinding, StringKeys } from "./QueryBuilder";
 import { TO_SQL_SYMBOL, type ToSql } from "./Statement";
 import type { BaseSchema } from "./Types";
@@ -75,9 +76,9 @@ export const createTable = <TValue extends zod.infer<TSchema>, TName extends str
     fields: {},
     indexes: [],
     id: Object.assign(options.id, {
-      [TO_SQL_SYMBOL]: () => options.id,
+      [TO_SQL_SYMBOL]: () => quoteIdentifier(options.id),
     }),
-    [TO_SQL_SYMBOL]: () => options.id,
+    [TO_SQL_SYMBOL]: () => quoteIdentifier(options.id),
     addIndex(id: string, fields: SingleFieldBinding[], indexOptions = {}) {
       this.indexes.push({
         id,

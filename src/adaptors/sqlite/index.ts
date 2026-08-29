@@ -6,7 +6,6 @@ import {
   type FieldDiffType,
   isZodRequired,
   mapSqlResult,
-  primaryKey,
   raw,
   sql,
   type Table,
@@ -15,7 +14,7 @@ import {
   valueToSql,
 } from "../..";
 import DatabaseAdaptor, { type PossiblySelectedResult } from "../../DatabaseAdaptor";
-import { escapeSqlValue } from "../../Escaping";
+import { quoteIdentifier } from "../../Escaping";
 import {
   buildConditionSql,
   type InputOfTable,
@@ -54,6 +53,36 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
 
   async processDiff(table: Table, diff: TableDiff): Promise<void> {
     let remake = false;
+    let tableHasRows: boolean | undefined;
+
+    for (const fieldDiff of diff.fields) {
+      const schema = fieldDiff.field?.schema;
+      const addsRequiredField = fieldDiff.type === "added" && schema && isZodRequired(schema);
+      const addsRequiredConstraint =
+        fieldDiff.type === "modified" &&
+        fieldDiff.modifications?.some(
+          (modification) => modification.type === "add-constraint" && modification.constraint === "NOT NULL",
+        );
+      let requiresBackfill = false;
+      if (addsRequiredField) {
+        tableHasRows ??= (await this.execute(sql`SELECT 1 FROM ${table} LIMIT 1`)).results.length > 0;
+        requiresBackfill = tableHasRows;
+      } else if (addsRequiredConstraint) {
+        requiresBackfill =
+          (
+            await this.execute(
+              sql`SELECT 1 FROM ${table}
+                  WHERE ${raw(quoteIdentifier(String(fieldDiff.key)))} IS NULL LIMIT 1`,
+            )
+          ).results.length > 0;
+      }
+      if (schema && requiresBackfill) {
+        const backfillMeta = getMetaItem(schema, backfill) as BackfillMetaItem | undefined;
+        if (backfillMeta?.data.value === undefined || backfillMeta.data.value === null) {
+          throw new Error(`[zodbase] Backfill value is required when adding required field '${fieldDiff.field?.key}'`);
+        }
+      }
+    }
 
     // do removes after adds so we don't end up with 0 columns
     diff.fields = diff.fields.sort((a, b) => TYPE_ORDERING[a.type] - TYPE_ORDERING[b.type]);
@@ -65,11 +94,9 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
         if (!schema) {
           continue;
         }
-        const primaryKeyMeta = getMetaItem(schema, primaryKey);
-
         const statement = sql`
             ALTER TABLE ${table.id}
-              ADD COLUMN ${fieldDiff.key} ${raw(this.typeToSql(schema))}${raw(primaryKeyMeta ? " PRIMARY KEY" : "")}`;
+              ADD COLUMN ${raw(quoteIdentifier(String(fieldDiff.key)))} ${raw(this.typeToSql(schema))}`;
 
         await this.execute(statement);
 
@@ -82,13 +109,17 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
 
           await this.execute(
             sql`UPDATE ${table.id}
-                  SET ${raw(fieldDiff.key)} = ${backfillValue}
-                  WHERE ${raw(fieldDiff.key)} IS NULL`,
+                  SET ${raw(quoteIdentifier(String(fieldDiff.key)))} = ${backfillValue}
+                  WHERE ${raw(quoteIdentifier(String(fieldDiff.key)))} IS NULL`,
           );
+          remake = true;
+        }
+        if (isZodRequired(schema)) {
+          remake = true;
         }
       } else if (fieldDiff.type === "removed") {
         await this.execute(sql`ALTER TABLE ${table.id}
-            DROP COLUMN ${fieldDiff.key}`);
+            DROP COLUMN ${raw(quoteIdentifier(String(fieldDiff.key)))}`);
       } else if (fieldDiff.type === "modified") {
         remake = true;
         const schema = field?.schema;
@@ -102,7 +133,8 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
 
             await this.execute(
               sql`UPDATE ${table.id}
-                 SET ${raw(fieldDiff.key)} = ${backfillValue} WHERE ${raw(fieldDiff.key)} IS NULL`,
+                 SET ${raw(quoteIdentifier(String(fieldDiff.key)))} = ${backfillValue}
+                 WHERE ${raw(quoteIdentifier(String(fieldDiff.key)))} IS NULL`,
             );
           }
         }
@@ -113,17 +145,21 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
       // sqlite does not support modifying columns, so we need to create a new table
       const tempTableId = `${table.id}_temp_${crypto.randomUUID().split("-")[0]}`;
       await this.createTable(table, tempTableId);
-      await this.execute(sql`INSERT INTO ${raw(tempTableId)} SELECT * FROM ${table}`);
+      const columns = Object.keys(table.fields).map(quoteIdentifier).join(", ");
+      await this.execute(
+        sql`INSERT INTO ${raw(quoteIdentifier(tempTableId))} (${raw(columns)})
+            SELECT ${raw(columns)} FROM ${table}`,
+      );
       await this.execute(sql`DROP TABLE ${table.id}`);
-      await this.execute(sql`ALTER TABLE ${raw(tempTableId)} RENAME TO ${table}`);
+      await this.execute(sql`ALTER TABLE ${raw(quoteIdentifier(tempTableId))} RENAME TO ${table}`);
     }
   }
 
   async syncTableIndexes(table: Table): Promise<void> {
     for (const index of table.indexes) {
       await this.execute(sql`
-        CREATE ${raw(index.unique ? "UNIQUE " : "")}INDEX IF NOT EXISTS ${raw(index.id)}
-          ON ${table.id} (${raw(index.fields.map((field) => field.key).join(", "))})
+        CREATE ${raw(index.unique ? "UNIQUE " : "")}INDEX IF NOT EXISTS ${raw(quoteIdentifier(index.id))}
+          ON ${table.id} (${raw(index.fields.map((field) => quoteIdentifier(String(field.key))).join(", "))})
           ${index.where ? sql`WHERE ${buildConditionSql(this, index.where, { includeTable: false })}` : raw("")}
       `);
     }
@@ -146,12 +182,18 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
   }
 
   buildSelectSql(select: SelectQuery): Statement {
-    return sql`SELECT ${raw(select.fields.map((field) => `${field.key}`))}
+    return sql`SELECT ${raw(
+      select.fields.map((field) => (field.key === "*" ? "*" : quoteIdentifier(String(field.key)))),
+    )}
             FROM ${select.table} ${select.where ? sql` WHERE ${buildConditionSql(this, select.where)}` : raw("")}${
               select.orderBy.length > 0
-                ? sql` ORDER BY ${raw(select.orderBy.map((order) => `${order.field.key} ${order.direction}`))}`
+                ? sql` ORDER BY ${raw(
+                    select.orderBy.map((order) => `${quoteIdentifier(String(order.field.key))} ${order.direction}`),
+                  )}`
                 : raw("")
-            }${raw(select.limit ? ` LIMIT ${select.limit}` : "")}${raw(select.offset ? ` OFFSET ${select.offset}` : "")}`;
+            }${raw(select.limit !== undefined ? ` LIMIT ${select.limit}` : "")}${raw(
+              select.offset !== undefined ? ` OFFSET ${select.offset}` : "",
+            )}`;
   }
 
   executeSelect<R>(select: SelectQuery): R {
@@ -163,7 +205,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     table: TTable,
     values: InputOfTable<TTable>,
   ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
-    const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(values as any))})
+    const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(values as any).map(quoteIdentifier))})
                  VALUES ${Object.values(values as any)}`;
     await this.execute(statement);
     return {
@@ -176,8 +218,9 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     table: TTable,
     values: InputOfTable<TTable>[],
   ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, number>> {
-    const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(values[0] as any))})
-                 VALUES ${raw(values.map((value: any) => sql`${Object.values(value)}`))}`;
+    const fieldKeys = Object.keys(table.fields);
+    const statement = sql`INSERT INTO ${table.id} (${raw(fieldKeys.map(quoteIdentifier))})
+                 VALUES ${raw(values.map((value: any) => sql`${fieldKeys.map((key) => value[key])}`))}`;
     await this.execute(statement);
     return {
       first: values[0] as any,
@@ -223,7 +266,15 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     fields: SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
     where: SelectCondition<ValueOfTable<TTable>> | undefined,
   ): Promise<SqlResult<Record<TKey, number>, 1>> {
-    const statement = sql`SELECT ${raw(fields.map((field) => raw(`COUNT(${field.key === "*" ? "*" : `ALL ${field.key}`}) as ${field.key === "*" ? "_count" : field.key}`)))}
+    const statement = sql`SELECT ${raw(
+      fields.map((field) =>
+        raw(
+          `COUNT(${field.key === "*" ? "*" : `ALL ${quoteIdentifier(String(field.key))}`}) as ${quoteIdentifier(
+            field.key === "*" ? "_count" : String(field.key),
+          )}`,
+        ),
+      ),
+    )}
                           FROM ${table} ${
                             where
                               ? sql`WHERE
@@ -253,7 +304,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
                  SET ${raw(
                    Object.entries(values).reduce((acc, [key, value]) => {
                      if (value !== undefined) {
-                       acc.push(raw(`${escapeSqlValue(key)} = ${valueToSql(value, true)}`));
+                       acc.push(raw(`${quoteIdentifier(key)} = ${valueToSql(value, true)}`));
                      }
                      return acc;
                    }, [] as Statement[]),
@@ -266,9 +317,11 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     values: Partial<ValueOfTable<TTable>>,
     field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
   ): Statement {
-    return sql`INSERT INTO ${table.id} (${raw(Object.keys(values))})
+    return sql`INSERT INTO ${table.id} (${raw(Object.keys(values).map(quoteIdentifier))})
                  VALUES ${Object.values(values)}
-                 ON CONFLICT (${raw(field.key)})
-                 DO UPDATE SET ${raw(Object.entries(values).map(([key, value]) => sql`${raw(key)} = ${value}`))}`;
+                 ON CONFLICT (${raw(quoteIdentifier(String(field.key)))})
+                 DO UPDATE SET ${raw(
+                   Object.entries(values).map(([key, value]) => sql`${raw(quoteIdentifier(key))} = ${value}`),
+                 )}`;
   }
 }

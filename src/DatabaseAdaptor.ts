@@ -1,5 +1,6 @@
 import * as zod from "zod/v4";
 import { getMetaItem } from "zod-meta";
+import { quoteIdentifier } from "./Escaping";
 import {
   type DatabaseEvents,
   isZodRequired,
@@ -39,6 +40,10 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
 
   protected get driver() {
     return this.options.driver;
+  }
+
+  quoteIdentifier(value: string): string {
+    return quoteIdentifier(value);
   }
 
   //typeToSql: (type: zod.ZodType<any>) => string;
@@ -103,8 +108,12 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     }
     const numberType = isZodTypeExtends(type, zod.ZodNumber);
     if (numberType) {
-      // @ts-expect-error
-      const isInt = numberType.def.checks?.find((check) => check.kind === "int");
+      const definition = numberType.def as any;
+      const isInt =
+        definition.format === "safeint" ||
+        definition.checks?.some(
+          (check: any) => check.isInt || check.format === "safeint" || check.def?.format === "safeint",
+        );
       return isInt ? "INTEGER" : "REAL";
     }
     if (isZodTypeExtends(type, zod.ZodBoolean)) {
@@ -125,7 +134,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   abstract processDiff(table: Table, diff: TableDiff): Promise<void>;
 
   createTable(table: Table, name?: string) {
-    const statement = sql`CREATE TABLE IF NOT EXISTS ${name ?? table.id}
+    const statement = sql`CREATE TABLE IF NOT EXISTS ${raw(quoteIdentifier(name ?? String(table.id)))}
       (
         ${join(
           Object.values(table.fields).map((field) => {
@@ -134,7 +143,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
             //const autoIncrementMeta = getMetaItem(schema, autoIncrement);
             return raw(
               [
-                field.key,
+                quoteIdentifier(String(field.key)),
                 this.typeToSql(schema),
                 primaryKeyMeta ? "PRIMARY KEY" : "",
                 isZodRequired(schema) ? " NOT NULL" : "",

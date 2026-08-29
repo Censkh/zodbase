@@ -2,6 +2,7 @@ import type * as pg from "pg";
 import type * as zod from "zod/v4";
 import { getMetaItem, type ZodMetaItem } from "zod-meta";
 import DatabaseAdaptor, { type PossiblySelectedResult } from "../../DatabaseAdaptor";
+import { quoteIdentifier } from "../../Escaping";
 import {
   type BackfillOptions,
   backfill,
@@ -109,7 +110,9 @@ export default class PostgresAdaptor<
   }
 
   buildSelectSql(select: SelectQuery): Statement {
-    return sql`SELECT ${raw(select.fields.map((field) => (field.key === "*" ? "*" : `"${field.key}"`)))}
+    return sql`SELECT ${raw(
+      select.fields.map((field) => (field.key === "*" ? "*" : quoteIdentifier(String(field.key)))),
+    )}
                FROM ${select.table} ${
                  select.where
                    ? sql` WHERE
@@ -118,9 +121,13 @@ export default class PostgresAdaptor<
 }${
                  select.orderBy.length > 0
                    ? sql` ORDER BY
-                   ${raw(select.orderBy.map((order) => `"${order.field.key}" ${order.direction}`))}`
+                   ${raw(
+                     select.orderBy.map((order) => `${quoteIdentifier(String(order.field.key))} ${order.direction}`),
+                   )}`
                    : raw("")
-}${raw(select.limit ? ` LIMIT ${select.limit}` : "")}${raw(select.offset ? ` OFFSET ${select.offset}` : "")}`;
+}${raw(select.limit !== undefined ? ` LIMIT ${select.limit}` : "")}${raw(
+                 select.offset !== undefined ? ` OFFSET ${select.offset}` : "",
+               )}`;
   }
 
   async executeSelect<R>(select: SelectQuery): Promise<R> {
@@ -133,7 +140,7 @@ export default class PostgresAdaptor<
     values: InputOfTable<TTable>,
     shouldReturn = false,
   ): Promise<SqlResult<ValueOfTable<TTable>, 1>> {
-    const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(values as any).map((k) => `"${k}"`))})
+    const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(values as any).map(quoteIdentifier))})
                           VALUES (${raw(Object.values(values as any).map((v) => valueToSql(v, true)))})${raw(
                             shouldReturn ? " RETURNING *" : "",
                           )}`;
@@ -152,10 +159,11 @@ export default class PostgresAdaptor<
     values: InputOfTable<TTable>[],
     shouldReturn = false,
   ): Promise<SqlResult<ValueOfTable<TTable>, number>> {
-    const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(values[0] as any).map((k) => `"${k}"`))})
+    const fieldKeys = Object.keys(table.fields);
+    const statement = sql`INSERT INTO ${table.id} (${raw(fieldKeys.map(quoteIdentifier))})
                           VALUES ${raw(
                             values.map(
-                              (value: any) => sql`(${raw(Object.values(value).map((v) => valueToSql(v, true)))})`,
+                              (value: any) => sql`(${raw(fieldKeys.map((key) => valueToSql(value[key], true)))})`,
                             ),
                           )}${raw(shouldReturn ? " RETURNING *" : "")}`;
     if (shouldReturn) {
@@ -181,11 +189,14 @@ export default class PostgresAdaptor<
         SELECT kcu.column_name, tc.constraint_type
         FROM information_schema.table_constraints tc
         JOIN information_schema.key_column_usage kcu
-          ON tc.constraint_name = kcu.constraint_name
-        WHERE tc.table_name = ${raw(`'${table.id}'`)}
+          ON tc.constraint_schema = kcu.constraint_schema
+          AND tc.constraint_name = kcu.constraint_name
+        WHERE tc.table_name = ${String(table.id)}
+          AND tc.table_schema = current_schema()
           AND tc.constraint_type = 'PRIMARY KEY'
       ) pk ON c.column_name = pk.column_name
-      WHERE c.table_name = ${raw(`'${table.id}'`)}
+      WHERE c.table_name = ${String(table.id)}
+        AND c.table_schema = current_schema()
     `);
 
     return mapSqlResult<any, TableColumnInfo, number>(columnResult, (row) => {
@@ -229,7 +240,9 @@ export default class PostgresAdaptor<
     const statement = sql`SELECT ${raw(
       fields.map((field) =>
         raw(
-          `COUNT(${field.key === "*" ? "*" : `ALL "${field.key}"`}) as ${field.key === "*" ? "_count" : `"${field.key}"`}`,
+          `COUNT(${field.key === "*" ? "*" : `ALL ${quoteIdentifier(String(field.key))}`}) as ${quoteIdentifier(
+            field.key === "*" ? "_count" : String(field.key),
+          )}`,
         ),
       ),
     )}
@@ -239,7 +252,10 @@ export default class PostgresAdaptor<
                           ${buildConditionSql(this, where, true)}`
                               : raw("")
                           }`;
-    return this.execute(statement) as any;
+    const result = await this.execute(statement);
+    return mapSqlResult(result, (row: Record<string, string | number>) =>
+      Object.fromEntries(Object.entries(row).map(([key, value]) => [key, Number(value)])),
+    ) as any;
   }
 
   async executeDelete<TTable extends Table>(
@@ -258,19 +274,15 @@ export default class PostgresAdaptor<
     where: SelectCondition<ValueOfTable<TTable>>,
     shouldReturn = false,
   ): Statement {
-    const { keys, values } = Object.entries(valueMap).reduce(
-      (acc, [key, value]) => {
-        if (value !== undefined) {
-          acc.keys.push(`"${key}"`);
-          acc.values.push(valueToSql(value, true));
-        }
-        return acc;
-      },
-      { keys: [] as string[], values: [] as string[] },
-    );
-
     return sql`UPDATE ${table}
-               SET (${raw(keys)}) = (${raw(values)})
+               SET ${raw(
+                 Object.entries(valueMap).reduce((assignments, [key, value]) => {
+                   if (value !== undefined) {
+                     assignments.push(`${quoteIdentifier(key)} = ${valueToSql(value, true)}`);
+                   }
+                   return assignments;
+                 }, [] as string[]),
+               )}
                WHERE ${buildConditionSql(this, where, true)}${raw(shouldReturn ? " RETURNING *" : "")}`;
   }
 
@@ -279,20 +291,52 @@ export default class PostgresAdaptor<
     values: Partial<ValueOfTable<TTable>>,
     field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
   ): Statement {
-    return sql`INSERT INTO ${table.id} (${raw(Object.keys(values).map((k) => `"${k}"`))})
-               VALUES (${raw(Object.values(values).map((v) => valueToSql(v, true)))}) ON CONFLICT ("${field.key}")
+    return sql`INSERT INTO ${table.id} (${raw(Object.keys(values).map(quoteIdentifier))})
+               VALUES (${raw(Object.values(values).map((v) => valueToSql(v, true)))}) ON CONFLICT (${raw(
+                 quoteIdentifier(String(field.key)),
+               )})
                  DO
     UPDATE SET ${raw(
       Object.entries(values).map(
-        ([key, value]) => sql`"${raw(key)}"
+        ([key, value]) => sql`${raw(quoteIdentifier(key))}
       =
-      ${valueToSql(value, true)}`,
+      ${raw(valueToSql(value, true))}`,
       ),
     )}
       RETURNING *`;
   }
 
   async processDiff(table: Table, diff: TableDiff): Promise<void> {
+    let tableHasRows: boolean | undefined;
+    for (const fieldDiff of diff.fields) {
+      const schema = fieldDiff.field?.schema;
+      const addsRequiredField = fieldDiff.type === "added" && schema && isZodRequired(schema);
+      const addsRequiredConstraint =
+        fieldDiff.type === "modified" &&
+        fieldDiff.modifications?.some(
+          (modification) => modification.type === "add-constraint" && modification.constraint === "NOT NULL",
+        );
+      let requiresBackfill = false;
+      if (addsRequiredField) {
+        tableHasRows ??= (await this.execute(sql`SELECT 1 FROM ${table} LIMIT 1`)).results.length > 0;
+        requiresBackfill = tableHasRows;
+      } else if (addsRequiredConstraint) {
+        requiresBackfill =
+          (
+            await this.execute(
+              sql`SELECT 1 FROM ${table}
+                  WHERE ${raw(quoteIdentifier(String(fieldDiff.key)))} IS NULL LIMIT 1`,
+            )
+          ).results.length > 0;
+      }
+      if (schema && requiresBackfill) {
+        const backfillMeta = getMetaItem(schema, backfill) as BackfillMetaItem | undefined;
+        if (backfillMeta?.data.value === undefined || backfillMeta.data.value === null) {
+          throw new Error(`[zodbase] Backfill value is required when adding required field '${fieldDiff.field?.key}'`);
+        }
+      }
+    }
+
     // do removes after adds so we don't end up with 0 columns
     diff.fields = diff.fields.sort((a, b) => TYPE_ORDERING[a.type] - TYPE_ORDERING[b.type]);
 
@@ -307,7 +351,7 @@ export default class PostgresAdaptor<
 
         const statement = sql`
           ALTER TABLE ${table.id}
-            ADD COLUMN "${fieldDiff.key}" ${raw(this.typeToSql(schema))}${raw(primaryKeyMeta ? " PRIMARY KEY" : "")}`;
+            ADD COLUMN ${raw(quoteIdentifier(String(fieldDiff.key)))} ${raw(this.typeToSql(schema))}`;
 
         await this.execute(statement);
 
@@ -320,12 +364,24 @@ export default class PostgresAdaptor<
 
           await this.execute(
             sql`UPDATE ${table.id}
-                SET "${fieldDiff.key}" = ${backfillValue}
-                WHERE "${fieldDiff.key}" IS NULL`,
+                SET ${raw(quoteIdentifier(String(fieldDiff.key)))} = ${backfillValue}
+                WHERE ${raw(quoteIdentifier(String(fieldDiff.key)))} IS NULL`,
+          );
+        }
+        if (isZodRequired(schema)) {
+          await this.execute(
+            sql`ALTER TABLE ${table.id}
+                ALTER COLUMN ${raw(quoteIdentifier(String(fieldDiff.key)))} SET NOT NULL`,
+          );
+        }
+        if (primaryKeyMeta) {
+          await this.execute(
+            sql`ALTER TABLE ${table.id}
+                ADD PRIMARY KEY (${raw(quoteIdentifier(String(fieldDiff.key)))})`,
           );
         }
       } else if (fieldDiff.type === "removed") {
-        await this.execute(sql`ALTER TABLE ${table.id} DROP COLUMN "${raw(fieldDiff.key)}"`);
+        await this.execute(sql`ALTER TABLE ${table.id} DROP COLUMN ${raw(quoteIdentifier(String(fieldDiff.key)))}`);
       } else if (fieldDiff.type === "modified") {
         const schema = field?.schema;
         if (schema) {
@@ -338,9 +394,20 @@ export default class PostgresAdaptor<
 
             await this.execute(
               sql`UPDATE ${table.id}
-                  SET "${fieldDiff.key}" = ${backfillValue}
-                  WHERE "${fieldDiff.key}" IS NULL`,
+                  SET ${raw(quoteIdentifier(String(fieldDiff.key)))} = ${backfillValue}
+                  WHERE ${raw(quoteIdentifier(String(fieldDiff.key)))} IS NULL`,
             );
+          }
+
+          for (const modification of fieldDiff.modifications ?? []) {
+            if (modification.constraint === "NOT NULL") {
+              await this.execute(
+                sql`ALTER TABLE ${table.id}
+                    ALTER COLUMN ${raw(quoteIdentifier(String(fieldDiff.key)))} ${raw(
+                      modification.type === "add-constraint" ? "SET NOT NULL" : "DROP NOT NULL",
+                    )}`,
+              );
+            }
           }
         }
       }
@@ -350,8 +417,8 @@ export default class PostgresAdaptor<
   async syncTableIndexes(table: Table): Promise<void> {
     for (const index of table.indexes) {
       await this.execute(sql`
-        CREATE ${raw(index.unique ? "UNIQUE " : "")}INDEX IF NOT EXISTS "${raw(index.id)}"
-          ON ${table.id} (${raw(index.fields.map((field) => `"${field.key}"`).join(", "))})
+        CREATE ${raw(index.unique ? "UNIQUE " : "")}INDEX IF NOT EXISTS ${raw(quoteIdentifier(index.id))}
+          ON ${table.id} (${raw(index.fields.map((field) => quoteIdentifier(String(field.key))).join(", "))})
           ${index.where ? sql`WHERE ${buildConditionSql(this, index.where, { doubleQuote: true, includeTable: false })}` : raw("")}
       `);
     }
@@ -380,7 +447,7 @@ export default class PostgresAdaptor<
   }
 
   createTable(table: Table, name?: string) {
-    const statement = sql`CREATE TABLE IF NOT EXISTS ${name ?? table.id}
+    const statement = sql`CREATE TABLE IF NOT EXISTS ${raw(quoteIdentifier(name ?? String(table.id)))}
                           (
                             ${join(
                               Object.values(table.fields).map((field) => {
@@ -389,7 +456,7 @@ export default class PostgresAdaptor<
                                 //const autoIncrementMeta = getMetaItem(schema, autoIncrement);
                                 return raw(
                                   [
-                                    `"${field.key}"`,
+                                    quoteIdentifier(String(field.key)),
                                     this.typeToSql(schema),
                                     primaryKeyMeta ? "PRIMARY KEY" : "",
                                     isZodRequired(schema) ? "NOT NULL" : "",

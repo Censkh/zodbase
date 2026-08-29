@@ -1,4 +1,5 @@
 import { getZodTypeFields } from "zod-meta";
+import { quoteIdentifier } from "./Escaping";
 import type { SelectCondition, SingleFieldBinding, ValueOfTable } from "./QueryBuilder";
 import { TO_SQL_SYMBOL } from "./Statement";
 import type { Bindings, Table } from "./Table";
@@ -11,9 +12,9 @@ export const createTableBinding = <TTable extends Table>(table: TTable): Binding
   for (const field of fields) {
     const fieldBinding: SingleFieldBinding<any, any> = {
       key: Object.assign(field.key, {
-        [TO_SQL_SYMBOL]: () => field.key,
+        [TO_SQL_SYMBOL]: () => quoteIdentifier(field.key),
       }),
-      [TO_SQL_SYMBOL]: () => field.key,
+      [TO_SQL_SYMBOL]: () => quoteIdentifier(field.key),
       table: table as any,
       schema: field.schema,
 
@@ -77,6 +78,14 @@ export const createTableBinding = <TTable extends Table>(table: TTable): Binding
         return createSelectCondition({
           field: fieldBinding,
           operator: "IN",
+          value: values,
+        }) as any;
+      },
+
+      notIn(values) {
+        return createSelectCondition({
+          field: fieldBinding,
+          operator: "NOT IN",
           value: values,
         }) as any;
       },
