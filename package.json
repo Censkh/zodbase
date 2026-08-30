@@ -1,6 +1,6 @@
 {
   "name": "zodbase",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "main": "src/index.ts",
   "scripts": {
     "test": "bun test --timeout 40000 --pass-with-no-tests && bun run test:types",
