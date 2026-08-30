@@ -1,5 +1,5 @@
 import BunDatabase from "bun:sqlite";
-import * as zod from "zod/v4";
+import * as zod from "zod";
 import { createTable, sql } from "../src";
 import BetterSqlite3Adaptor from "../src/adaptors/better-sqlite3";
 import CockroachAdaptor from "../src/adaptors/cockroach";

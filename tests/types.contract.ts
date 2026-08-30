@@ -1,4 +1,4 @@
-import * as zod from "zod/v4";
+import * as zod from "zod";
 import { createTable, type Database, type InputOfTable } from "../src";
 import type { SqlResult } from "../src/QueryBuilder";
 

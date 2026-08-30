@@ -1,5 +1,5 @@
 import { parse } from "@rsql/parser";
-import * as zod from "zod/v4";
+import * as zod from "zod";
 import type { SelectCondition, SingleFieldBinding, ValueOfTable } from "../QueryBuilder";
 import type { Table } from "../Table";
 import { isZodTypeExtends } from "../ZodUtils";

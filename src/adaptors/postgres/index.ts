@@ -1,5 +1,5 @@
 import type * as pg from "pg";
-import type * as zod from "zod/v4";
+import type * as zod from "zod";
 import { getMetaItem, type ZodMetaItem } from "zod-meta";
 import DatabaseAdaptor, { type PossiblySelectedResult } from "../../DatabaseAdaptor";
 import { quoteIdentifier } from "../../Escaping";

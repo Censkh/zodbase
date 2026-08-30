@@ -1,5 +1,5 @@
 import BunDatabase from "bun:sqlite";
-import * as zod from "zod/v4";
+import * as zod from "zod";
 import { backfill, createTable, Database, metaStore, primaryKey } from "../src";
 import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
 

@@ -1,4 +1,4 @@
-import * as zod from "zod/v4";
+import * as zod from "zod";
 import { backfill, createTable, metaStore, primaryKey, sql } from "../src";
 import {
   acquireMysqlTestContainers,

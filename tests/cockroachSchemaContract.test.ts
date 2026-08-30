@@ -1,4 +1,4 @@
-import * as zod from "zod/v4";
+import * as zod from "zod";
 import { backfill, createTable, metaStore, primaryKey, sql } from "../src";
 import {
   acquireCockroachTestContainer,
@@ -55,7 +55,7 @@ describe("CockroachDB schema synchronization contract", () => {
         `)
       ).results,
     ).toContainEqual(expect.objectContaining({ constraint_type: "PRIMARY KEY" }));
-  });
+  }, 30_000);
 
   it("applies backfilled nullability changes and partial indexes idempotently", async () => {
     const InitialTable = createTable({
@@ -93,5 +93,5 @@ describe("CockroachDB schema synchronization contract", () => {
         `)
       ).results.filter((row) => row.index_name === "cockroach_email_partial" && !row.storing),
     ).toHaveLength(1);
-  });
+  }, 30_000);
 });
