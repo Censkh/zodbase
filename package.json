@@ -3,8 +3,8 @@
   "version": "0.0.1",
   "main": "src/index.ts",
   "scripts": {
-    "test": "bun test --timeout 40000 --parallel=2 --pass-with-no-tests && bun run test:types",
-    "test:compiled": "bun test --preload zod/compile --timeout 40000 --parallel=2 --pass-with-no-tests && bun run test:types",
+    "test": "bun test --timeout 40000 --pass-with-no-tests && bun run test:types",
+    "test:compiled": "bun test --preload zod/compile --timeout 40000 --pass-with-no-tests && bun run test:types",
     "test:types": "tsc --noEmit --project tsconfig.types.json",
     "check:fix": "tsc --noEmit --project tsconfig.json && npx @biomejs/biome check --write .",
     "check": "tsc --noEmit --project tsconfig.json && npx @biomejs/biome check ."
