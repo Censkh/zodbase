@@ -1,5 +1,5 @@
 import type { Connection, Pool, RowDataPacket } from "mysql2/promise";
-import * as zod from "zod/v4";
+import * as zod from "zod";
 import { getMetaItem, type ZodMetaItem } from "zod-meta";
 import DatabaseAdaptor, { type PossiblySelectedResult } from "../../DatabaseAdaptor";
 import { quoteMysqlIdentifier } from "../../Escaping";

@@ -1,4 +1,4 @@
-import * as zod from "zod/v4";
+import * as zod from "zod";
 import { createTable, metaStore, primaryKey } from "../src";
 import { rsqlToCondition } from "../src/rsql";
 import {

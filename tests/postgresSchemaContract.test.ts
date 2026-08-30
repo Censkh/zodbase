@@ -1,4 +1,4 @@
-import * as zod from "zod/v4";
+import * as zod from "zod";
 import { backfill, createTable, metaStore, sql } from "../src";
 import {
   acquirePostgresTestContainer,

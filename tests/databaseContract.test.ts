@@ -1,4 +1,4 @@
-import * as zod from "zod/v4";
+import * as zod from "zod";
 import { createTable, Database, metaStore, primaryKey } from "../src";
 import type DatabaseAdaptor from "../src/DatabaseAdaptor";
 import type { SelectQuery, SqlResult } from "../src/QueryBuilder";

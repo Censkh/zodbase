@@ -1,4 +1,4 @@
-import * as zod from "zod/v4";
+import * as zod from "zod";
 import type { Class } from "./Types";
 
 export const isZodTypeExtends = (type: zod.ZodType, zodType: Class<zod.ZodType>): zod.ZodType | false => {

@@ -1,4 +1,4 @@
-import type * as zod from "zod/v4";
+import type * as zod from "zod";
 import { getMetaItem, type ZodMetaItem } from "zod-meta";
 import {
   type BackfillOptions,

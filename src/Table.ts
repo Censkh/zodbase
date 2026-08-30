@@ -1,4 +1,4 @@
-import type * as zod from "zod/v4";
+import type * as zod from "zod";
 import { getMetaStores, getZodTypeFields } from "zod-meta";
 import { createTableBinding } from "./Bindings";
 import { quoteIdentifier } from "./Escaping";
