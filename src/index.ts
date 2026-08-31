@@ -108,11 +108,44 @@ export interface DatabaseEvents {
   onExecuteStatement?: (event: ExecuteStatementEvent) => void;
 }
 
+export type DatabaseAdaptorInitializer = () => DatabaseAdaptor | Promise<DatabaseAdaptor>;
+
 export interface DatabaseOptions {
-  adaptor: DatabaseAdaptor;
+  adaptor: DatabaseAdaptor | DatabaseAdaptorInitializer;
   events?: DatabaseEvents;
   debug?: boolean;
 }
+
+interface ResolvedDatabaseOptions extends Omit<DatabaseOptions, "adaptor"> {
+  adaptor: DatabaseAdaptor;
+}
+
+const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): DatabaseAdaptor => {
+  let adaptorPromise: Promise<DatabaseAdaptor> | undefined;
+  const getAdaptor = () => (adaptorPromise ??= Promise.resolve().then(initialize));
+  const call =
+    (method: keyof DatabaseAdaptor) =>
+    async (...args: unknown[]) => {
+      const adaptor = await getAdaptor();
+      return (adaptor[method] as (...args: unknown[]) => unknown).apply(adaptor, args);
+    };
+
+  return {
+    execute: call("execute"),
+    executeSelect: call("executeSelect"),
+    executeInsert: call("executeInsert"),
+    executeInsertMany: call("executeInsertMany"),
+    executeUpdate: call("executeUpdate"),
+    executeUpsert: call("executeUpsert"),
+    executeUpdateMany: call("executeUpdateMany"),
+    executeCount: call("executeCount"),
+    executeDelete: call("executeDelete"),
+    createTable: call("createTable"),
+    fetchTableColumns: call("fetchTableColumns"),
+    syncTableIndexes: call("syncTableIndexes"),
+    processDiff: call("processDiff"),
+  } as unknown as DatabaseAdaptor;
+};
 
 interface BaseFieldModification<M> {
   type: M;
@@ -297,7 +330,14 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
 };
 
 export class Database {
-  constructor(private readonly options: DatabaseOptions) {}
+  private readonly options: ResolvedDatabaseOptions;
+
+  constructor(options: DatabaseOptions) {
+    this.options = {
+      ...options,
+      adaptor: typeof options.adaptor === "function" ? createLazyDatabaseAdaptor(options.adaptor) : options.adaptor,
+    };
+  }
 
   async execute(sql: Statement) {
     const adaptor = this.options.adaptor;
