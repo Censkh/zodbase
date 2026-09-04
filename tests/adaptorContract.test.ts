@@ -1,10 +1,12 @@
 import BunDatabase from "bun:sqlite";
 import * as zod from "zod";
-import { createTable, sql } from "../src";
+import { createTable, Database, sql } from "../src";
 import BetterSqlite3Adaptor from "../src/adaptors/better-sqlite3";
 import CockroachAdaptor from "../src/adaptors/cockroach";
 import D1Adaptor from "../src/adaptors/d1";
 import ExpoSQLiteAdaptor from "../src/adaptors/expo-sqlite";
+import MysqlAdaptor from "../src/adaptors/mysql";
+import PostgresAdaptor from "../src/adaptors/postgres";
 import TursoAdaptor from "../src/adaptors/turso";
 
 describe("adaptor execution contract", () => {
@@ -77,6 +79,129 @@ describe("adaptor execution contract", () => {
     expect(batchedStatements[0]).toHaveLength(1);
   });
 
+  it("commits D1 transaction writes in one atomic batch", async () => {
+    const batches: string[][] = [];
+    const driver = {
+      prepare(statement: string) {
+        return { statement };
+      },
+      async batch(statements: Array<{ statement: string }>) {
+        batches.push(statements.map(({ statement }) => statement));
+        return [];
+      },
+    };
+    const db = new Database({ adaptor: new D1Adaptor({ driver: driver as never }) });
+    const Table = createTable({ id: "example", schema: zod.object({ id: zod.string(), name: zod.string() }) });
+
+    const result = await db.transaction(async (transaction) => {
+      await transaction.delete(Table).where(Table.$id.equals("old"));
+      await transaction.insert(Table, { id: "new", name: "Ada" });
+      return "committed";
+    });
+    expect(result).toBe("committed");
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toHaveLength(2);
+
+    await db.transaction(async () => undefined);
+    expect(batches).toHaveLength(1);
+
+    await expect(
+      db.transaction(async (transaction) => {
+        await transaction.insert(Table, { id: "rolled-back", name: "Grace" });
+        throw new Error("rollback");
+      }),
+    ).rejects.toThrow("rollback");
+    expect(batches).toHaveLength(1);
+
+    await expect(db.transaction(async (transaction) => transaction.select(Table, ["*"]))).rejects.toThrow(
+      "D1 transactions support write operations only",
+    );
+  });
+
+  it("propagates D1 batch failures", async () => {
+    const batchError = new Error("batch failed");
+    const driver = {
+      prepare(statement: string) {
+        return { statement };
+      },
+      async batch() {
+        throw batchError;
+      },
+    };
+    const db = new Database({ adaptor: new D1Adaptor({ driver: driver as never }) });
+    const Table = createTable({ id: "example", schema: zod.object({ id: zod.string() }) });
+
+    await expect(db.transaction(async (transaction) => transaction.insert(Table, { id: "1" }))).rejects.toBe(
+      batchError,
+    );
+  });
+
+  it("pins and releases PostgreSQL pool clients for transactions", async () => {
+    const statements: string[] = [];
+    let releases = 0;
+    const client = {
+      async query(statement: string) {
+        statements.push(statement);
+        return { rows: [] };
+      },
+      release() {
+        releases += 1;
+      },
+    };
+    const pool = {
+      totalCount: 1,
+      async connect() {
+        return client;
+      },
+      async query() {
+        throw new Error("pool query must not be used inside a transaction");
+      },
+    };
+    const adaptor = new PostgresAdaptor({ driver: pool as never });
+
+    expect(await adaptor.transaction(async (transaction) => transaction.execute(sql`SELECT 1`))).toMatchObject({
+      results: [],
+    });
+    expect(statements).toEqual(["BEGIN", "SELECT 1", "COMMIT"]);
+    expect(releases).toBe(1);
+  });
+
+  it("rolls back and releases MySQL pool connections without masking callback errors", async () => {
+    const statements: string[] = [];
+    let releases = 0;
+    const callbackError = new Error("callback failed");
+    const connection = {
+      async query(statement: string) {
+        statements.push(statement);
+        if (statement === "ROLLBACK") {
+          throw new Error("rollback failed");
+        }
+        return [[], []];
+      },
+      release() {
+        releases += 1;
+      },
+    };
+    const pool = {
+      async getConnection() {
+        return connection;
+      },
+      async query() {
+        throw new Error("pool query must not be used inside a transaction");
+      },
+    };
+    const adaptor = new MysqlAdaptor({ driver: pool as never });
+
+    await expect(
+      adaptor.transaction(async (transaction) => {
+        await transaction.execute(sql`UPDATE example SET id = 1`);
+        throw callbackError;
+      }),
+    ).rejects.toBe(callbackError);
+    expect(statements).toEqual(["BEGIN", "UPDATE example SET id = 1", "ROLLBACK"]);
+    expect(releases).toBe(1);
+  });
+
   it("maps Turso rows and sends updateMany through batch", async () => {
     const executed: string[] = [];
     const batches: string[][] = [];
@@ -132,7 +257,7 @@ describe("adaptor execution contract", () => {
     expect((await adaptor.execute(sql`UPDATE example SET id = '2' RETURNING *`)).first).toEqual({ id: "1" });
     await adaptor.execute(sql`DELETE FROM example`);
 
-    expect(getAllSql).toHaveLength(3);
+    expect(getAllSql).toHaveLength(4);
     expect(runSql).toHaveLength(1);
   });
 
@@ -152,6 +277,7 @@ describe("adaptor execution contract", () => {
         ],
       },
       { rows: [{ constraint_name: "example_pkey", constraint_type: "PRIMARY KEY" }] },
+      { rows: [] },
     ];
     const driver = {
       async query() {

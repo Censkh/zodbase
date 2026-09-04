@@ -5,6 +5,7 @@ import { isZodTypeExtends } from "./ZodUtils";
 
 export const foreignKey = createMetaType<{
   field: SingleFieldBinding;
+  onDelete?: ForeignKeyAction;
 }>({
   id: "foreignKey",
   check: (type) => {
@@ -27,6 +28,15 @@ export const foreignKey = createMetaType<{
     };
   },
 });
+
+export type ForeignKeyAction = "no action" | "restrict" | "cascade" | "set null" | "set default";
+
+const FOREIGN_KEY_ACTIONS: ForeignKeyAction[] = ["no action", "restrict", "cascade", "set null", "set default"];
+
+export const normalizeForeignKeyAction = (value: unknown): ForeignKeyAction => {
+  const normalized = String(value ?? "no action").toLowerCase() as ForeignKeyAction;
+  return FOREIGN_KEY_ACTIONS.includes(normalized) ? normalized : "no action";
+};
 
 /*export const autoIncrement = createMetaType<{}>({
   id: "autoIncrement",

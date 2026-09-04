@@ -1,5 +1,5 @@
 import * as zod from "zod";
-import { createTable, Database, metaStore, primaryKey } from "../src";
+import { createTable, Database, foreignKey, metaStore, primaryKey } from "../src";
 import type DatabaseAdaptor from "../src/DatabaseAdaptor";
 import type { SelectQuery, SqlResult } from "../src/QueryBuilder";
 import type { Statement } from "../src/Statement";
@@ -30,6 +30,9 @@ const people = [
   { id: "3", name: "Linus", age: 28, nickname: null },
   { id: "4", name: "Margaret", age: 45, nickname: "Maggie" },
 ];
+
+const withMetadata = <TSchema extends zod.ZodType>(schema: TSchema, ...metadata: Parameters<TSchema["meta"]>[0][]) =>
+  schema.meta(metaStore(metadata));
 
 describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) => {
   let context: TestDatabaseContext;
@@ -225,6 +228,218 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
       { id: "1", name: "Ada", nickname: null },
       { id: "2", name: "Grace", nickname: "Amazing Grace" },
       { id: "3", name: "Linus", nickname: null },
+    ]);
+  });
+
+  it("commits and rolls back transactions", async () => {
+    await db.transaction(async (transaction) => {
+      await transaction.insert(PeopleTable, people[0]);
+      expect((await transaction.select(PeopleTable, ["id"])).results).toEqual([{ id: "1" }]);
+      await transaction.update(PeopleTable, { age: 37 }, PeopleTable.$id.equals("1"));
+    });
+    expect((await db.select(PeopleTable, ["age"])).results).toEqual([{ age: 37 }]);
+
+    await expect(
+      db.transaction(async (transaction) => {
+        await transaction.insert(PeopleTable, people[1]);
+        throw new Error("rollback");
+      }),
+    ).rejects.toThrow("rollback");
+    expect((await db.select(PeopleTable, ["id"]).orderBy(PeopleTable.$id, "ASC")).results).toEqual([{ id: "1" }]);
+
+    await expect(db.transaction(async (transaction) => transaction.transaction(async () => undefined))).rejects.toThrow(
+      "Nested transactions are not supported",
+    );
+  });
+
+  it("returns callback values and preserves thrown values", async () => {
+    const result = await db.transaction(async (transaction) => {
+      await transaction.insert(PeopleTable, people[0]);
+      return { id: "1", committed: true } as const;
+    });
+
+    expect(result).toEqual({ id: "1", committed: true });
+
+    const rejection = { reason: "cancelled" };
+    await expect(
+      db.transaction(async (transaction) => {
+        await transaction.insert(PeopleTable, people[1]);
+        throw rejection;
+      }),
+    ).rejects.toBe(rejection);
+    expect((await db.select(PeopleTable, ["id"]).orderBy(PeopleTable.$id, "ASC")).results).toEqual([{ id: "1" }]);
+  });
+
+  it("rolls back database errors and remains usable afterwards", async () => {
+    await expect(
+      db.transaction(async (transaction) => {
+        await transaction.insert(PeopleTable, people[0]);
+        await transaction.insert(PeopleTable, people[0]);
+      }),
+    ).rejects.toBeDefined();
+
+    expect((await db.select(PeopleTable, ["id"])).results).toEqual([]);
+    await db.transaction(async (transaction) => transaction.insert(PeopleTable, people[1]));
+    expect((await db.select(PeopleTable, ["id"])).results).toEqual([{ id: "2" }]);
+  });
+
+  it("supports concurrent independent top-level transactions", async () => {
+    await Promise.all(
+      people.map((person) => db.transaction(async (transaction) => transaction.insert(PeopleTable, person))),
+    );
+
+    expect((await db.select(PeopleTable, ["id"]).orderBy(PeopleTable.$id, "ASC")).results).toEqual([
+      { id: "1" },
+      { id: "2" },
+      { id: "3" },
+      { id: "4" },
+    ]);
+  });
+
+  it("enforces foreign keys and cascades through multiple levels", async () => {
+    const ParentTable = createTable({
+      id: "contract_parents",
+      schema: zod.object({ id: withMetadata(zod.string(), primaryKey()) }),
+    });
+    const ChildTable = createTable({
+      id: "contract_children",
+      schema: zod.object({
+        id: withMetadata(zod.string(), primaryKey()),
+        parentId: withMetadata(zod.string(), foreignKey({ field: ParentTable.$id, onDelete: "cascade" })),
+      }),
+    });
+    const GrandchildTable = createTable({
+      id: "contract_grandchildren",
+      schema: zod.object({
+        id: withMetadata(zod.string(), primaryKey()),
+        childId: withMetadata(zod.string(), foreignKey({ field: ChildTable.$id, onDelete: "cascade" })),
+      }),
+    });
+    await db.syncTable(ParentTable);
+    await db.syncTable(ChildTable);
+    await db.syncTable(GrandchildTable);
+
+    await expect(Promise.resolve(db.insert(ChildTable, { id: "orphan", parentId: "missing" }))).rejects.toBeDefined();
+    await db.insert(ParentTable, { id: "parent" });
+    await db.insert(ChildTable, { id: "child", parentId: "parent" });
+    await db.insert(GrandchildTable, { id: "grandchild", childId: "child" });
+    await db.delete(ParentTable).where(ParentTable.$id.equals("parent"));
+
+    expect((await db.select(ChildTable, ["*"])).results).toEqual([]);
+    expect((await db.select(GrandchildTable, ["*"])).results).toEqual([]);
+  });
+
+  it("supports restrictive and set-null foreign-key actions", async () => {
+    const ParentTable = createTable({
+      id: "contract_action_parents",
+      schema: zod.object({ id: withMetadata(zod.string(), primaryKey()) }),
+    });
+    const RestrictedChildTable = createTable({
+      id: "contract_restricted_children",
+      schema: zod.object({
+        id: withMetadata(zod.string(), primaryKey()),
+        parentId: withMetadata(zod.string(), foreignKey({ field: ParentTable.$id, onDelete: "restrict" })),
+      }),
+    });
+    const NullableChildTable = createTable({
+      id: "contract_nullable_children",
+      schema: zod.object({
+        id: withMetadata(zod.string(), primaryKey()),
+        parentId: withMetadata(zod.string().nullable(), foreignKey({ field: ParentTable.$id, onDelete: "set null" })),
+      }),
+    });
+    await db.syncTable(ParentTable);
+    await db.syncTable(RestrictedChildTable);
+    await db.syncTable(NullableChildTable);
+    await db.insert(ParentTable, { id: "restricted" });
+    await db.insert(ParentTable, { id: "nullable" });
+    await db.insert(RestrictedChildTable, { id: "restricted-child", parentId: "restricted" });
+    await db.insert(NullableChildTable, { id: "nullable-child", parentId: "nullable" });
+
+    await expect(
+      Promise.resolve(db.delete(ParentTable).where(ParentTable.$id.equals("restricted"))),
+    ).rejects.toBeDefined();
+    expect((await db.select(ParentTable, ["id"]).where(ParentTable.$id.equals("restricted"))).first).toEqual({
+      id: "restricted",
+    });
+
+    await db.delete(ParentTable).where(ParentTable.$id.equals("nullable"));
+    expect((await db.select(NullableChildTable, ["parentId"])).first).toEqual({ parentId: null });
+  });
+
+  it("rolls back cascaded deletes with the surrounding transaction", async () => {
+    const ParentTable = createTable({
+      id: "contract_rollback_parents",
+      schema: zod.object({ id: withMetadata(zod.string(), primaryKey()) }),
+    });
+    const ChildTable = createTable({
+      id: "contract_rollback_children",
+      schema: zod.object({
+        id: withMetadata(zod.string(), primaryKey()),
+        parentId: withMetadata(zod.string(), foreignKey({ field: ParentTable.$id, onDelete: "cascade" })),
+      }),
+    });
+    await db.syncTable(ParentTable);
+    await db.syncTable(ChildTable);
+    await db.insert(ParentTable, { id: "parent" });
+    await db.insert(ChildTable, { id: "child", parentId: "parent" });
+
+    await expect(
+      db.transaction(async (transaction) => {
+        await transaction.delete(ParentTable).where(ParentTable.$id.equals("parent"));
+        expect((await transaction.select(ChildTable, ["id"])).results).toEqual([]);
+        throw new Error("rollback cascade");
+      }),
+    ).rejects.toThrow("rollback cascade");
+
+    expect((await db.select(ParentTable, ["id"])).results).toEqual([{ id: "parent" }]);
+    expect((await db.select(ChildTable, ["id"])).results).toEqual([{ id: "child" }]);
+  });
+
+  it("migrates, changes, and removes foreign keys without losing rows", async () => {
+    const ParentTable = createTable({
+      id: "contract_migration_parents",
+      schema: zod.object({ id: withMetadata(zod.string(), primaryKey()) }),
+    });
+    const InitialChildTable = createTable({
+      id: "contract_migration_children",
+      schema: zod.object({
+        id: withMetadata(zod.string(), primaryKey()),
+        parentId: zod.string().nullable(),
+      }),
+    });
+    await db.syncTable(ParentTable);
+    await db.syncTable(InitialChildTable);
+    await db.insert(ParentTable, { id: "parent" });
+    await db.insert(InitialChildTable, { id: "child", parentId: "parent" });
+
+    const CascadingChildTable = createTable({
+      id: InitialChildTable.id,
+      schema: zod.object({
+        id: withMetadata(zod.string(), primaryKey()),
+        parentId: withMetadata(zod.string().nullable(), foreignKey({ field: ParentTable.$id, onDelete: "cascade" })),
+      }),
+    });
+    await db.syncTable(CascadingChildTable);
+    await db.syncTable(CascadingChildTable);
+    expect((await db.select(CascadingChildTable, ["*"])).results).toEqual([{ id: "child", parentId: "parent" }]);
+
+    const SetNullChildTable = createTable({
+      id: InitialChildTable.id,
+      schema: zod.object({
+        id: withMetadata(zod.string(), primaryKey()),
+        parentId: withMetadata(zod.string().nullable(), foreignKey({ field: ParentTable.$id, onDelete: "set null" })),
+      }),
+    });
+    await db.syncTable(SetNullChildTable);
+    await db.delete(ParentTable).where(ParentTable.$id.equals("parent"));
+    expect((await db.select(SetNullChildTable, ["parentId"])).first).toEqual({ parentId: null });
+
+    await db.syncTable(InitialChildTable);
+    await db.insert(InitialChildTable, { id: "orphan", parentId: "missing" });
+    expect((await db.select(InitialChildTable, ["id"]).orderBy(InitialChildTable.$id, "ASC")).results).toEqual([
+      { id: "child" },
+      { id: "orphan" },
     ]);
   });
 

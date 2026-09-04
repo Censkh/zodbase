@@ -6,6 +6,7 @@ import {
   type FieldDiffType,
   isZodRequired,
   mapSqlResult,
+  normalizeForeignKeyAction,
   raw,
   sql,
   type Table,
@@ -47,6 +48,11 @@ const TYPE_ORDERING: Record<FieldDiffType, number> = {
 };
 
 export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDriver> {
+  override async createTable(table: Table, name?: string) {
+    await this.execute(raw("PRAGMA foreign_keys = ON"));
+    return super.createTable(table, name);
+  }
+
   buildJsonArrayContainsSql(fieldSql: string, value: unknown): Statement {
     return sql`EXISTS (SELECT 1 FROM json_each(${raw(fieldSql)}) WHERE value = ${value})`;
   }
@@ -230,12 +236,25 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
 
   async fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>> {
     const result = await this.execute(sql`PRAGMA table_info(${raw(table.id)})`);
+    const foreignKeyResult = await this.execute(sql`PRAGMA foreign_key_list(${raw(table.id)})`);
+    const foreignKeys = new Map(
+      foreignKeyResult.results.map((row: any) => [
+        row.from,
+        {
+          table: String(row.table),
+          field: String(row.to),
+          onDelete: normalizeForeignKeyAction(row.on_delete),
+        },
+      ]),
+    );
     return mapSqlResult<any, TableColumnInfo, number>(result, (row) => {
+      const foreignKey = foreignKeys.get(row.name) as TableColumnInfo["foreignKey"];
       return {
         name: row.name,
         type: {} as any,
         notNull: row.notnull === 1,
         primaryKey: row.pk === 1,
+        ...(foreignKey ? { foreignKey } : {}),
       };
     });
   }

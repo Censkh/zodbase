@@ -1,9 +1,9 @@
 import * as zod from "zod";
-import { findFieldMetaItems } from "zod-meta";
+import { findFieldMetaItems, getMetaItem } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
 import { escapeSqlValue } from "./Escaping";
 import { toLazyPromise } from "./LazyPromise";
-import { updatedAt } from "./MetaTypes";
+import { foreignKey, updatedAt } from "./MetaTypes";
 import type {
   BindingKeys,
   FieldBinding,
@@ -144,6 +144,7 @@ const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): Data
     fetchTableColumns: call("fetchTableColumns"),
     syncTableIndexes: call("syncTableIndexes"),
     processDiff: call("processDiff"),
+    transaction: call("transaction"),
   } as unknown as DatabaseAdaptor;
 };
 
@@ -159,7 +160,15 @@ export interface RemoveConstraint extends BaseFieldModification<"remove-constrai
   constraint: string;
 }
 
-export type FieldModification = AddConstraint | RemoveConstraint;
+export interface AddForeignKey extends BaseFieldModification<"add-foreign-key"> {
+  foreignKey: import("./Table").TableForeignKeyInfo;
+}
+
+export interface RemoveForeignKey extends BaseFieldModification<"remove-foreign-key"> {
+  foreignKey: import("./Table").TableForeignKeyInfo;
+}
+
+export type FieldModification = AddConstraint | RemoveConstraint | AddForeignKey | RemoveForeignKey;
 
 export type FieldDiffType = "added" | "removed" | "modified";
 
@@ -332,7 +341,10 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
 export class Database {
   private readonly options: ResolvedDatabaseOptions;
 
-  constructor(options: DatabaseOptions) {
+  constructor(
+    options: DatabaseOptions,
+    private readonly transactionScoped = false,
+  ) {
     this.options = {
       ...options,
       adaptor: typeof options.adaptor === "function" ? createLazyDatabaseAdaptor(options.adaptor) : options.adaptor,
@@ -344,6 +356,23 @@ export class Database {
     const result = await adaptor.execute(sql);
 
     return result;
+  }
+
+  transaction<TResult>(callback: (transaction: Database) => Promise<TResult>): Promise<TResult> {
+    if (this.transactionScoped) {
+      throw new Error("Nested transactions are not supported");
+    }
+    return this.options.adaptor.transaction((adaptor) =>
+      callback(
+        new Database(
+          {
+            ...this.options,
+            adaptor,
+          },
+          true,
+        ),
+      ),
+    );
   }
 
   select<TTable extends Table, TKey extends BindingKeys<ValueOfTable<TTable>>>(
@@ -667,18 +696,36 @@ export class Database {
         });
       } else {
         const isRequired = isZodRequired(field.schema);
+        const modifications: FieldModification[] = [];
         if (column.notNull !== isRequired) {
-          diff.fields.push({
-            key: field.key,
-            field,
-            type: "modified",
-            modifications: [
-              {
-                type: isRequired ? "add-constraint" : "remove-constraint",
-                constraint: "NOT NULL",
-              },
-            ],
+          modifications.push({
+            type: isRequired ? "add-constraint" : "remove-constraint",
+            constraint: "NOT NULL",
           });
+        }
+        const foreignKeyMeta = getMetaItem(field.schema, foreignKey);
+        const expectedForeignKey = foreignKeyMeta
+          ? {
+              table: String(foreignKeyMeta.data.field.table.id),
+              field: String(foreignKeyMeta.data.field.key),
+              onDelete: foreignKeyMeta.data.onDelete ?? ("no action" as const),
+            }
+          : undefined;
+        const actualForeignKey = column.foreignKey;
+        const foreignKeyMatches =
+          actualForeignKey?.table === expectedForeignKey?.table &&
+          actualForeignKey?.field === expectedForeignKey?.field &&
+          actualForeignKey?.onDelete === expectedForeignKey?.onDelete;
+        if (!foreignKeyMatches) {
+          if (actualForeignKey) {
+            modifications.push({ type: "remove-foreign-key", foreignKey: actualForeignKey });
+          }
+          if (expectedForeignKey) {
+            modifications.push({ type: "add-foreign-key", foreignKey: expectedForeignKey });
+          }
+        }
+        if (modifications.length > 0) {
+          diff.fields.push({ key: field.key, field, type: "modified", modifications });
         }
       }
     }

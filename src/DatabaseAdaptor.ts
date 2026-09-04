@@ -3,6 +3,7 @@ import { getMetaItem } from "zod-meta";
 import { quoteIdentifier } from "./Escaping";
 import {
   type DatabaseEvents,
+  foreignKey,
   isZodRequired,
   isZodTypeExtends,
   join,
@@ -36,6 +37,8 @@ export interface PossiblySelectedResult<TValue = any, TLimit extends number = nu
 }
 
 export default abstract class DatabaseAdaptor<TDriver = any> {
+  private transactionQueue: Promise<void> = Promise.resolve();
+
   constructor(protected readonly options: DatabaseAdaptorOptions<TDriver>) {}
 
   protected get driver() {
@@ -133,6 +136,29 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
 
   abstract processDiff(table: Table, diff: TableDiff): Promise<void>;
 
+  transaction<TResult>(callback: (adaptor: DatabaseAdaptor) => Promise<TResult>): Promise<TResult> {
+    const transaction = this.transactionQueue.then(() => this.executeTransaction(callback));
+    this.transactionQueue = transaction.then(
+      () => undefined,
+      () => undefined,
+    );
+    return transaction;
+  }
+
+  protected async executeTransaction<TResult>(
+    callback: (adaptor: DatabaseAdaptor) => Promise<TResult>,
+  ): Promise<TResult> {
+    await this.execute(raw("BEGIN"));
+    try {
+      const result = await callback(this);
+      await this.execute(raw("COMMIT"));
+      return result;
+    } catch (error) {
+      await this.execute(raw("ROLLBACK")).catch(() => undefined);
+      throw error;
+    }
+  }
+
   createTable(table: Table, name?: string) {
     const statement = sql`CREATE TABLE IF NOT EXISTS ${raw(quoteIdentifier(name ?? String(table.id)))}
       (
@@ -140,6 +166,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
           Object.values(table.fields).map((field) => {
             const schema = field.schema;
             const primaryKeyMeta = getMetaItem(schema, primaryKey);
+            const foreignKeyMeta = getMetaItem(schema, foreignKey);
             //const autoIncrementMeta = getMetaItem(schema, autoIncrement);
             return raw(
               [
@@ -147,6 +174,9 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
                 this.typeToSql(schema),
                 primaryKeyMeta ? "PRIMARY KEY" : "",
                 isZodRequired(schema) ? " NOT NULL" : "",
+                foreignKeyMeta
+                  ? `REFERENCES ${quoteIdentifier(String(foreignKeyMeta.data.field.table.id))} (${quoteIdentifier(String(foreignKeyMeta.data.field.key))}) ON DELETE ${(foreignKeyMeta.data.onDelete ?? "no action").toUpperCase()}`
+                  : "",
               ]
                 .filter(Boolean)
                 .join(" "),

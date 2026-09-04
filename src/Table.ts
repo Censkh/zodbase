@@ -12,6 +12,14 @@ export interface TableColumnInfo {
   type: BaseSchema;
   notNull: boolean;
   primaryKey: boolean;
+  foreignKey?: TableForeignKeyInfo;
+}
+
+export interface TableForeignKeyInfo {
+  table: string;
+  field: string;
+  onDelete: import("./MetaTypes").ForeignKeyAction;
+  constraintName?: string;
 }
 
 export type Bindings<TValue> = {

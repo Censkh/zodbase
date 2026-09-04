@@ -1,5 +1,5 @@
 import * as zod from "zod";
-import { backfill, createTable, metaStore, primaryKey, sql } from "../src";
+import { backfill, createTable, foreignKey, metaStore, primaryKey, sql } from "../src";
 import {
   acquireCockroachTestContainer,
   releaseCockroachTestContainer,
@@ -93,5 +93,36 @@ describe("CockroachDB schema synchronization contract", () => {
         `)
       ).results.filter((row) => row.index_name === "cockroach_email_partial" && !row.storing),
     ).toHaveLength(1);
+  }, 30_000);
+
+  it("migrates an existing table to a cascading foreign key", async () => {
+    const ParentTable = createTable({
+      id: "cockroach_fk_parents",
+      schema: zod.object({ id: zod.string().meta(metaStore([primaryKey()])) }),
+    });
+    const InitialChildTable = createTable({
+      id: "cockroach_fk_children",
+      schema: zod.object({
+        id: zod.string().meta(metaStore([primaryKey()])),
+        parentId: zod.string(),
+      }),
+    });
+    await context.db.syncTable(ParentTable);
+    await context.db.syncTable(InitialChildTable);
+    await context.db.insert(ParentTable, { id: "parent" });
+    await context.db.insert(InitialChildTable, { id: "child", parentId: "parent" });
+
+    const ChildTable = createTable({
+      id: "cockroach_fk_children",
+      schema: zod.object({
+        id: zod.string().meta(metaStore([primaryKey()])),
+        parentId: zod.string().meta(metaStore([foreignKey({ field: ParentTable.$id, onDelete: "cascade" })])),
+      }),
+    });
+    await context.db.syncTable(ChildTable);
+    await context.db.syncTable(ChildTable);
+    await context.db.delete(ParentTable).where(ParentTable.$id.equals("parent"));
+
+    expect((await context.db.select(ChildTable, ["*"])).results).toEqual([]);
   }, 30_000);
 });

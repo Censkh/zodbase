@@ -1,6 +1,6 @@
 import BunDatabase from "bun:sqlite";
 import * as zod from "zod";
-import { backfill, createTable, Database, metaStore, primaryKey } from "../src";
+import { backfill, createTable, Database, foreignKey, metaStore, primaryKey } from "../src";
 import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
 
 const withMetadata = <TSchema extends zod.ZodType>(schema: TSchema, ...items: any[]): TSchema =>
@@ -180,6 +180,38 @@ describe("schema synchronization contract", () => {
       expect.objectContaining({ name: "email", notnull: 0 }),
     );
     expect((await db.select(NullableAgainTable, ["*"])).results).toHaveLength(2);
+  });
+
+  it("migrates an existing table to a cascading foreign key", async () => {
+    driver.run("PRAGMA foreign_keys = ON");
+    const ParentTable = createTable({
+      id: "schema_parents",
+      schema: zod.object({ id: withMetadata(zod.string(), primaryKey()) }),
+    });
+    const InitialChildTable = createTable({
+      id: "schema_children",
+      schema: zod.object({ id: withMetadata(zod.string(), primaryKey()), parentId: zod.string() }),
+    });
+    await db.syncTable(ParentTable);
+    await db.syncTable(InitialChildTable);
+    await db.insert(ParentTable, { id: "parent" });
+    await db.insert(InitialChildTable, { id: "child", parentId: "parent" });
+
+    const ChildTable = createTable({
+      id: "schema_children",
+      schema: zod.object({
+        id: withMetadata(zod.string(), primaryKey()),
+        parentId: withMetadata(zod.string(), foreignKey({ field: ParentTable.$id, onDelete: "cascade" })),
+      }),
+    });
+    await db.syncTable(ChildTable);
+    await db.syncTable(ChildTable);
+
+    expect(driver.query("PRAGMA foreign_key_list(schema_children)").all()).toContainEqual(
+      expect.objectContaining({ from: "parentId", table: "schema_parents", to: "id", on_delete: "CASCADE" }),
+    );
+    await db.delete(ParentTable).where(ParentTable.$id.equals("parent"));
+    expect((await db.select(ChildTable, ["*"])).results).toEqual([]);
   });
 
   it("is idempotent after a complex synchronization", async () => {

@@ -1,4 +1,5 @@
 import BunDatabase from "bun:sqlite";
+import { rm } from "node:fs/promises";
 import { createClient } from "@libsql/client";
 import { CockroachDbContainer, type StartedCockroachDbContainer } from "@testcontainers/cockroachdb";
 import { MySqlContainer, type StartedMySqlContainer } from "@testcontainers/mysql";
@@ -36,11 +37,17 @@ const createBunSqliteDatabase = async (): Promise<TestDatabaseContext> => {
 };
 
 const createTursoDatabase = async (): Promise<TestDatabaseContext> => {
-  const driver = createClient({ url: ":memory:" });
+  const databasePath = `/tmp/zodbase_${crypto.randomUUID()}.db`;
+  const driver = createClient({ url: `file:${databasePath}` });
   return {
     db: new Database({ adaptor: new TursoAdaptor({ driver }) }),
     async close() {
       driver.close();
+      await Promise.all([
+        rm(databasePath, { force: true }),
+        rm(`${databasePath}-shm`, { force: true }),
+        rm(`${databasePath}-wal`, { force: true }),
+      ]);
     },
   };
 };
@@ -160,7 +167,7 @@ let cockroachSuiteLeases = 0;
 export const acquirePostgresTestContainer = async (): Promise<void> => {
   process.env.TESTCONTAINERS_RYUK_DISABLED ??= "true";
   postgresSuiteLeases += 1;
-  postgresContainerPromise ??= new PostgreSqlContainer("postgres:17-alpine").start();
+  postgresContainerPromise ??= new PostgreSqlContainer("postgres:17-alpine").withStartupTimeout(120_000).start();
   postgresContainer = await postgresContainerPromise;
 };
 
@@ -181,12 +188,14 @@ export const acquireMysqlTestContainers = async (): Promise<void> => {
     .withUsername("test")
     .withUserPassword("test-password")
     .withRootPassword("root-password")
+    .withStartupTimeout(120_000)
     .start();
   mariadbContainerPromise ??= new MySqlContainer("mariadb:11.8")
     .withDatabase("test")
     .withUsername("test")
     .withUserPassword("test-password")
     .withRootPassword("root-password")
+    .withStartupTimeout(120_000)
     .start();
   [mysqlContainer, mariadbContainer] = await Promise.all([mysqlContainerPromise, mariadbContainerPromise]);
 };
@@ -208,6 +217,7 @@ export const acquireCockroachTestContainer = async (): Promise<void> => {
   cockroachContainerPromise ??= new CockroachDbContainer("cockroachdb/cockroach:v26.2.2")
     .withDatabase("defaultdb")
     .withUsername("root")
+    .withStartupTimeout(120_000)
     .start();
   cockroachContainer = await cockroachContainerPromise;
 };

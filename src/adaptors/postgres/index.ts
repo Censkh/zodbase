@@ -1,16 +1,18 @@
 import type * as pg from "pg";
 import type * as zod from "zod";
 import { getMetaItem, type ZodMetaItem } from "zod-meta";
-import DatabaseAdaptor, { type PossiblySelectedResult } from "../../DatabaseAdaptor";
+import DatabaseAdaptor, { type DatabaseAdaptorOptions, type PossiblySelectedResult } from "../../DatabaseAdaptor";
 import { quoteIdentifier } from "../../Escaping";
 import {
   type BackfillOptions,
   backfill,
   type ExecuteStatementEvent,
   type FieldDiffType,
+  foreignKey,
   isZodRequired,
   join,
   mapSqlResult,
+  normalizeForeignKeyAction,
   primaryKey,
   raw,
   sql,
@@ -53,6 +55,20 @@ const TYPE_ORDERING: Record<FieldDiffType, number> = {
 export default class PostgresAdaptor<
   TDriver extends pg.Client | pg.Pool = pg.Client | pg.Pool,
 > extends DatabaseAdaptor<TDriver> {
+  override async transaction<TResult>(callback: (adaptor: DatabaseAdaptor) => Promise<TResult>): Promise<TResult> {
+    if ("totalCount" in this.driver) {
+      const client = await this.driver.connect();
+      const Adaptor = this.constructor as new (options: DatabaseAdaptorOptions<pg.PoolClient>) => DatabaseAdaptor;
+      const adaptor = new Adaptor({ ...this.options, driver: client });
+      try {
+        return await adaptor.transaction(callback);
+      } finally {
+        client.release();
+      }
+    }
+    return super.transaction(callback);
+  }
+
   buildJsonArrayContainsSql(fieldSql: string, value: unknown): Statement {
     return sql`${raw(fieldSql)} @> ${raw(valueToSql([value], true))}::jsonb`;
   }
@@ -183,7 +199,11 @@ export default class PostgresAdaptor<
         c.is_nullable,
         c.column_default,
         c.is_identity,
-        CASE WHEN pk.constraint_type = 'PRIMARY KEY' THEN true ELSE false END as is_primary_key
+        CASE WHEN pk.constraint_type = 'PRIMARY KEY' THEN true ELSE false END as is_primary_key,
+        fk.constraint_name AS foreign_key_constraint_name,
+        fk.foreign_table_name,
+        fk.foreign_column_name,
+        fk.delete_rule
       FROM information_schema.columns c
       LEFT JOIN (
         SELECT kcu.column_name, tc.constraint_type
@@ -195,6 +215,27 @@ export default class PostgresAdaptor<
           AND tc.table_schema = current_schema()
           AND tc.constraint_type = 'PRIMARY KEY'
       ) pk ON c.column_name = pk.column_name
+      LEFT JOIN (
+        SELECT
+          kcu.column_name,
+          tc.constraint_name,
+          ccu.table_name AS foreign_table_name,
+          ccu.column_name AS foreign_column_name,
+          rc.delete_rule
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_schema = kcu.constraint_schema
+          AND tc.constraint_name = kcu.constraint_name
+        JOIN information_schema.constraint_column_usage ccu
+          ON tc.constraint_schema = ccu.constraint_schema
+          AND tc.constraint_name = ccu.constraint_name
+        JOIN information_schema.referential_constraints rc
+          ON tc.constraint_schema = rc.constraint_schema
+          AND tc.constraint_name = rc.constraint_name
+        WHERE tc.table_name = ${String(table.id)}
+          AND tc.table_schema = current_schema()
+          AND tc.constraint_type = 'FOREIGN KEY'
+      ) fk ON c.column_name = fk.column_name
       WHERE c.table_name = ${String(table.id)}
         AND c.table_schema = current_schema()
     `);
@@ -207,6 +248,16 @@ export default class PostgresAdaptor<
         hasDefault: row.column_default !== null,
         isIdentity: row.is_identity === "YES",
         primaryKey: row.is_primary_key,
+        ...(row.foreign_table_name
+          ? {
+              foreignKey: {
+                table: row.foreign_table_name,
+                field: row.foreign_column_name,
+                onDelete: normalizeForeignKeyAction(row.delete_rule),
+                constraintName: row.foreign_key_constraint_name,
+              },
+            }
+          : {}),
       };
     });
   }
@@ -380,6 +431,15 @@ export default class PostgresAdaptor<
                 ADD PRIMARY KEY (${raw(quoteIdentifier(String(fieldDiff.key)))})`,
           );
         }
+        const foreignKeyMeta = getMetaItem(schema, foreignKey);
+        if (foreignKeyMeta) {
+          const constraintName = `${String(table.id)}_${String(fieldDiff.key)}_fkey`;
+          await this.execute(sql`ALTER TABLE ${table.id}
+              ADD CONSTRAINT ${raw(quoteIdentifier(constraintName))}
+              FOREIGN KEY (${raw(quoteIdentifier(String(fieldDiff.key)))})
+              REFERENCES ${foreignKeyMeta.data.field.table.id} (${foreignKeyMeta.data.field.key})
+              ON DELETE ${raw((foreignKeyMeta.data.onDelete ?? "no action").toUpperCase())}`);
+        }
       } else if (fieldDiff.type === "removed") {
         await this.execute(sql`ALTER TABLE ${table.id} DROP COLUMN ${raw(quoteIdentifier(String(fieldDiff.key)))}`);
       } else if (fieldDiff.type === "modified") {
@@ -400,13 +460,29 @@ export default class PostgresAdaptor<
           }
 
           for (const modification of fieldDiff.modifications ?? []) {
-            if (modification.constraint === "NOT NULL") {
+            if (modification.type === "add-constraint" || modification.type === "remove-constraint") {
+              if (modification.constraint !== "NOT NULL") {
+                continue;
+              }
               await this.execute(
                 sql`ALTER TABLE ${table.id}
                     ALTER COLUMN ${raw(quoteIdentifier(String(fieldDiff.key)))} ${raw(
                       modification.type === "add-constraint" ? "SET NOT NULL" : "DROP NOT NULL",
                     )}`,
               );
+            } else if (modification.type === "remove-foreign-key") {
+              const constraintName =
+                modification.foreignKey.constraintName ?? `${String(table.id)}_${String(fieldDiff.key)}_fkey`;
+              await this.execute(sql`ALTER TABLE ${table.id} DROP CONSTRAINT ${raw(quoteIdentifier(constraintName))}`);
+            } else if (modification.type === "add-foreign-key") {
+              const constraintName = `${String(table.id)}_${String(fieldDiff.key)}_fkey`;
+              await this.execute(sql`ALTER TABLE ${table.id}
+                  ADD CONSTRAINT ${raw(quoteIdentifier(constraintName))}
+                  FOREIGN KEY (${raw(quoteIdentifier(String(fieldDiff.key)))})
+                  REFERENCES ${raw(quoteIdentifier(modification.foreignKey.table))} (${raw(
+                    quoteIdentifier(modification.foreignKey.field),
+                  )})
+                  ON DELETE ${raw(modification.foreignKey.onDelete.toUpperCase())}`);
             }
           }
         }
@@ -453,6 +529,7 @@ export default class PostgresAdaptor<
                               Object.values(table.fields).map((field) => {
                                 const schema = field.schema;
                                 const primaryKeyMeta = getMetaItem(schema, primaryKey);
+                                const foreignKeyMeta = getMetaItem(schema, foreignKey);
                                 //const autoIncrementMeta = getMetaItem(schema, autoIncrement);
                                 return raw(
                                   [
@@ -460,6 +537,9 @@ export default class PostgresAdaptor<
                                     this.typeToSql(schema),
                                     primaryKeyMeta ? "PRIMARY KEY" : "",
                                     isZodRequired(schema) ? "NOT NULL" : "",
+                                    foreignKeyMeta
+                                      ? `REFERENCES ${quoteIdentifier(String(foreignKeyMeta.data.field.table.id))} (${quoteIdentifier(String(foreignKeyMeta.data.field.key))}) ON DELETE ${(foreignKeyMeta.data.onDelete ?? "no action").toUpperCase()}`
+                                      : "",
                                   ]
                                     .filter(Boolean)
                                     .join(" "),

@@ -1,17 +1,19 @@
 import type { Connection, Pool, RowDataPacket } from "mysql2/promise";
 import * as zod from "zod";
 import { getMetaItem, type ZodMetaItem } from "zod-meta";
-import DatabaseAdaptor, { type PossiblySelectedResult } from "../../DatabaseAdaptor";
+import DatabaseAdaptor, { type DatabaseAdaptorOptions, type PossiblySelectedResult } from "../../DatabaseAdaptor";
 import { quoteMysqlIdentifier } from "../../Escaping";
 import {
   type BackfillOptions,
   backfill,
   type ExecuteStatementEvent,
   type FieldDiffType,
+  foreignKey,
   isZodRequired,
   isZodTypeExtends,
   join,
   mapSqlResult,
+  normalizeForeignKeyAction,
   primaryKey,
   raw,
   sql,
@@ -54,6 +56,20 @@ const TYPE_ORDERING: Record<FieldDiffType, number> = {
 export default class MysqlAdaptor<
   TDriver extends Connection | Pool = Connection | Pool,
 > extends DatabaseAdaptor<TDriver> {
+  override async transaction<TResult>(callback: (adaptor: DatabaseAdaptor) => Promise<TResult>): Promise<TResult> {
+    if ("getConnection" in this.driver) {
+      const connection = await this.driver.getConnection();
+      const Adaptor = this.constructor as new (options: DatabaseAdaptorOptions<Connection>) => DatabaseAdaptor;
+      const adaptor = new Adaptor({ ...this.options, driver: connection });
+      try {
+        return await adaptor.transaction(callback);
+      } finally {
+        connection.release();
+      }
+    }
+    return super.transaction(callback);
+  }
+
   quoteIdentifier(value: string): string {
     return quoteMysqlIdentifier(value);
   }
@@ -189,8 +205,20 @@ export default class MysqlAdaptor<
         c.is_nullable AS is_nullable,
         c.column_default AS column_default,
         c.extra AS extra,
-        CASE WHEN c.column_key = 'PRI' THEN 1 ELSE 0 END AS is_primary_key
+        CASE WHEN c.column_key = 'PRI' THEN 1 ELSE 0 END AS is_primary_key,
+        fk.constraint_name AS foreign_key_constraint_name,
+        fk.referenced_table_name AS foreign_table_name,
+        fk.referenced_column_name AS foreign_column_name,
+        rc.delete_rule AS delete_rule
       FROM information_schema.columns c
+      LEFT JOIN information_schema.key_column_usage fk
+        ON fk.table_schema = c.table_schema
+        AND fk.table_name = c.table_name
+        AND fk.column_name = c.column_name
+        AND fk.referenced_table_name IS NOT NULL
+      LEFT JOIN information_schema.referential_constraints rc
+        ON rc.constraint_schema = fk.constraint_schema
+        AND rc.constraint_name = fk.constraint_name
       WHERE c.table_schema = DATABASE()
         AND c.table_name = ${String(table.id)}
       ORDER BY c.ordinal_position
@@ -203,6 +231,16 @@ export default class MysqlAdaptor<
       hasDefault: row.column_default !== null,
       isIdentity: String(row.extra).includes("auto_increment"),
       primaryKey: Boolean(row.is_primary_key),
+      ...(row.foreign_table_name
+        ? {
+            foreignKey: {
+              table: row.foreign_table_name,
+              field: row.foreign_column_name,
+              onDelete: normalizeForeignKeyAction(row.delete_rule),
+              constraintName: row.foreign_key_constraint_name,
+            },
+          }
+        : {}),
     }));
   }
 
@@ -349,6 +387,17 @@ export default class MysqlAdaptor<
         if (getMetaItem(schema, primaryKey)) {
           await this.execute(sql`ALTER TABLE ${tableSql} ADD PRIMARY KEY (${columnSql})`);
         }
+        const foreignKeyMeta = getMetaItem(schema, foreignKey);
+        if (foreignKeyMeta) {
+          const constraintName = `${String(table.id)}_${String(fieldDiff.key)}_fkey`;
+          await this.execute(sql`ALTER TABLE ${tableSql}
+              ADD CONSTRAINT ${raw(this.quoteIdentifier(constraintName))}
+              FOREIGN KEY (${columnSql})
+              REFERENCES ${raw(this.quoteIdentifier(String(foreignKeyMeta.data.field.table.id)))} (${raw(
+                this.quoteIdentifier(String(foreignKeyMeta.data.field.key)),
+              )})
+              ON DELETE ${raw((foreignKeyMeta.data.onDelete ?? "no action").toUpperCase())}`);
+        }
       } else if (fieldDiff.type === "removed") {
         await this.execute(sql`ALTER TABLE ${tableSql} DROP COLUMN ${columnSql}`);
       } else if (fieldDiff.type === "modified" && schema) {
@@ -361,12 +410,30 @@ export default class MysqlAdaptor<
           await this.execute(sql`UPDATE ${tableSql} SET ${columnSql} = ${backfillValue} WHERE ${columnSql} IS NULL`);
         }
         for (const modification of fieldDiff.modifications ?? []) {
-          if (modification.constraint === "NOT NULL") {
+          if (modification.type === "add-constraint" || modification.type === "remove-constraint") {
+            if (modification.constraint !== "NOT NULL") {
+              continue;
+            }
             await this.execute(
               sql`ALTER TABLE ${tableSql} MODIFY COLUMN ${columnSql} ${raw(this.typeToSql(schema))} ${raw(
                 modification.type === "add-constraint" ? "NOT NULL" : "NULL",
               )}`,
             );
+          } else if (modification.type === "remove-foreign-key") {
+            const constraintName =
+              modification.foreignKey.constraintName ?? `${String(table.id)}_${String(fieldDiff.key)}_fkey`;
+            await this.execute(
+              sql`ALTER TABLE ${tableSql} DROP FOREIGN KEY ${raw(this.quoteIdentifier(constraintName))}`,
+            );
+          } else if (modification.type === "add-foreign-key") {
+            const constraintName = `${String(table.id)}_${String(fieldDiff.key)}_fkey`;
+            await this.execute(sql`ALTER TABLE ${tableSql}
+                ADD CONSTRAINT ${raw(this.quoteIdentifier(constraintName))}
+                FOREIGN KEY (${columnSql})
+                REFERENCES ${raw(this.quoteIdentifier(modification.foreignKey.table))} (${raw(
+                  this.quoteIdentifier(modification.foreignKey.field),
+                )})
+                ON DELETE ${raw(modification.foreignKey.onDelete.toUpperCase())}`);
           }
         }
       }
@@ -402,6 +469,7 @@ export default class MysqlAdaptor<
       ${join(
         Object.values(table.fields).map((field) => {
           const primaryKeyMeta = getMetaItem(field.schema, primaryKey);
+          const foreignKeyMeta = getMetaItem(field.schema, foreignKey);
           const typeSql = this.typeToSql(field.schema);
           return raw(
             [
@@ -409,6 +477,9 @@ export default class MysqlAdaptor<
               typeSql,
               primaryKeyMeta ? "PRIMARY KEY" : "",
               isZodRequired(field.schema) ? "NOT NULL" : "",
+              foreignKeyMeta
+                ? `REFERENCES ${this.quoteIdentifier(String(foreignKeyMeta.data.field.table.id))} (${this.quoteIdentifier(String(foreignKeyMeta.data.field.key))}) ON DELETE ${(foreignKeyMeta.data.onDelete ?? "no action").toUpperCase()}`
+                : "",
             ]
               .filter(Boolean)
               .join(" "),
