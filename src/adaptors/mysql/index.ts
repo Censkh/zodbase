@@ -411,6 +411,10 @@ export default class MysqlAdaptor<
         }
         for (const modification of fieldDiff.modifications ?? []) {
           if (modification.type === "add-constraint" || modification.type === "remove-constraint") {
+            if (modification.type === "add-constraint" && modification.constraint === "PRIMARY KEY") {
+              await this.execute(sql`ALTER TABLE ${tableSql} ADD PRIMARY KEY (${columnSql})`);
+              continue;
+            }
             if (modification.constraint !== "NOT NULL") {
               continue;
             }

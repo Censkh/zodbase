@@ -59,6 +59,39 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
     expect(result.first).toEqual({ id: "1", name: "Ada" });
   });
 
+  it("adds a primary key to an existing column and supports foreign keys after repeated sync", async () => {
+    const legacy = createTable({ id: "legacy_parent", schema: zod.object({ id: zod.string(), name: zod.string() }) });
+    await db.syncTable(legacy);
+    await db.insert(legacy, { id: "parent-1", name: "Original" });
+    const parent = createTable({
+      id: "legacy_parent",
+      schema: legacy.schema.extend({ id: zod.string().meta(metaStore([primaryKey()])) }),
+    });
+    await db.syncTable(parent);
+    await db.syncTable(parent);
+    expect((await db.select(parent, ["*"])).results).toEqual([{ id: "parent-1", name: "Original" }]);
+    await expect(Promise.resolve(db.insert(parent, { id: "parent-1", name: "Duplicate" }))).rejects.toThrow();
+    const child = createTable({
+      id: "legacy_child",
+      schema: zod.object({ parentId: zod.string().meta(metaStore([foreignKey({ field: parent.$id })])) }),
+    });
+    await db.syncTable(child);
+    await db.insert(child, { parentId: "parent-1" });
+    await expect(Promise.resolve(db.insert(child, { parentId: "missing" }))).rejects.toThrow();
+  });
+
+  it("rejects adding a primary key to duplicate data without losing rows", async () => {
+    const legacy = createTable({ id: "duplicate_parent", schema: zod.object({ id: zod.string() }) });
+    await db.syncTable(legacy);
+    await db.insertMany(legacy, [{ id: "duplicate" }, { id: "duplicate" }]);
+    const parent = createTable({
+      id: "duplicate_parent",
+      schema: zod.object({ id: zod.string().meta(metaStore([primaryKey()])) }),
+    });
+    await expect(db.syncTable(parent)).rejects.toThrow();
+    expect((await db.select(legacy, ["*"])).results).toEqual([{ id: "duplicate" }, { id: "duplicate" }]);
+  });
+
   it("supports every comparison and compound condition", async () => {
     await db.insertMany(PeopleTable, people);
 

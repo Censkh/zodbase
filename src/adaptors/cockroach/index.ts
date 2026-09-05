@@ -1,8 +1,13 @@
-import { mapSqlResult, normalizeForeignKeyAction, sql, type Table, type TableColumnInfo } from "../../index";
+import { quoteIdentifier } from "../../Escaping";
+import { mapSqlResult, normalizeForeignKeyAction, raw, sql, type Table, type TableColumnInfo } from "../../index";
 import type { SqlResult } from "../../QueryBuilder";
 import PostgresAdaptor from "../postgres";
 
 export default class CockroachAdaptor extends PostgresAdaptor {
+  protected override async addPrimaryKey(table: Table, key: string): Promise<void> {
+    await this.execute(sql`ALTER TABLE ${table.id} ALTER PRIMARY KEY USING COLUMNS (${raw(quoteIdentifier(key))})`);
+  }
+
   async fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>> {
     const columnResult = await this.execute(sql`
       SHOW

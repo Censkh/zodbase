@@ -426,10 +426,7 @@ export default class PostgresAdaptor<
           );
         }
         if (primaryKeyMeta) {
-          await this.execute(
-            sql`ALTER TABLE ${table.id}
-                ADD PRIMARY KEY (${raw(quoteIdentifier(String(fieldDiff.key)))})`,
-          );
+          await this.addPrimaryKey(table, String(fieldDiff.key));
         }
         const foreignKeyMeta = getMetaItem(schema, foreignKey);
         if (foreignKeyMeta) {
@@ -461,6 +458,10 @@ export default class PostgresAdaptor<
 
           for (const modification of fieldDiff.modifications ?? []) {
             if (modification.type === "add-constraint" || modification.type === "remove-constraint") {
+              if (modification.type === "add-constraint" && modification.constraint === "PRIMARY KEY") {
+                await this.addPrimaryKey(table, String(fieldDiff.key));
+                continue;
+              }
               if (modification.constraint !== "NOT NULL") {
                 continue;
               }
@@ -488,6 +489,10 @@ export default class PostgresAdaptor<
         }
       }
     }
+  }
+
+  protected async addPrimaryKey(table: Table, key: string): Promise<void> {
+    await this.execute(sql`ALTER TABLE ${table.id} ADD PRIMARY KEY (${raw(quoteIdentifier(key))})`);
   }
 
   async syncTableIndexes(table: Table): Promise<void> {

@@ -3,7 +3,7 @@ import { findFieldMetaItems, getMetaItem } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
 import { escapeSqlValue } from "./Escaping";
 import { toLazyPromise } from "./LazyPromise";
-import { foreignKey, updatedAt } from "./MetaTypes";
+import { foreignKey, primaryKey, updatedAt } from "./MetaTypes";
 import type {
   BindingKeys,
   FieldBinding,
@@ -704,6 +704,14 @@ export class Database {
           });
         }
         const foreignKeyMeta = getMetaItem(field.schema, foreignKey);
+        if (getMetaItem(field.schema, primaryKey) && !column.primaryKey) {
+          if (tableRemoteSchema.results.some((existingColumn) => existingColumn.primaryKey)) {
+            throw new Error(
+              `[zodbase] Cannot add primary key '${key}' to '${String(table.id)}': another primary key already exists`,
+            );
+          }
+          modifications.push({ type: "add-constraint", constraint: "PRIMARY KEY" });
+        }
         const expectedForeignKey = foreignKeyMeta
           ? {
               table: String(foreignKeyMeta.data.field.table.id),
