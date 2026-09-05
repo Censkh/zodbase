@@ -338,6 +338,15 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
   return toLazyPromise(() => adaptor.executeSelect(query), builder) as any;
 };
 
+const parseUpdateValues = (schema: zod.ZodObject<any>, values: Record<string, unknown>) => {
+  const mask = Object.fromEntries(
+    Object.keys(values)
+      .filter((key) => Object.prototype.hasOwnProperty.call(schema.shape, key))
+      .map((key) => [key, true as const]),
+  );
+  return schema.pick(mask).partial().parse(values);
+};
+
 export class Database {
   private readonly options: ResolvedDatabaseOptions;
 
@@ -483,7 +492,7 @@ export class Database {
       throw new Error("No values to update");
     }
 
-    const parsedValues: any = (table.schema as zod.ZodObject<any>).partial().parse(values);
+    const parsedValues: any = parseUpdateValues(table.schema as zod.ZodObject<any>, values);
 
     const updatedAtFields = findFieldMetaItems(table.schema, updatedAt);
     for (const field of updatedAtFields) {
@@ -564,7 +573,7 @@ export class Database {
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TFieldKey extends StringKeys<ValueOfTable<TTable>>,
   >(table: TTable, values: TValue[], field: SingleFieldBinding<TValue, TFieldKey>) {
-    const parsedValues: any = values.map((value) => (table.schema as zod.ZodObject<any>).partial().parse(value));
+    const parsedValues: any = values.map((value) => parseUpdateValues(table.schema as zod.ZodObject<any>, value));
     const adapator = this.options.adaptor;
     return toLazyPromise(
       async (): Promise<SqlResult<void, 0>> => {
