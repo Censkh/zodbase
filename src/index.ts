@@ -341,6 +341,7 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
 const parseUpdateValues = (schema: zod.ZodObject<any>, values: Record<string, unknown>) => {
   const mask = Object.fromEntries(
     Object.keys(values)
+      // biome-ignore lint/suspicious/noPrototypeBuiltins: Consumers may target Object APIs older than ES2022.
       .filter((key) => Object.prototype.hasOwnProperty.call(schema.shape, key))
       .map((key) => [key, true as const]),
   );
