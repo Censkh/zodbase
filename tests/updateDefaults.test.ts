@@ -39,6 +39,7 @@ describe("partial update defaults", () => {
       { id: "first", name: "First", credits: 25, note: "kept" },
       { id: "second", name: "Second", credits: 50, note: "also kept" },
     ]);
+    defaultCalls = 0;
   });
   afterEach(() => driver.close());
 
