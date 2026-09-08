@@ -1,9 +1,26 @@
+import type DatabaseAdaptor from "../../DatabaseAdaptor";
 import { quoteIdentifier } from "../../Escaping";
 import { mapSqlResult, normalizeForeignKeyAction, raw, sql, type Table, type TableColumnInfo } from "../../index";
 import type { SqlResult } from "../../QueryBuilder";
 import PostgresAdaptor from "../postgres";
 
 export default class CockroachAdaptor extends PostgresAdaptor {
+  protected override async executeTransaction<TResult>(
+    callback: (adaptor: DatabaseAdaptor) => Promise<TResult>,
+  ): Promise<TResult> {
+    // A serialization failure aborts the entire transaction; retry after ROLLBACK.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await super.executeTransaction(callback);
+      } catch (error) {
+        if (attempt >= 2 || !error || typeof error !== "object" || !("code" in error) || error.code !== "40001") {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25 * 2 ** attempt + Math.random() * 25));
+      }
+    }
+  }
+
   protected override async addPrimaryKey(table: Table, key: string): Promise<void> {
     await this.execute(sql`ALTER TABLE ${table.id} ALTER PRIMARY KEY USING COLUMNS (${raw(quoteIdentifier(key))})`);
   }
