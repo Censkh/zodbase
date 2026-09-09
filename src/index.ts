@@ -1,9 +1,9 @@
 import * as zod from "zod";
 import { findFieldMetaItems, getMetaItem } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
-import { escapeSqlValue } from "./Escaping";
+import { escapeSqlValue, quoteIdentifier } from "./Escaping";
 import { toLazyPromise } from "./LazyPromise";
-import { foreignKey, primaryKey, updatedAt } from "./MetaTypes";
+import { foreignKey, monotonicTimestamp, primaryKey, updatedAt } from "./MetaTypes";
 import type {
   BindingKeys,
   FieldBinding,
@@ -498,6 +498,12 @@ export class Database {
     const updatedAtFields = findFieldMetaItems(table.schema, updatedAt);
     for (const field of updatedAtFields) {
       parsedValues[field.key] = Date.now();
+    }
+
+    for (const field of findFieldMetaItems(table.schema, monotonicTimestamp)) {
+      const column = quoteIdentifier(String(field.key));
+      const now = Date.now();
+      parsedValues[field.key] = raw(`CASE WHEN ${column} >= ${now} THEN ${column} + 1 ELSE ${now} END`);
     }
 
     const adapator = this.options.adaptor;

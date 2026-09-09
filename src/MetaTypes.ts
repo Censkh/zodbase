@@ -71,6 +71,9 @@ export const updatedAt = createMetaType({
   id: "updatedAt",
 });
 
+// Database-assigned ordering token; survives concurrent writers and clock skew.
+export const monotonicTimestamp = createMetaType({ id: "monotonicTimestamp" });
+
 export interface BackfillOptions {
   value: any;
 }
