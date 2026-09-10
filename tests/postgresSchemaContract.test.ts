@@ -55,7 +55,7 @@ describe("PostgreSQL schema synchronization contract", () => {
     expect(await columnInfo("pg_schema_types")).toEqual([
       { column_name: "textValue", data_type: "text", is_nullable: "NO" },
       { column_name: "integerValue", data_type: "integer", is_nullable: "NO" },
-      { column_name: "realValue", data_type: "real", is_nullable: "NO" },
+      { column_name: "realValue", data_type: "double precision", is_nullable: "NO" },
       { column_name: "booleanValue", data_type: "boolean", is_nullable: "NO" },
       { column_name: "timestampValue", data_type: "timestamp without time zone", is_nullable: "NO" },
       { column_name: "bigintValue", data_type: "bigint", is_nullable: "NO" },

@@ -10,6 +10,7 @@ import type { TypeToken } from "./TypeToken";
 export interface TableColumnInfo {
   name: string;
   type: BaseSchema;
+  sqlType?: string;
   notNull: boolean;
   primaryKey: boolean;
   foreignKey?: TableForeignKeyInfo;

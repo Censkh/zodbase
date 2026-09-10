@@ -96,6 +96,7 @@ export default class CockroachAdaptor extends PostgresAdaptor {
       return {
         name: row.column_name,
         type: {} as any,
+        sqlType: row.data_type,
         notNull: !row.is_nullable,
         hasDefault: row.column_default !== null,
         isIdentity: undefined,

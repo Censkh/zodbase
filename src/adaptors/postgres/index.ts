@@ -12,6 +12,7 @@ import {
   isZodRequired,
   join,
   mapSqlResult,
+  monotonicTimestamp,
   normalizeForeignKeyAction,
   primaryKey,
   raw,
@@ -67,6 +68,12 @@ export default class PostgresAdaptor<
       }
     }
     return super.transaction(callback);
+  }
+
+  override typeToSql(type: zod.ZodType<any>): string {
+    const sqlType = super.typeToSql(type);
+    // JavaScript numbers require 64-bit precision; REAL loses millisecond revisions.
+    return sqlType === "REAL" ? "DOUBLE PRECISION" : sqlType;
   }
 
   buildJsonArrayContainsSql(fieldSql: string, value: unknown): Statement {
@@ -196,6 +203,7 @@ export default class PostgresAdaptor<
     const columnResult = await this.execute(sql`
       SELECT 
         c.column_name,
+        c.data_type,
         c.is_nullable,
         c.column_default,
         c.is_identity,
@@ -244,6 +252,7 @@ export default class PostgresAdaptor<
       return {
         name: row.column_name,
         type: {} as any,
+        sqlType: row.data_type,
         notNull: row.is_nullable === "NO",
         hasDefault: row.column_default !== null,
         isIdentity: row.is_identity === "YES",
@@ -471,6 +480,22 @@ export default class PostgresAdaptor<
                       modification.type === "add-constraint" ? "SET NOT NULL" : "DROP NOT NULL",
                     )}`,
               );
+            } else if (modification.type === "widen-number") {
+              const column = quoteIdentifier(String(fieldDiff.key));
+              await this.transaction(async (adaptor) => {
+                // Read using the old wire type: Cockroach can store more precision than it sends.
+                const previous = getMetaItem(schema, monotonicTimestamp)
+                  ? (await adaptor.execute(sql`SELECT MAX(${raw(column)}) AS revision FROM ${table.id}`)).first
+                      ?.revision
+                  : undefined;
+                await adaptor.execute(sql`ALTER TABLE ${table.id}
+                  ALTER COLUMN ${raw(column)} TYPE DOUBLE PRECISION`);
+                if (previous != null) {
+                  const revision = Math.max(Date.now(), Number(previous)) + 1;
+                  await adaptor.execute(sql`UPDATE ${table.id} SET ${raw(column)} =
+                    GREATEST(${raw(column)} + 1, ${revision})`);
+                }
+              });
             } else if (modification.type === "remove-foreign-key") {
               const constraintName =
                 modification.foreignKey.constraintName ?? `${String(table.id)}_${String(fieldDiff.key)}_fkey`;

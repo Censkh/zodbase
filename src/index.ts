@@ -168,7 +168,12 @@ export interface RemoveForeignKey extends BaseFieldModification<"remove-foreign-
   foreignKey: import("./Table").TableForeignKeyInfo;
 }
 
-export type FieldModification = AddConstraint | RemoveConstraint | AddForeignKey | RemoveForeignKey;
+export type FieldModification =
+  | AddConstraint
+  | RemoveConstraint
+  | AddForeignKey
+  | RemoveForeignKey
+  | BaseFieldModification<"widen-number">;
 
 export type FieldDiffType = "added" | "removed" | "modified";
 
@@ -713,6 +718,13 @@ export class Database {
       } else {
         const isRequired = isZodRequired(field.schema);
         const modifications: FieldModification[] = [];
+        // Only widen legacy 32-bit floats; never infer destructive type conversions.
+        if (
+          ["REAL", "FLOAT4"].includes(column.sqlType?.toUpperCase() ?? "") &&
+          this.adaptor.typeToSql(field.schema) === "DOUBLE PRECISION"
+        ) {
+          modifications.push({ type: "widen-number" });
+        }
         if (column.notNull !== isRequired) {
           modifications.push({
             type: isRequired ? "add-constraint" : "remove-constraint",
