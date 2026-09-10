@@ -35,9 +35,6 @@ import {
 } from "../../QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
 
-const JSON_START = /[{[]/;
-const JSON_END = /[\]}]/;
-
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
 
 const getRequiredBackfillMeta = (schema: zod.Schema<any>): BackfillMetaItem | undefined => {
@@ -70,6 +67,8 @@ export default class MysqlAdaptor<
     return super.transaction(callback);
   }
 
+  protected override textCastType = "CHAR";
+
   quoteIdentifier(value: string): string {
     return quoteMysqlIdentifier(value);
   }
@@ -82,7 +81,7 @@ export default class MysqlAdaptor<
       return "DOUBLE";
     }
     if (isZodTypeExtends(type, zod.ZodDate)) {
-      return "DATETIME";
+      return "DATETIME(3)";
     }
     if (isZodTypeExtends(type, zod.ZodString)) {
       return "VARCHAR(255)";
@@ -94,10 +93,25 @@ export default class MysqlAdaptor<
     return sql`JSON_CONTAINS(${raw(fieldSql)}, JSON_ARRAY(${value}))`;
   }
 
+  private sessionReady: Promise<unknown> | undefined;
+
   async execute(statement: Statement): Promise<SqlResult> {
     if (typeof statement?.[TO_SQL_SYMBOL] !== "function") {
       throw new Error("Invalid statement");
     }
+
+    if ("getConnection" in this.driver) {
+      const connection = await this.driver.getConnection();
+      try {
+        return await new MysqlAdaptor({ ...this.options, driver: connection }).execute(statement);
+      } finally {
+        connection.release();
+      }
+    }
+    // Our SQL literals use standard doubled quotes. MySQL must not reinterpret backslashes.
+    await (this.sessionReady ??= this.driver.query(
+      "SET SESSION sql_mode = CONCAT_WS(',', @@SESSION.sql_mode, 'NO_BACKSLASH_ESCAPES')",
+    ));
 
     const startTimestamp = Date.now();
     const rawSql = statement[TO_SQL_SYMBOL]();
@@ -121,22 +135,7 @@ export default class MysqlAdaptor<
   }
 
   protected mapResult(value: SqlResult): SqlResult {
-    return mapSqlResult(value, (row) =>
-      Object.fromEntries(
-        Object.entries(row).map(([key, fieldValue]) => {
-          if (
-            typeof fieldValue === "string" &&
-            JSON_START.test(fieldValue[0]) &&
-            JSON_END.test(fieldValue[fieldValue.length - 1])
-          ) {
-            try {
-              return [key, JSON.parse(fieldValue)];
-            } catch {}
-          }
-          return [key, fieldValue];
-        }),
-      ),
-    );
+    return value;
   }
 
   buildSelectSql(select: SelectQuery): Statement {
@@ -149,20 +148,21 @@ export default class MysqlAdaptor<
           ? " LIMIT 18446744073709551615"
           : "";
 
-    return sql`SELECT ${raw(
-      select.fields.map((field) => (field.key === "*" ? "*" : this.quoteIdentifier(String(field.key)))),
-    )}
+    return sql`SELECT ${raw(this.selectFields(select.table, select.fields))}
       FROM ${raw(tableName)}${select.where ? sql` WHERE ${buildConditionSql(this, select.where)}` : raw("")}${
         select.orderBy.length > 0
           ? sql` ORDER BY ${raw(
-              select.orderBy.map((order) => `${this.quoteIdentifier(String(order.field.key))} ${order.direction}`),
+              select.orderBy.map(
+                (order) =>
+                  `${this.quoteIdentifier(String(select.table.id))}.${this.quoteIdentifier(String(order.field.key))} ${order.direction}`,
+              ),
             )}`
           : raw("")
       }${raw(limitSql)}${raw(offsetSql)}`;
   }
 
-  executeSelect<R>(select: SelectQuery): Promise<R> {
-    return this.execute(this.buildSelectSql(select)) as Promise<R>;
+  async executeSelect<R>(select: SelectQuery): Promise<R> {
+    return this.decodeResult(select.table, await this.execute(this.buildSelectSql(select))) as R;
   }
 
   async executeInsert<TTable extends Table>(
@@ -202,6 +202,7 @@ export default class MysqlAdaptor<
     const result = await this.execute(sql`
       SELECT
         c.column_name AS column_name,
+        c.column_type AS column_type,
         c.is_nullable AS is_nullable,
         c.column_default AS column_default,
         c.extra AS extra,
@@ -227,6 +228,7 @@ export default class MysqlAdaptor<
     return mapSqlResult<any, TableColumnInfo, number>(result, (row) => ({
       name: row.column_name,
       type: {} as any,
+      sqlType: row.column_type,
       notNull: row.is_nullable === "NO",
       hasDefault: row.column_default !== null,
       isIdentity: String(row.extra).includes("auto_increment"),
@@ -422,6 +424,10 @@ export default class MysqlAdaptor<
               sql`ALTER TABLE ${tableSql} MODIFY COLUMN ${columnSql} ${raw(this.typeToSql(schema))} ${raw(
                 modification.type === "add-constraint" ? "NOT NULL" : "NULL",
               )}`,
+            );
+          } else if (modification.type === "widen-date") {
+            await this.execute(
+              sql`ALTER TABLE ${tableSql} MODIFY COLUMN ${columnSql} DATETIME(3) ${raw(isZodRequired(schema) ? "NOT NULL" : "NULL")}`,
             );
           } else if (modification.type === "remove-foreign-key") {
             const constraintName =

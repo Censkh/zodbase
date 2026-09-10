@@ -29,9 +29,6 @@ import {
 } from "../../QueryBuilder";
 import type { Statement } from "../../Statement";
 
-const JSON_START = /[{[]/;
-const JSON_END = /[\]}]/;
-
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
 
 const getRequiredBackfillMeta = (schema: zod.Schema<any>): BackfillMetaItem | undefined => {
@@ -172,39 +169,28 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
   }
 
   protected mapResult(value: SqlResult): SqlResult {
-    return mapSqlResult(value, (value) => {
-      return Object.fromEntries(
-        Object.entries(value).map(([key, value]) => {
-          if (typeof value === "string" && JSON_START.test(value[0]) && JSON_END.test(value[value.length - 1])) {
-            try {
-              const parsedValue = JSON.parse(value);
-              return [key, parsedValue];
-            } catch {}
-          }
-          return [key, value];
-        }),
-      );
-    });
+    return value;
   }
 
   buildSelectSql(select: SelectQuery): Statement {
-    return sql`SELECT ${raw(
-      select.fields.map((field) => (field.key === "*" ? "*" : quoteIdentifier(String(field.key)))),
-    )}
+    return sql`SELECT ${raw(this.selectFields(select.table, select.fields))}
             FROM ${select.table} ${select.where ? sql` WHERE ${buildConditionSql(this, select.where)}` : raw("")}${
               select.orderBy.length > 0
                 ? sql` ORDER BY ${raw(
-                    select.orderBy.map((order) => `${quoteIdentifier(String(order.field.key))} ${order.direction}`),
+                    select.orderBy.map(
+                      (order) =>
+                        `${this.quoteIdentifier(String(select.table.id))}.${this.quoteIdentifier(String(order.field.key))} ${order.direction}`,
+                    ),
                   )}`
                 : raw("")
-            }${raw(select.limit !== undefined ? ` LIMIT ${select.limit}` : "")}${raw(
+            }${raw(select.limit !== undefined ? ` LIMIT ${select.limit}` : select.offset !== undefined ? " LIMIT -1" : "")}${raw(
               select.offset !== undefined ? ` OFFSET ${select.offset}` : "",
             )}`;
   }
 
-  executeSelect<R>(select: SelectQuery): R {
+  async executeSelect<R>(select: SelectQuery): Promise<R> {
     const sql = this.buildSelectSql(select);
-    return this.execute(sql) as any;
+    return this.decodeResult(select.table, await this.execute(sql)) as any;
   }
 
   async executeInsert<TTable extends Table>(
@@ -266,7 +252,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     shouldReturn = false,
   ): Promise<PossiblySelectedResult<ValueOfTable<TTable>>> {
     const sql = this.buildUpdateSql(table, values, where, shouldReturn);
-    const result = (await this.execute(sql)) as PossiblySelectedResult<ValueOfTable<TTable>>;
+    const result = this.decodeResult(table, await this.execute(sql)) as PossiblySelectedResult<ValueOfTable<TTable>>;
     result.selected = shouldReturn;
     return result;
   }
@@ -328,7 +314,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
                      return acc;
                    }, [] as Statement[]),
                  )}
-                 WHERE ${buildConditionSql(this, where)}${raw(shouldReturn ? " RETURNING *" : "")}`;
+                 WHERE ${buildConditionSql(this, where)}${raw(shouldReturn ? ` RETURNING ${this.selectFields(table)}` : "")}`;
   }
 
   protected buildUpsertSql<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
@@ -340,7 +326,9 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
                  VALUES ${Object.values(values)}
                  ON CONFLICT (${raw(quoteIdentifier(String(field.key)))})
                  DO UPDATE SET ${raw(
-                   Object.entries(values).map(([key, value]) => sql`${raw(quoteIdentifier(key))} = ${value}`),
+                   Object.entries(values).map(
+                     ([key, value]) => sql`${raw(quoteIdentifier(key))} = ${raw(valueToSql(value, true))}`,
+                   ),
                  )}`;
   }
 }

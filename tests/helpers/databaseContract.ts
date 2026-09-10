@@ -16,6 +16,7 @@ import TursoAdaptor from "../../src/adaptors/turso";
 
 export interface TestDatabaseContext {
   db: DatabaseApi;
+  connect?(): Promise<TestDatabaseContext>;
   close(): Promise<void>;
 }
 
@@ -72,6 +73,14 @@ const createPostgresDatabase = async (): Promise<TestDatabaseContext> => {
     db: new Database({
       adaptor: new PostgresAdaptor({ driver }),
     }),
+    async connect() {
+      const connection = new Client({ connectionString: connectionUrl.toString() });
+      await connection.connect();
+      return {
+        db: new Database({ adaptor: new PostgresAdaptor({ driver: connection }) }),
+        close: () => connection.end(),
+      };
+    },
     async close() {
       await driver.end();
       const cleanupClient = new Client({ connectionString: postgresContainer?.getConnectionUri() });
@@ -142,6 +151,14 @@ const createCockroachDatabase = async (): Promise<TestDatabaseContext> => {
 
   return {
     db: new Database({ adaptor: new CockroachAdaptor({ driver }) }),
+    async connect() {
+      const connection = new Client({ connectionString: connectionUrl.toString() });
+      await connection.connect();
+      return {
+        db: new Database({ adaptor: new CockroachAdaptor({ driver: connection }) }),
+        close: () => connection.end(),
+      };
+    },
     async close() {
       await driver.end();
       const cleanupDriver = new Client({ connectionString: cockroachContainer?.getConnectionUri() });

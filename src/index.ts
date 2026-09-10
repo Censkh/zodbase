@@ -1,7 +1,7 @@
 import * as zod from "zod";
 import { findFieldMetaItems, getMetaItem } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
-import { escapeSqlValue, quoteIdentifier } from "./Escaping";
+import { escapeSqlValue } from "./Escaping";
 import { toLazyPromise } from "./LazyPromise";
 import { foreignKey, monotonicTimestamp, primaryKey, updatedAt } from "./MetaTypes";
 import type {
@@ -40,6 +40,8 @@ export const valueToSql = (value: any, nested?: boolean): string => {
   if (value?.[TO_SQL_SYMBOL]) {
     return value[TO_SQL_SYMBOL]();
   }
+
+  if (value instanceof Date) return escapeSqlValue(value.toISOString().replace("T", " ").replace("Z", ""));
 
   if (typeof value === "number") {
     return value.toString();
@@ -122,7 +124,11 @@ interface ResolvedDatabaseOptions extends Omit<DatabaseOptions, "adaptor"> {
 
 const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): DatabaseAdaptor => {
   let adaptorPromise: Promise<DatabaseAdaptor> | undefined;
-  const getAdaptor = () => (adaptorPromise ??= Promise.resolve().then(initialize));
+  let resolved: DatabaseAdaptor | undefined;
+  const getAdaptor = () =>
+    (adaptorPromise ??= Promise.resolve()
+      .then(initialize)
+      .then((adaptor) => (resolved = adaptor)));
   const call =
     (method: keyof DatabaseAdaptor) =>
     async (...args: unknown[]) => {
@@ -131,6 +137,14 @@ const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): Data
     };
 
   return {
+    typeToSql: (type: zod.ZodType) => {
+      if (!resolved) throw new Error("Database adaptor has not initialized");
+      return resolved.typeToSql(type);
+    },
+    quoteIdentifier: (value: string) => {
+      if (!resolved) throw new Error("Database adaptor has not initialized");
+      return resolved.quoteIdentifier(value);
+    },
     execute: call("execute"),
     executeSelect: call("executeSelect"),
     executeInsert: call("executeInsert"),
@@ -173,7 +187,7 @@ export type FieldModification =
   | RemoveConstraint
   | AddForeignKey
   | RemoveForeignKey
-  | BaseFieldModification<"widen-number">;
+  | BaseFieldModification<"widen-number" | "widen-date">;
 
 export type FieldDiffType = "added" | "removed" | "modified";
 
@@ -506,9 +520,13 @@ export class Database {
     }
 
     for (const field of findFieldMetaItems(table.schema, monotonicTimestamp)) {
-      const column = quoteIdentifier(String(field.key));
       const now = Date.now();
-      parsedValues[field.key] = raw(`CASE WHEN ${column} >= ${now} THEN ${column} + 1 ELSE ${now} END`);
+      parsedValues[field.key] = {
+        [TO_SQL_SYMBOL]: () => {
+          const column = this.options.adaptor.quoteIdentifier(String(field.key));
+          return `CASE WHEN ${column} >= ${now} THEN ${column} + 1 ELSE ${now} END`;
+        },
+      };
     }
 
     const adapator = this.options.adaptor;
@@ -724,6 +742,12 @@ export class Database {
           this.adaptor.typeToSql(field.schema) === "DOUBLE PRECISION"
         ) {
           modifications.push({ type: "widen-number" });
+        }
+        if (
+          /^datetime(?:\([012]\))?$/i.test(column.sqlType ?? "") &&
+          this.adaptor.typeToSql(field.schema) === "DATETIME(3)"
+        ) {
+          modifications.push({ type: "widen-date" });
         }
         if (column.notNull !== isRequired) {
           modifications.push({

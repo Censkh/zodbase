@@ -7,6 +7,7 @@ import {
   isZodRequired,
   isZodTypeExtends,
   join,
+  mapSqlResult,
   primaryKey,
   raw,
   sql,
@@ -47,6 +48,66 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
 
   quoteIdentifier(value: string): string {
     return quoteIdentifier(value);
+  }
+
+  protected selectFields(table: Table, fields?: SelectQuery["fields"]): string {
+    const expanded = fields
+      ? fields.flatMap((field) => (field.key === "*" ? Object.values(table.fields) : [field]))
+      : Object.values(table.fields);
+    const needsCast = (field: SelectQuery["fields"][number]) =>
+      isZodTypeExtends(field.schema, zod.ZodBigInt) || isZodTypeExtends(field.schema, zod.ZodDate);
+    if (!expanded.some(needsCast)) {
+      return fields
+        ? fields.map((field) => (field.key === "*" ? "*" : this.quoteIdentifier(String(field.key)))).join(", ")
+        : "*";
+    }
+    return expanded
+      .map((field) => {
+        const column = this.quoteIdentifier(String(field.key));
+        // Read exact integers and UTC date text before a driver can coerce them lossily.
+        return needsCast(field) ? `CAST(${column} AS ${this.textCastType}) AS ${column}` : column;
+      })
+      .join(", ");
+  }
+
+  protected textCastType = "TEXT";
+
+  protected decodeResult(table: Table, result: SqlResult): SqlResult {
+    return mapSqlResult(result, (row) =>
+      Object.fromEntries(
+        Object.entries(row).map(([key, value]) => {
+          const schema = table.fields[key]?.schema;
+          if (!schema || value == null) return [key, value];
+          if (isZodTypeExtends(schema, zod.ZodBigInt)) return [key, BigInt(value as string)];
+          if (isZodTypeExtends(schema, zod.ZodBoolean))
+            return [key, value === true || value === 1 || value === BigInt(1)];
+          if (isZodTypeExtends(schema, zod.ZodDate)) {
+            if (value instanceof Date) return [key, value];
+            const text = String(value).replace(" ", "T");
+            return [key, new Date(/[zZ]|[+-]\d\d(?::?\d\d)?$/.test(text) ? text : `${text}Z`)];
+          }
+          if (
+            typeof value === "string" &&
+            (isZodTypeExtends(schema, zod.ZodObject) ||
+              isZodTypeExtends(schema, zod.ZodArray) ||
+              isZodTypeExtends(schema, zod.ZodRecord))
+          ) {
+            return [key, JSON.parse(value)];
+          }
+          // Untyped legacy columns may contain serialized structured values.
+          if (
+            typeof value === "string" &&
+            (isZodTypeExtends(schema, zod.ZodAny) || isZodTypeExtends(schema, zod.ZodUnknown)) &&
+            /^[{[]/.test(value)
+          ) {
+            try {
+              return [key, JSON.parse(value)];
+            } catch {}
+          }
+          return [key, value];
+        }),
+      ),
+    );
   }
 
   //typeToSql: (type: zod.ZodType<any>) => string;

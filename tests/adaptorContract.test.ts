@@ -36,7 +36,7 @@ describe("adaptor execution contract", () => {
     await adaptor.execute(sql`INSERT INTO example (id, json) VALUES ('1', ${JSON.stringify(["a", "b"])})`);
 
     expect(await adaptor.execute(sql`SELECT * FROM example`)).toMatchObject({
-      first: { id: "1", json: ["a", "b"] },
+      first: { id: "1", json: '["a","b"]' },
     });
     expect(executions).toEqual(["run", "run", "all"]);
     database.close();
@@ -67,8 +67,8 @@ describe("adaptor execution contract", () => {
     const adaptor = new D1Adaptor({ driver: driver as never });
 
     expect(await adaptor.execute(sql`SELECT * FROM example`)).toMatchObject({
-      first: { id: "1", json: ["a", "b"] },
-      results: [{ id: "1", json: ["a", "b"] }],
+      first: { id: "1", json: '["a","b"]' },
+      results: [{ id: "1", json: '["a","b"]' }],
     });
     await adaptor.execute(sql`DELETE FROM example`);
 
@@ -198,7 +198,12 @@ describe("adaptor execution contract", () => {
         throw callbackError;
       }),
     ).rejects.toBe(callbackError);
-    expect(statements).toEqual(["BEGIN", "UPDATE example SET id = 1", "ROLLBACK"]);
+    expect(statements).toEqual([
+      "SET SESSION sql_mode = CONCAT_WS(',', @@SESSION.sql_mode, 'NO_BACKSLASH_ESCAPES')",
+      "BEGIN",
+      "UPDATE example SET id = 1",
+      "ROLLBACK",
+    ]);
     expect(releases).toBe(1);
   });
 
@@ -219,7 +224,9 @@ describe("adaptor execution contract", () => {
     };
     const adaptor = new TursoAdaptor({ driver: driver as never });
 
-    expect(await adaptor.execute(sql`SELECT * FROM example`)).toMatchObject({ first: { id: "1", json: { ok: true } } });
+    expect(await adaptor.execute(sql`SELECT * FROM example`)).toMatchObject({
+      first: { id: "1", json: '{"ok":true}' },
+    });
 
     const Table = createTable({ id: "example", schema: zod.object({ id: zod.string(), name: zod.string() }) });
     await adaptor.executeUpdateMany(Table, [{ id: "1", name: "Ada" }], Table.$id);

@@ -1,10 +1,17 @@
-import BunDatabase from "bun:sqlite";
 import * as zod from "zod";
-import { createTable, Database, metaStore, primaryKey, updatedAt } from "../src";
-import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
+import { createTable, type Database, metaStore, primaryKey, updatedAt } from "../src";
+import {
+  acquireTestDatabaseContainers,
+  releaseTestDatabaseContainers,
+  TEST_DATABASE_FACTORIES,
+  type TestDatabaseContext,
+} from "./helpers/databaseContract";
 
-describe("partial update defaults", () => {
-  let driver: BunDatabase;
+beforeAll(acquireTestDatabaseContainers, 180_000);
+afterAll(releaseTestDatabaseContainers, 180_000);
+
+describe.each(TEST_DATABASE_FACTORIES)("partial update defaults: $name", ({ create }) => {
+  let context: TestDatabaseContext;
   let database: Database;
   let defaultCalls: number;
   const makeTable = () =>
@@ -30,8 +37,8 @@ describe("partial update defaults", () => {
   let table: ReturnType<typeof makeTable>;
 
   beforeEach(async () => {
-    driver = new BunDatabase(":memory:");
-    database = new Database({ adaptor: new BunSqliteAdaptor({ driver }) });
+    context = await create();
+    database = context.db;
     defaultCalls = 0;
     table = makeTable();
     await database.syncTable(table);
@@ -41,7 +48,7 @@ describe("partial update defaults", () => {
     ]);
     defaultCalls = 0;
   });
-  afterEach(() => driver.close());
+  afterEach(async () => context.close());
 
   it("preserves omitted primary keys and defaults while validating supplied fields", async () => {
     const result = await database.update(table, { name: "  Changed  " }, table.$id.equals("first")).selectMutated();

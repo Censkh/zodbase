@@ -35,9 +35,6 @@ import {
 } from "../../QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
 
-const JSON_START = /[{[]/;
-const JSON_END = /[\]}]/;
-
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
 
 const getRequiredBackfillMeta = (schema: zod.Schema<any>): BackfillMetaItem | undefined => {
@@ -117,25 +114,11 @@ export default class PostgresAdaptor<
   }
 
   protected mapResult(value: SqlResult): SqlResult {
-    return mapSqlResult(value, (value) => {
-      return Object.fromEntries(
-        Object.entries(value).map(([key, value]) => {
-          if (typeof value === "string" && JSON_START.test(value[0]) && JSON_END.test(value[value.length - 1])) {
-            try {
-              const parsedValue = JSON.parse(value);
-              return [key, parsedValue];
-            } catch {}
-          }
-          return [key, value];
-        }),
-      );
-    });
+    return value;
   }
 
   buildSelectSql(select: SelectQuery): Statement {
-    return sql`SELECT ${raw(
-      select.fields.map((field) => (field.key === "*" ? "*" : quoteIdentifier(String(field.key)))),
-    )}
+    return sql`SELECT ${raw(this.selectFields(select.table, select.fields))}
                FROM ${select.table} ${
                  select.where
                    ? sql` WHERE
@@ -145,7 +128,10 @@ export default class PostgresAdaptor<
                  select.orderBy.length > 0
                    ? sql` ORDER BY
                    ${raw(
-                     select.orderBy.map((order) => `${quoteIdentifier(String(order.field.key))} ${order.direction}`),
+                     select.orderBy.map(
+                       (order) =>
+                         `${this.quoteIdentifier(String(select.table.id))}.${this.quoteIdentifier(String(order.field.key))} ${order.direction}`,
+                     ),
                    )}`
                    : raw("")
 }${raw(select.limit !== undefined ? ` LIMIT ${select.limit}` : "")}${raw(
@@ -155,7 +141,7 @@ export default class PostgresAdaptor<
 
   async executeSelect<R>(select: SelectQuery): Promise<R> {
     const sql = this.buildSelectSql(select);
-    return this.execute(sql) as any;
+    return this.decodeResult(select.table, await this.execute(sql)) as any;
   }
 
   async executeInsert<TTable extends Table>(
@@ -165,10 +151,10 @@ export default class PostgresAdaptor<
   ): Promise<SqlResult<ValueOfTable<TTable>, 1>> {
     const statement = sql`INSERT INTO ${table.id} (${raw(Object.keys(values as any).map(quoteIdentifier))})
                           VALUES (${raw(Object.values(values as any).map((v) => valueToSql(v, true)))})${raw(
-                            shouldReturn ? " RETURNING *" : "",
+                            shouldReturn ? ` RETURNING ${this.selectFields(table)}` : "",
                           )}`;
     if (shouldReturn) {
-      return (await this.execute(statement)) as any;
+      return this.decodeResult(table, await this.execute(statement)) as any;
     }
     await this.execute(statement);
     return {
@@ -188,9 +174,9 @@ export default class PostgresAdaptor<
                             values.map(
                               (value: any) => sql`(${raw(fieldKeys.map((key) => valueToSql(value[key], true)))})`,
                             ),
-                          )}${raw(shouldReturn ? " RETURNING *" : "")}`;
+                          )}${raw(shouldReturn ? ` RETURNING ${this.selectFields(table)}` : "")}`;
     if (shouldReturn) {
-      return (await this.execute(statement)) as any;
+      return this.decodeResult(table, await this.execute(statement)) as any;
     }
     await this.execute(statement);
     return {
@@ -278,7 +264,7 @@ export default class PostgresAdaptor<
     shouldReturn = false,
   ): Promise<PossiblySelectedResult<ValueOfTable<TTable>>> {
     const sql = this.buildUpdateSql(table, values, where, shouldReturn);
-    const result = (await this.execute(sql)) as PossiblySelectedResult<ValueOfTable<TTable>>;
+    const result = this.decodeResult(table, await this.execute(sql)) as PossiblySelectedResult<ValueOfTable<TTable>>;
     result.selected = shouldReturn;
     return result;
   }
@@ -289,7 +275,7 @@ export default class PostgresAdaptor<
     field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
   ): Promise<SqlResult<void, 0>> {
     const sql = this.buildUpsertSql(table, values as any, field);
-    return (await this.execute(sql)) as any;
+    return this.decodeResult(table, await this.execute(sql)) as any;
   }
 
   async executeCount<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
@@ -343,7 +329,7 @@ export default class PostgresAdaptor<
                    return assignments;
                  }, [] as string[]),
                )}
-               WHERE ${buildConditionSql(this, where, true)}${raw(shouldReturn ? " RETURNING *" : "")}`;
+               WHERE ${buildConditionSql(this, where, true)}${raw(shouldReturn ? ` RETURNING ${this.selectFields(table)}` : "")}`;
   }
 
   protected buildUpsertSql<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
@@ -363,7 +349,7 @@ export default class PostgresAdaptor<
       ${raw(valueToSql(value, true))}`,
       ),
     )}
-      RETURNING *`;
+      RETURNING ${raw(this.selectFields(table))}`;
   }
 
   async processDiff(table: Table, diff: TableDiff): Promise<void> {
