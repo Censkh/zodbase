@@ -33,20 +33,20 @@
     "@rsql/parser": "^1.6.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.12",
-    "@cloudflare/workers-types": "^5.20260830.1",
+    "@biomejs/biome": "^2.5.13",
+    "@cloudflare/workers-types": "^5.20260911.1",
     "@libsql/client": "^0.17.4",
     "@testcontainers/cockroachdb": "^12.1.0",
     "@testcontainers/mysql": "^12.1.0",
     "@testcontainers/postgresql": "^12.1.0",
-    "@types/bun": "^1.4.1",
-    "@types/node": "^26.4.1",
+    "@types/bun": "^1.4.2",
+    "@types/node": "^22.20.2",
     "@types/pg": "^8.23.1",
-    "mysql2": "^3.24.2",
+    "mysql2": "^3.24.4",
     "pg": "^8.22.0",
     "typescript": "7.0.2",
-    "zod": "^4.5.4",
-    "zod-compiler": "^2.0.3"
+    "zod": "~4.5.4",
+    "zod-compiler": "^2.0.4"
   },
   "dependencies": {
     "server-only": "^0.0.1",
