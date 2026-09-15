@@ -220,6 +220,8 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     }
   }
 
+  async syncTableLocality(_table: Table): Promise<void> {}
+
   createTable(table: Table, name?: string) {
     const statement = sql`CREATE TABLE IF NOT EXISTS ${raw(quoteIdentifier(name ?? String(table.id)))}
       (

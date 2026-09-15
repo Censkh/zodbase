@@ -1,10 +1,41 @@
+import type * as zod from "zod";
+import { getMetaItem } from "zod-meta";
 import type DatabaseAdaptor from "../../DatabaseAdaptor";
 import { quoteIdentifier } from "../../Escaping";
 import { mapSqlResult, normalizeForeignKeyAction, raw, sql, type Table, type TableColumnInfo } from "../../index";
 import type { SqlResult } from "../../QueryBuilder";
 import PostgresAdaptor from "../postgres";
+import { cockroachLocality, cockroachRegion } from "./metadata";
 
 export default class CockroachAdaptor extends PostgresAdaptor {
+  override typeToSql(schema: zod.ZodType): string {
+    return getMetaItem(schema, cockroachRegion) ? '"public"."crdb_internal_region"' : super.typeToSql(schema);
+  }
+
+  override async syncTableLocality(table: Table): Promise<void> {
+    const locality = getMetaItem(table.schema, cockroachLocality)?.data;
+    if (!locality) return;
+    const { first } = await this.execute(
+      sql`SELECT locality FROM [SHOW TABLES] WHERE table_name = ${String(table.id)} AND schema_name = current_schema()`,
+    );
+    let expected: string;
+    if (locality.type === "global") expected = "GLOBAL";
+    else if (locality.type === "regional-by-table") {
+      expected = locality.region
+        ? `REGIONAL BY TABLE IN ${quoteIdentifier(locality.region)}`
+        : "REGIONAL BY TABLE IN PRIMARY REGION";
+    } else {
+      const column = locality.regionColumn;
+      if (column && (!table.fields[column] || !getMetaItem(table.fields[column].schema, cockroachRegion))) {
+        throw new Error(`Regional column '${column}' must have cockroachRegion metadata`);
+      }
+      expected = `REGIONAL BY ROW${column ? ` AS ${quoteIdentifier(column)}` : ""}`;
+    }
+    // SHOW TABLES can omit identifier quotes for simple names.
+    if (String(first?.locality).replace(/"/g, "") === expected.replace(/"/g, "")) return;
+    await this.execute(sql`ALTER TABLE ${table.id} SET LOCALITY ${raw(expected)}`);
+  }
+
   protected override async executeTransaction<TResult>(
     callback: (adaptor: DatabaseAdaptor) => Promise<TResult>,
   ): Promise<TResult> {
@@ -106,3 +137,5 @@ export default class CockroachAdaptor extends PostgresAdaptor {
     });
   }
 }
+
+export { cockroachLocality, cockroachRegion } from "./metadata";

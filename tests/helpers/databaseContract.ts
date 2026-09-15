@@ -232,6 +232,12 @@ export const acquireCockroachTestContainer = async (): Promise<void> => {
   process.env.TESTCONTAINERS_RYUK_DISABLED ??= "true";
   cockroachSuiteLeases += 1;
   cockroachContainerPromise ??= new CockroachDbContainer("cockroachdb/cockroach:v26.2.2")
+    .withCommand([
+      "start-single-node",
+      "--insecure",
+      "--http-addr=0.0.0.0:26258",
+      "--locality=region=aws-ap-southeast-1,zone=a",
+    ])
     .withDatabase("defaultdb")
     .withUsername("root")
     .withStartupTimeout(120_000)

@@ -157,6 +157,7 @@ const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): Data
     createTable: call("createTable"),
     fetchTableColumns: call("fetchTableColumns"),
     syncTableIndexes: call("syncTableIndexes"),
+    syncTableLocality: call("syncTableLocality"),
     processDiff: call("processDiff"),
     transaction: call("transaction"),
   } as unknown as DatabaseAdaptor;
@@ -700,6 +701,7 @@ export class Database {
     if (table.indexes.length > 0) {
       await this.adaptor.syncTableIndexes(table);
     }
+    await this.adaptor.syncTableLocality(table);
   }
 
   private get adaptor() {
