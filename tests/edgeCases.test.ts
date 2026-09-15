@@ -8,7 +8,7 @@ import {
 } from "./helpers/databaseContract";
 
 // Inspired by Sequelize's datatype round trips, SQLAlchemy's dialect contracts,
-// Drizzle's schema migrations and TypeORM's issue regressions. See COVERAGE.md.
+// Drizzle's schema migrations and TypeORM's issue regressions.
 beforeAll(acquireTestDatabaseContainers, 180_000);
 afterAll(releaseTestDatabaseContainers, 180_000);
 

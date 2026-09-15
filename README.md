@@ -1,28 +1,50 @@
-# zodbase
+[![Zodbase — Your schema. Your database.](website/static/img/zodbase-social-card.png)](https://zodbase.knownquantity.net/)
 
-![zodbase](website/static/img/zodbase-social-card.png)
+[![License: MIT](https://img.shields.io/badge/license-MIT-b7a5ff.svg)](LICENSE)
 
-[Documentation](https://zodbase.knownquantity.net/)
+**Zod schemas become typed database tables.** Validate writes, build queries with typed field bindings, and connect through database adaptors.
 
-Schema-driven database utilities used by CalmLens. The package provides typed tables and queries, database adaptors, statement helpers, and conversion of a supported RSQL subset into query conditions.
+Zodbase is under active development and does not yet provide a stable public API.
 
-It is currently an internal workspace package and does not provide a stable public API. See `src/index.ts` for exports and `tests/rsql.test.ts` for supported filter syntax.
-
-## Schema synchronization
-
-`database.syncTable(table)` adds a missing primary key when an existing column gains `primaryKey()` metadata. Sync is repeatable, and existing rows are preserved. Duplicate values are rejected rather than deleted or rewritten. Nullable columns still require a backfill before becoming required when null values exist.
-
-PostgreSQL and MySQL-compatible adaptors add a primary-key constraint; SQLite-compatible adaptors rebuild the table; CockroachDB replaces its implicit primary key. Replacing a different explicit primary key is not supported by automatic sync.
-
-## Lazy adaptor initialization
-
-Pass an initializer instead of an adaptor instance to defer setup until the first database operation executes. The initializer is memoized and runs at most once per `Database` instance.
-
-```ts
-const database = new Database({
-  adaptor: async () => {
-    const driver = await connect();
-    return new PostgresAdaptor({ driver });
-  },
-});
+```bash
+bun add zodbase zod
 ```
+
+## A small example
+
+Define a table, insert a row, and query it with Bun's built-in SQLite driver:
+
+```typescript
+import { Database as SQLite } from "bun:sqlite";
+import { z } from "zod";
+import { createTable, Database, metaStore, primaryKey } from "zodbase";
+import BunSqliteAdaptor from "zodbase/adaptors/bun-sqlite";
+
+const Users = createTable({
+  id: "users",
+  schema: z.object({
+    id: z.string().meta(metaStore([primaryKey()])),
+    name: z.string(),
+  }),
+});
+
+const driver = new SQLite(":memory:");
+const db = new Database({ adaptor: new BunSqliteAdaptor({ driver }) });
+
+await db.syncTable(Users);
+await db.insert(Users, { id: "ada", name: "Ada" });
+
+const { results } = await db.select(Users, ["*"])
+  .where(Users.$name.equals("Ada"));
+
+console.log(results); // [{ id: "ada", name: "Ada" }]
+driver.close();
+```
+
+## Keep going
+
+- [Getting started](https://zodbase.knownquantity.net/) — installation and setup.
+- [Tables and schemas](https://zodbase.knownquantity.net/tables-and-schemas/) — validation, keys, and schema synchronization.
+- [Queries](https://zodbase.knownquantity.net/queries/) and [mutations](https://zodbase.knownquantity.net/mutations/) — reading and writing data.
+- [Database adaptors](https://zodbase.knownquantity.net/adaptors/) — connection examples and database-specific behavior.
+- [API at a glance](https://zodbase.knownquantity.net/reference/) — a hand-written overview of the public surface.
