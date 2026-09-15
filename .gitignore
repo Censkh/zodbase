@@ -1,2 +1,7 @@
 .idea
 node_modules
+
+website/build/
+website/.docusaurus/
+website/.wrangler/
+output/

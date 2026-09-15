@@ -7,13 +7,15 @@
     "test:compiled": "bun test --preload zod/compile --timeout 40000 --pass-with-no-tests && bun run test:types",
     "test:types": "tsc --noEmit --project tsconfig.types.json",
     "check:fix": "tsc --noEmit --project tsconfig.json && npx @biomejs/biome check --write .",
-    "check": "tsc --noEmit --project tsconfig.json && npx @biomejs/biome check ."
+    "check": "tsc --noEmit --project tsconfig.json && npx @biomejs/biome check .",
+    "docs:dev": "cd website && bun run start",
+    "docs:build": "cd website && bun run build"
   },
   "repository": {
     "type": "git",
     "url": "git@github.com:Censkh/zodbase.git"
   },
-  "homepage": "https://github.com/Censkh/zodbase",
+  "homepage": "https://zodbase.knownquantity.net/",
   "exports": {
     ".": {
       "workerd": "./src/index.ts",
