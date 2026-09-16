@@ -87,8 +87,14 @@ const config = {
       { property: "og:image:type", content: "image/png" },
       { property: "og:image:width", content: "1200" },
       { property: "og:image:height", content: "630" },
-      { property: "og:image:alt", content: "Zodbase — Your schema. Your database. Lavender and ice-blue schema cards on a dark background." },
-      { name: "twitter:image:alt", content: "Zodbase — Your schema. Your database. Lavender and ice-blue schema cards on a dark background." },
+      {
+        property: "og:image:alt",
+        content: "Zodbase — Your schema. Your database. Lavender and ice-blue schema cards on a dark background.",
+      },
+      {
+        name: "twitter:image:alt",
+        content: "Zodbase — Your schema. Your database. Lavender and ice-blue schema cards on a dark background.",
+      },
       { name: "theme-color", content: "#12131f" },
     ],
     colorMode: { defaultMode: "dark", disableSwitch: true, respectPrefersColorScheme: false },
