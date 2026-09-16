@@ -1,0 +1,30 @@
+name: SQL Server adaptor
+on:
+  pull_request:
+  push:
+    branches: [master, dev]
+  workflow_dispatch:
+jobs:
+  mssql:
+    runs-on: ubuntu-latest
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_PID: Developer
+          MSSQL_SA_PASSWORD: Zodbase_test_2026_Pass
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd="/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P Zodbase_test_2026_Pass -C -Q 'SELECT 1'"
+          --health-interval=10s --health-timeout=5s --health-retries=30
+    env:
+      MSSQL_TEST_URL: Server=localhost,1433;User Id=sa;Password=Zodbase_test_2026_Pass;Database=master;Encrypt=true;TrustServerCertificate=true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: bun run test:provider-types
+      - run: bun test tests/mssql.integration.test.ts tests/providerAdaptors.test.ts --timeout 60000
+      - run: bun test --preload zod/compile tests/mssql.integration.test.ts --timeout 60000

@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.types.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": [
+    "src",
+    "tests/types.contract.ts",
+    "tests/providerAdaptors.test.ts",
+    "tests/neonDriver.test.ts",
+    "tests/mssql.integration.test.ts",
+    "tests/subqueryEdges.test.ts",
+    "tests/subqueryDialectEdges.test.ts"
+  ]
+}
