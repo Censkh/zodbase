@@ -25,7 +25,8 @@ import type {
   StringKeys,
   ValueOfTable,
 } from "./QueryBuilder";
-import { SELECT_QUERY } from "./QueryBuilder";
+import { isScalarSelect, SELECT_QUERY } from "./QueryBuilder";
+import { compileRelationalQuery, type SelectDialect } from "./RelationalQuery";
 import { type Statement, TO_SQL_SYMBOL } from "./Statement";
 import { canShareSubquery, isSubquery } from "./Subquery";
 
@@ -83,41 +84,73 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
 
   protected textCastType = "TEXT";
 
+  decodeSelectedValue(schema: zod.ZodType | undefined, value: any): any {
+    if (!schema || value == null) return value;
+    if (isZodTypeExtends(schema, zod.ZodBigInt)) return BigInt(value);
+    if (isZodTypeExtends(schema, zod.ZodBoolean)) return value === true || value === 1 || value === BigInt(1);
+    if (isZodTypeExtends(schema, zod.ZodDate)) {
+      if (value instanceof Date) return value;
+      const text = String(value).replace(" ", "T");
+      return new Date(/[zZ]|[+-]\d\d(?::?\d\d)?$/.test(text) ? text : `${text}Z`);
+    }
+    if (
+      typeof value === "string" &&
+      (isZodTypeExtends(schema, zod.ZodObject) ||
+        isZodTypeExtends(schema, zod.ZodArray) ||
+        isZodTypeExtends(schema, zod.ZodRecord))
+    )
+      return JSON.parse(value);
+    if (
+      typeof value === "string" &&
+      (isZodTypeExtends(schema, zod.ZodAny) || isZodTypeExtends(schema, zod.ZodUnknown)) &&
+      /^[{[]/.test(value)
+    ) {
+      try {
+        return JSON.parse(value);
+      } catch {}
+    }
+    return value;
+  }
+
   protected decodeResult(table: Table, result: SqlResult): SqlResult {
     return mapSqlResult(result, (row) =>
       Object.fromEntries(
-        Object.entries(row).map(([key, value]) => {
-          const schema = table.fields[key]?.schema;
-          if (!schema || value == null) return [key, value];
-          if (isZodTypeExtends(schema, zod.ZodBigInt)) return [key, BigInt(value as string)];
-          if (isZodTypeExtends(schema, zod.ZodBoolean))
-            return [key, value === true || value === 1 || value === BigInt(1)];
-          if (isZodTypeExtends(schema, zod.ZodDate)) {
-            if (value instanceof Date) return [key, value];
-            const text = String(value).replace(" ", "T");
-            return [key, new Date(/[zZ]|[+-]\d\d(?::?\d\d)?$/.test(text) ? text : `${text}Z`)];
-          }
-          if (
-            typeof value === "string" &&
-            (isZodTypeExtends(schema, zod.ZodObject) ||
-              isZodTypeExtends(schema, zod.ZodArray) ||
-              isZodTypeExtends(schema, zod.ZodRecord))
-          ) {
-            return [key, JSON.parse(value)];
-          }
-          // Untyped legacy columns may contain serialized structured values.
-          if (
-            typeof value === "string" &&
-            (isZodTypeExtends(schema, zod.ZodAny) || isZodTypeExtends(schema, zod.ZodUnknown)) &&
-            /^[{[]/.test(value)
-          ) {
-            try {
-              return [key, JSON.parse(value)];
-            } catch {}
-          }
-          return [key, value];
-        }),
+        Object.entries(row).map(([key, value]) => [key, this.decodeSelectedValue(table.fields[key]?.schema, value)]),
       ),
+    );
+  }
+
+  protected selectDialect?: SelectDialect;
+  protected relationalSelect(query: SelectQuery, scalar = false) {
+    if (!this.selectDialect) throw new Error("This adaptor does not support relational queries");
+    return compileRelationalQuery(this, this.selectDialect, query, scalar);
+  }
+  protected buildRelationalSelectSql(query: SelectQuery, scalar: boolean): Statement {
+    if (scalar && !isScalarSelect(query)) throw new Error("Scalar subqueries must select exactly one plain column");
+    return raw(this.relationalSelect(query, scalar).sql);
+  }
+  protected async executeRelationalSelect(query: SelectQuery): Promise<SqlResult> {
+    const compiled = this.relationalSelect(query);
+    return mapSqlResult(await this.execute(raw(compiled.sql)), compiled.decode);
+  }
+  async executeQueryCount(query: SelectQuery): Promise<SqlResult> {
+    const compiled = this.relationalSelect({
+      ...query,
+      includes: undefined,
+      projection: undefined,
+      orderBy: [],
+      limit: undefined,
+      offset: undefined,
+    });
+    const alias = this.quoteIdentifier("_zodbase_count");
+    const columns = query.fields.map((field, i) =>
+      field.key === "*"
+        ? `COUNT(*) AS ${this.quoteIdentifier("_count")}`
+        : `COUNT(${alias}.${this.quoteIdentifier(compiled.columns[i]!)}) AS ${this.quoteIdentifier(String(field.key))}`,
+    );
+    const result = await this.execute(raw(`SELECT ${columns.join(", ")} FROM (${compiled.sql}) AS ${alias}`));
+    return mapSqlResult(result, (row) =>
+      Object.fromEntries(Object.entries(row).map(([key, value]) => [key, Number(value)])),
     );
   }
 

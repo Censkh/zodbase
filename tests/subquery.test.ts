@@ -32,8 +32,8 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar insert: $name", ({ name, create }
       await db.syncTable(child);
       const timestamp = new Date("2026-09-16T00:00:00.000Z");
       await db.insert(parent, { id: "parent'1", region: "London", timestamp });
-      const region = db.select(parent, ["region"]).where(parent.$id.equals("parent'1"));
-      const date = db.select(parent, ["timestamp"]).where(parent.$id.equals("parent'1"));
+      const region = db.select(parent, { region: parent.$region }).where(parent.$id.equals("parent'1"));
+      const date = db.select(parent, { timestamp: parent.$timestamp }).where(parent.$id.equals("parent'1"));
       const adaptor = (db as any).options.adaptor;
       const originalExecute = adaptor.execute.bind(adaptor);
       const statements: string[] = [];
@@ -55,7 +55,7 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar insert: $name", ({ name, create }
       expect(statements).toHaveLength(1);
       expect(statements[0]).toMatch(/^INSERT /);
       expect(statements[0]).toContain("SELECT");
-      expect((await db.select(child, ["*"])).first).toEqual({ id: "1", region: "London", timestamp, label: "default" });
+      expect((await db.select(child)).first).toEqual({ id: "1", region: "London", timestamp, label: "default" });
       const bulk = db.insertMany(child, [
         { id: "2", region, timestamp: date },
         { id: "3", region: "Singapore", timestamp },
@@ -67,17 +67,17 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar insert: $name", ({ name, create }
         expect(returned.results.map((row) => row.timestamp)).toEqual([timestamp, timestamp, timestamp]);
         expect(returned.results.map((row) => row.region)).toEqual(["London", "Singapore", "London"]);
       }
-      expect((await db.select(child, ["*"])).results).toHaveLength(4);
+      expect((await db.select(child)).results).toHaveLength(4);
       await expect(
         Promise.resolve(
           db.insert(child, {
             id: "missing",
-            region: db.select(parent, ["region"]).where(parent.$id.equals("absent")),
+            region: db.select(parent, { region: parent.$region }).where(parent.$id.equals("absent")),
             timestamp,
           }),
         ),
       ).rejects.toThrow();
-      expect(() => db.insert(child, { id: "bad", region: db.select(parent, ["*"]) as any, timestamp })).toThrow(
+      expect(() => db.insert(child, { id: "bad", region: db.select(parent) as any, timestamp })).toThrow(
         "exactly one column",
       );
       if (mysql) {
@@ -91,7 +91,7 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar insert: $name", ({ name, create }
       const lazy = new Database({ adaptor: async () => adaptor });
       await lazy.insert(child, {
         id: "lazy",
-        region: lazy.select(parent, ["region"]).where(parent.$id.equals("parent'1")),
+        region: lazy.select(parent, { region: parent.$region }).where(parent.$id.equals("parent'1")),
         timestamp,
       });
     } finally {

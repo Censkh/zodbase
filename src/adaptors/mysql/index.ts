@@ -33,6 +33,7 @@ import {
   type StringKeys,
   type ValueOfTable,
 } from "../../QueryBuilder";
+import { isRelationalQuery, type SelectDialect } from "../../RelationalQuery";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
 
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
@@ -139,7 +140,10 @@ export default class MysqlAdaptor<
     return value;
   }
 
+  protected override selectDialect: SelectDialect = "mysql";
+
   override buildSelectSql(select: SelectQuery, scalar = false): Statement {
+    if (isRelationalQuery(select)) return this.buildRelationalSelectSql(select, scalar);
     const tableName = this.quoteIdentifier(String(select.table.id));
     const offsetSql = select.offset === undefined ? "" : ` OFFSET ${select.offset}`;
     const limitSql =
@@ -163,6 +167,7 @@ export default class MysqlAdaptor<
   }
 
   async executeSelect<R>(select: SelectQuery): Promise<R> {
+    if (isRelationalQuery(select)) return this.executeRelationalSelect(select) as any;
     return this.decodeResult(select.table, await this.execute(this.buildSelectSql(select))) as R;
   }
 

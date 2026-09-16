@@ -25,7 +25,11 @@ test("real Neon HTTP driver overrides array mode and decodes the wire response",
     const db = new Database({ adaptor: new NeonHttpAdaptor({ driver }) });
     const table = createTable({ id: "wire", schema: z.object({ id: z.string(), big: z.bigint(), date: z.date() }) });
     const result = await db
-      .insert(table, { id: "new", big: db.select(table, ["big"]).one(), date: new Date("2026-09-16T01:02:03.456Z") })
+      .insert(table, {
+        id: "new",
+        big: db.select(table, { big: table.$big }).one(),
+        date: new Date("2026-09-16T01:02:03.456Z"),
+      })
       .selectMutated();
     expect(result.first).toEqual({ id: "new", big: 9223372036854775807n, date: new Date("2026-09-16T01:02:03.456Z") });
     expect(queries).toHaveLength(1);

@@ -59,31 +59,50 @@ describe.skipIf(!process.env.MSSQL_TEST_URL)("SQL Server integration", () => {
       await admin.close();
     }
   }, 60_000);
-  const source = (id = "a'\\") => db.select(parent, ["value"]).where(parent.$id.equals(id));
+  const source = (id = "a'\\") => db.select(parent, { value: parent.$value }).where(parent.$id.equals(id));
   it("creates schemas idempotently and returns Unicode, dates, booleans, bigints and JSON losslessly", async () => {
     await db.syncTable(parent);
     await db.syncTable(child);
     const result = await db.insert(child, { id: "typed", value: source(), ...values }).selectMutated();
     expect(result.first).toEqual({ id: "typed", value: "東京 🦄", ...values });
-    expect((await db.select(child, ["*"]).where(child.$id.equals("typed"))).first).toEqual(result.first);
+    expect((await db.select(child).where(child.$id.equals("typed"))).first).toEqual(result.first);
+  });
+  it("loads ordered nested collections with lossless decoding in a single SELECT", async () => {
+    await db.insert(child, { id: "included", value: "東京 🦄", ...values });
+    const { first } = await db
+      .select(parent, { id: parent.$id })
+      .where(parent.$id.equals("a'\\"))
+      .include({
+        children: db.select(child).where(child.$value.equals(parent.$value)).orderBy(child.$id, "ASC").limit(1),
+      })
+      .one();
+    expect(first?.children).toHaveLength(1);
+    expect(first?.children[0]).toMatchObject(values);
+    const empty = await db
+      .select(parent, { id: parent.$id })
+      .where(parent.$id.equals("null"))
+      .include({ children: db.select(child, { id: child.$id }).where(child.$value.equals(parent.$value)) });
+    expect(empty.first?.children).toEqual([]);
   });
   it("handles ordered pagination and NULL scalar results", async () => {
-    const value = db.select(parent, ["value"]).orderBy(parent.$rank, "ASC").offset(1).limit(1);
+    const value = db.select(parent, { value: parent.$value }).orderBy(parent.$rank, "ASC").offset(1).limit(1);
     expect((await db.insert(child, { id: "offset", value, ...values }).selectMutated()).first?.value).toBe("second");
     for (const id of ["missing", "null"])
       expect((await db.insert(child, { id, value: source(id), ...values }).selectMutated()).first?.value).toBeNull();
-    expect((await db.select(parent, ["id"]).offset(1).limit(0)).results).toEqual([]);
+    expect((await db.select(parent, { id: parent.$id }).offset(1).limit(0)).results).toEqual([]);
   });
   it("rejects multi-row scalar results and atomically rolls back a bulk insert", async () => {
     await expect(
       Promise.resolve(
         db.insertMany(child, [
           { id: "atomic-first", value: source(), ...values },
-          { id: "atomic-bad", value: db.select(parent, ["value"]), ...values },
+          { id: "atomic-bad", value: db.select(parent, { value: parent.$value }), ...values },
         ]),
       ),
     ).rejects.toThrow();
-    expect((await db.select(child, ["id"]).where(child.$id.in(["atomic-first", "atomic-bad"]))).results).toEqual([]);
+    expect(
+      (await db.select(child, { id: child.$id }).where(child.$id.in(["atomic-first", "atomic-bad"]))).results,
+    ).toEqual([]);
   });
   it("supports updates, upserts, counts, JSON membership and deletes", async () => {
     await db.insert(child, { id: "crud", value: "before", ...values });
@@ -92,11 +111,15 @@ describe.skipIf(!process.env.MSSQL_TEST_URL)("SQL Server integration", () => {
         ?.active,
     ).toBe(false);
     await db.upsert(child, { id: "crud", value: "upsert", ...values }, child.$id);
-    expect((await db.select(child, ["value"]).where(child.$id.equals("crud"))).first?.value).toBe("upsert");
-    expect((await db.select(child, ["id"]).where(child.$json.contains("東京"))).results.length).toBeGreaterThan(0);
+    expect((await db.select(child, { value: child.$value }).where(child.$id.equals("crud"))).first?.value).toBe(
+      "upsert",
+    );
+    expect(
+      (await db.select(child, { id: child.$id }).where(child.$json.contains("東京"))).results.length,
+    ).toBeGreaterThan(0);
     expect((await db.count(child)).first?._count).toBeGreaterThan(0);
     await db.delete(child).where(child.$id.equals("crud"));
-    expect((await db.select(child, ["id"]).where(child.$id.equals("crud"))).results).toEqual([]);
+    expect((await db.select(child, { id: child.$id }).where(child.$id.equals("crud"))).results).toEqual([]);
   });
   it("isolates pooled transactions, sees their own writes, and rolls back", async () => {
     const projection = source("tx-parent");
@@ -110,7 +133,7 @@ describe.skipIf(!process.env.MSSQL_TEST_URL)("SQL Server integration", () => {
       }),
     ).rejects.toThrow("abort transaction");
     expect((await projection).results).toEqual([]);
-    expect((await db.select(child, ["id"]).where(child.$id.equals("tx-child"))).results).toEqual([]);
+    expect((await db.select(child, { id: child.$id }).where(child.$id.equals("tx-child"))).results).toEqual([]);
   });
   it("enforces unique filtered indexes and foreign key cascades", async () => {
     const relation = createTable({
@@ -130,7 +153,7 @@ describe.skipIf(!process.env.MSSQL_TEST_URL)("SQL Server integration", () => {
       Promise.resolve(db.insert(relation, { id: "duplicate", parentId: "fk-parent", label: "unique" })),
     ).rejects.toThrow();
     await db.delete(parent).where(parent.$id.equals("fk-parent"));
-    expect((await db.select(relation, ["*"])).results).toEqual([]);
+    expect((await db.select(relation)).results).toEqual([]);
   });
   it("backfills required fields and rolls back an invalid schema migration", async () => {
     const initial = createTable({ id: "migration", schema: z.object({ id: z.string() }) });
@@ -146,6 +169,6 @@ describe.skipIf(!process.env.MSSQL_TEST_URL)("SQL Server integration", () => {
     });
     await db.syncTable(valid);
     await db.syncTable(valid);
-    expect((await db.select(valid, ["*"])).first).toEqual({ id: "existing", required: "東京" });
+    expect((await db.select(valid)).first).toEqual({ id: "existing", required: "東京" });
   });
 });

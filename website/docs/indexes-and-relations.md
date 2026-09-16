@@ -46,7 +46,7 @@ await db.syncTable(Users);
 await db.syncTable(Posts);
 ```
 
-Synchronize the referenced table first. Foreign-key metadata declares a database constraint; it does not create a relation loader or an automatic join API. Query related rows explicitly with field conditions.
+Synchronize the referenced table first. Foreign-key metadata declares a database constraint; it does not automatically load related rows. Use explicit [joins and includes](/joins) with field-to-field conditions.
 
 ## Choose a delete action
 

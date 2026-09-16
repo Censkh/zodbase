@@ -54,7 +54,7 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
       for (const [index, value] of [...values, null].entries()) {
         const id = String(index);
         expect((await context.db.insert(table, { id, value } as any).selectMutated()).first).toEqual({ id, value });
-        expect((await context.db.select(table, ["*"]).where(table.$id.equals(id))).first).toEqual({ id, value });
+        expect((await context.db.select(table).where(table.$id.equals(id))).first).toEqual({ id, value });
         expect((await context.db.update(table, { value } as any, table.$id.equals(id)).selectMutated()).first).toEqual({
           id,
           value,
@@ -75,7 +75,9 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
       [10n, 2n, -10n, -2n, 9007199254740993n].map((value) => ({ value })),
     );
     expect(
-      (await context.db.select(table, ["value"]).orderBy(table.$value, "ASC")).results.map((row) => row.value),
+      (await context.db.select(table, { value: table.$value }).orderBy(table.$value, "ASC")).results.map(
+        (row) => row.value,
+      ),
     ).toEqual([-10n, -2n, 2n, 10n, 9007199254740993n]);
   });
 
@@ -86,7 +88,7 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
       expect(() => context.db.insert(table, { value, date: new Date() })).toThrow();
     }
     expect(() => context.db.insert(table, { value: 1, date: new Date(NaN) })).toThrow();
-    expect((await context.db.select(table, ["*"])).results).toEqual([]);
+    expect((await context.db.select(table)).results).toEqual([]);
   });
 
   it("does not lose revisions under competing writes or duplicate inserts", async () => {
@@ -108,7 +110,7 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
       ["uploading", "success", "generating"].map((status) =>
         context.db.transaction(async (db) => {
           await db.update(table, { status }, table.$id.equals("one"));
-          return (await db.select(table, ["*"])).first!.updatedAt;
+          return (await db.select(table)).first!.updatedAt;
         }),
       ),
     );
@@ -119,7 +121,7 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
         throw new Error("abort");
       }),
     ).rejects.toThrow("abort");
-    expect((await context.db.select(table, ["*"])).first).toEqual({
+    expect((await context.db.select(table)).first).toEqual({
       id: "one",
       updatedAt: future + 3,
       status: "generating",
@@ -148,7 +150,7 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
         const revisions = await Promise.all(
           [context.db, peer.db].map((connection) =>
             connection.transaction(async (db) => {
-              await db.select(table, ["*"]);
+              await db.select(table);
               if (++reads === 2) release();
               await bothRead;
               return (await db.update(table, { updatedAt: 0 }, table.$id.equals("one")).selectMutated()).first
@@ -157,7 +159,7 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
           ),
         );
         expect(revisions.sort((a, b) => a - b)).toEqual([future + 1, future + 2]);
-        expect((await peer.db.select(table, ["*"])).first!.updatedAt).toBe(future + 2);
+        expect((await peer.db.select(table)).first!.updatedAt).toBe(future + 2);
         if (engine === "cockroach") expect(reads).toBeGreaterThan(2);
       } finally {
         await peer.close();
@@ -175,10 +177,10 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
       });
       await context.db.syncTable(table);
       await context.db.syncTable(table);
-      expect((await context.db.select(table, ["*"])).first?.value).toEqual(new Date("2026-09-10T06:20:26Z"));
+      expect((await context.db.select(table)).first?.value).toEqual(new Date("2026-09-10T06:20:26Z"));
       const value = new Date("2026-09-10T06:20:26.101Z");
       await context.db.update(table, { value }, table.$id.equals("old"));
-      expect((await context.db.select(table, ["*"])).first?.value).toEqual(value);
+      expect((await context.db.select(table)).first?.value).toEqual(value);
     });
   }
 
@@ -199,14 +201,14 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
     });
     migrated.addIndex("edge_status", [migrated.$status]);
     await context.db.syncTable(migrated);
-    expect((await context.db.select(migrated, ["*"])).first).toEqual({
+    expect((await context.db.select(migrated)).first).toEqual({
       id: "one",
       name: "existing",
       status: "pending",
     });
     await context.db.update(migrated, { status: "success" }, migrated.$id.equals("one"));
     await context.db.syncTable(migrated);
-    expect((await context.db.select(migrated, ["*"])).first?.status).toBe("success");
+    expect((await context.db.select(migrated)).first?.status).toBe("success");
   });
 
   it("pages tied timestamps using an explicit ID tie-breaker despite inserts between pages", async () => {
@@ -223,16 +225,12 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
       table,
       ["b", "c", "d", "e"].map((id) => ({ id, createdAt: 1789021226101, optional: id === "c" ? null : 1 })),
     );
-    const first = await context.db
-      .select(table, ["*"])
-      .orderBy(table.$createdAt, "ASC")
-      .orderBy(table.$id, "ASC")
-      .limit(2);
+    const first = await context.db.select(table).orderBy(table.$createdAt, "ASC").orderBy(table.$id, "ASC").limit(2);
     expect(first.results.map((row) => row.id)).toEqual(["b", "c"]);
     await context.db.insert(table, { id: "a", createdAt: 1789021226101, optional: null });
     const cursor = first.results[1]!;
     const next = await context.db
-      .select(table, ["id"])
+      .select(table, { id: table.$id })
       .where(
         table.$createdAt
           .greaterThan(cursor.createdAt)
@@ -243,13 +241,17 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
       .limit(2);
     expect(next.results.map((row) => row.id)).toEqual(["d", "e"]);
     expect(
-      (await context.db.select(table, ["id"]).where(table.$optional.equals(null)).orderBy(table.$id, "ASC")).results,
+      (await context.db.select(table, { id: table.$id }).where(table.$optional.equals(null)).orderBy(table.$id, "ASC"))
+        .results,
     ).toEqual([{ id: "a" }, { id: "c" }]);
-    expect((await context.db.select(table, ["id"]).orderBy(table.$id, "ASC").offset(3)).results).toEqual([
+    expect((await context.db.select(table, { id: table.$id }).orderBy(table.$id, "ASC").offset(3)).results).toEqual([
       { id: "d" },
       { id: "e" },
     ]);
-    const ordered = await context.db.select(table, ["id"]).orderBy(table.$optional, "ASC").orderBy(table.$id, "ASC");
+    const ordered = await context.db
+      .select(table, { id: table.$id })
+      .orderBy(table.$optional, "ASC")
+      .orderBy(table.$id, "ASC");
     const nullsLast = engine === "postgres";
     expect(ordered.results.map((row) => row.id)).toEqual(
       nullsLast ? ["b", "d", "e", "a", "c"] : ["a", "c", "b", "d", "e"],

@@ -20,7 +20,7 @@ await db.insert(Users, {
 Select all fields with `"*"`, then read the result's `results` array:
 
 ```ts
-const { results, first } = await db.select(Users, ["*"]);
+const { results, first } = await db.select(Users);
 ```
 
 `first` is the first returned record, or `undefined` when there is no match.
@@ -28,7 +28,7 @@ const { results, first } = await db.select(Users, ["*"]);
 ## Filter with field bindings
 
 ```ts
-const query = db.select(Users, ["*"])
+const query = db.select(Users)
   .where(Users.$id.equals("ada"));
 
 const { first: user } = await query;
@@ -39,7 +39,7 @@ Queries execute when awaited. Keep values in typed conditions rather than constr
 ## Select specific fields
 
 ```ts
-const { results } = await db.select(Users, ["id", "name"]);
+const { results } = await db.select(Users, { id: Users.$id, name: Users.$name });
 ```
 
 The selected fields determine the result shape. See the [source exports](https://github.com/Censkh/zodbase/blob/master/src/index.ts) for the current query API.
@@ -51,13 +51,13 @@ const condition = Users.$active.equals(true)
   .and(Users.$name.like("A%"))
   .or(Users.$id.equals("grace"));
 
-const { results } = await db.select(Users, ["*"]).where(condition);
+const { results } = await db.select(Users).where(condition);
 ```
 
 A compound condition is grouped when rendered to SQL. `.and(...)` and `.or(...)` accept falsy clauses, which is useful for optional filters. Repeated select `.where(...)` calls add AND conditions:
 
 ```ts
-const query = db.select(Users, ["id", "name"])
+const query = db.select(Users, { id: Users.$id, name: Users.$name })
   .where(Users.$active.equals(true));
 
 if (searchTerm) query.where(Users.$name.like(`${searchTerm}%`));
@@ -81,7 +81,7 @@ An empty `in([])` condition matches no rows. An empty `notIn([])` matches all ro
 ## Order and paginate
 
 ```ts
-const page = await db.select(Users, ["id", "name"])
+const page = await db.select(Users, { id: Users.$id, name: Users.$name })
   .orderBy(Users.$name, "ASC")
   .orderBy(Users.$id, "ASC")
   .limit(20)
@@ -93,7 +93,7 @@ Directions are uppercase `"ASC"` or `"DESC"`. Ordering calls append terms. Inclu
 For a simple keyset cursor ordered by a unique ID:
 
 ```ts
-const page = await db.select(Users, ["id", "name"])
+const page = await db.select(Users, { id: Users.$id, name: Users.$name })
   .where(Users.$id.greaterThan(lastSeenId))
   .orderBy(Users.$id, "ASC")
   .limit(20);
@@ -104,7 +104,7 @@ For multiple sort keys, build the corresponding compound continuation condition.
 ## Fetch one record
 
 ```ts
-const { first } = await db.select(Users, ["*"])
+const { first } = await db.select(Users)
   .where(Users.$id.equals("ada"))
   .one();
 ```
@@ -126,7 +126,7 @@ Counting a field counts its non-null values. A select builder's `.count()` uses 
 ## Reuse a base query
 
 ```ts
-const active = db.select(Users, ["id", "name"])
+const active = db.select(Users, { id: Users.$id, name: Users.$name })
   .where(Users.$active.equals(true));
 
 const ascending = active.clone().orderBy(Users.$name, "ASC");
@@ -135,3 +135,9 @@ const [a, b] = await Promise.all([ascending, descending]);
 ```
 
 Build and clone queries before executing them. The builder stores query state, and its lazy execution is memoized. Do not mutate an already-awaited builder expecting a fresh database read.
+
+## Joined and nested reads
+
+See [Joins and includes](/joins/) for typed joins, nested projections, self joins,
+and single-statement related collections. [Join test coverage](/join-testing/)
+describes the cross-database contracts and upstream test-suite inspiration.

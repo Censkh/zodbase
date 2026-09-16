@@ -24,6 +24,7 @@ import {
   type StringKeys,
   type ValueOfTable,
 } from "../../QueryBuilder";
+import { isRelationalQuery } from "../../RelationalQuery";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
 
 /** Compatible with a connected node-mssql ConnectionPool or Transaction. */
@@ -111,7 +112,10 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
     }
   }
 
+  protected override selectDialect = "mssql" as const;
+
   override buildSelectSql(query: SelectQuery, scalar = false): Statement {
+    if (isRelationalQuery(query)) return this.buildRelationalSelectSql(query, scalar);
     for (const value of [query.limit, query.offset]) {
       if (value !== undefined && (!Number.isSafeInteger(value) || value < 0))
         throw new Error("Invalid limit or offset");
@@ -135,6 +139,7 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
   async executeSelect<TTable extends Table, TLimit extends number>(
     query: SelectQuery<Table, TLimit>,
   ): Promise<SqlResult<ValueOfTable<TTable>, TLimit>> {
+    if (isRelationalQuery(query)) return this.executeRelationalSelect(query) as any;
     return this.decodeResult(query.table, await this.execute(this.buildSelectSql(query))) as SqlResult<
       ValueOfTable<TTable>,
       TLimit

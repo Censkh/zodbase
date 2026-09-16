@@ -59,7 +59,7 @@ describe.each(TEST_DATABASE_FACTORIES)("partial update defaults: $name", ({ crea
 
   it("does not replace omitted defaults in ordinary updates", async () => {
     await database.update(table, { credits: 10 }, table.$id.equals("first"));
-    expect((await database.select(table, ["*"]).where(table.$id.equals("first"))).first).toMatchObject({
+    expect((await database.select(table).where(table.$id.equals("first"))).first).toMatchObject({
       id: "first",
       credits: 10,
       note: "kept",
@@ -78,7 +78,7 @@ describe.each(TEST_DATABASE_FACTORIES)("partial update defaults: $name", ({ crea
         table.$id,
       )
       .selectMutated();
-    expect((await database.select(table, ["*"]).orderBy(table.$id, "ASC")).results).toMatchObject([
+    expect((await database.select(table).orderBy(table.$id, "ASC")).results).toMatchObject([
       { id: "first", name: "Updated", credits: 25, note: "kept" },
       { id: "second", name: "Second", credits: 40, note: "also kept" },
     ]);
@@ -86,7 +86,7 @@ describe.each(TEST_DATABASE_FACTORIES)("partial update defaults: $name", ({ crea
 
   it("applies defaults only when explicitly requested and retains explicit nulls", async () => {
     await database.update(table, { credits: undefined, note: null }, table.$id.equals("first"));
-    expect((await database.select(table, ["*"]).where(table.$id.equals("first"))).first).toMatchObject({
+    expect((await database.select(table).where(table.$id.equals("first"))).first).toMatchObject({
       id: "first",
       credits: 100,
       note: null,
@@ -96,6 +96,6 @@ describe.each(TEST_DATABASE_FACTORIES)("partial update defaults: $name", ({ crea
 
   it("rejects invalid supplied fields before writing", async () => {
     expect(() => database.update(table, { credits: "bad" } as any, table.$id.equals("first"))).toThrow();
-    expect((await database.select(table, ["*"]).where(table.$id.equals("first"))).first?.credits).toBe(25);
+    expect((await database.select(table).where(table.$id.equals("first"))).first?.credits).toBe(25);
   });
 });

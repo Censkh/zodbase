@@ -86,7 +86,7 @@ const result = await db.insert(ProjectLayers, {
   id: layerId,
   projectId,
   userId,
-  homeRegion: db.select(Projects, ["homeRegion"])
+  homeRegion: db.select(Projects, { homeRegion: Projects.$homeRegion })
     .where(Projects.$id.equals(projectId).and(Projects.$userId.equals(userId))),
 }).selectMutated();
 ```

@@ -22,7 +22,7 @@ describe("lazy adaptor initialization", () => {
       }),
     });
 
-    const query = database.select(AssetsTable, ["id"]).where(AssetsTable.$tags.contains("cached"));
+    const query = database.select(AssetsTable, { id: AssetsTable.$id }).where(AssetsTable.$tags.contains("cached"));
     expect(initializationCount).toBe(0);
 
     await database.syncTable(AssetsTable);

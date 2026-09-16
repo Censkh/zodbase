@@ -28,7 +28,7 @@ const capture = () => {
 
 test("shares equivalent point queries without shadowing real table names", async () => {
   const { db, statements } = capture();
-  const point = () => db.select(parent, ["region"]).where(parent.$id.equals("owner"));
+  const point = () => db.select(parent, { region: parent.$region }).where(parent.$id.equals("owner"));
   await db.insertMany(child, [
     { id: "one", region: point() },
     { id: "two", region: point() },
@@ -42,12 +42,12 @@ test("keeps different keys, arbitrary expressions, ordered searches and self-rea
   const { db, statements } = capture();
   const cases = [
     [
-      db.select(parent, ["region"]).where(parent.$id.equals("a")),
-      db.select(parent, ["region"]).where(parent.$id.equals("b")),
+      db.select(parent, { region: parent.$region }).where(parent.$id.equals("a")),
+      db.select(parent, { region: parent.$region }).where(parent.$id.equals("b")),
     ],
-    Array(2).fill(db.select(parent, ["region"]).where(parent.$id.equals(raw("random()::text") as any))),
-    Array(2).fill(db.select(parent, ["region"]).orderBy(parent.$id, "ASC").one()),
-    Array(2).fill(db.select(child, ["region"]).where(child.$id.equals("a"))),
+    Array(2).fill(db.select(parent, { region: parent.$region }).where(parent.$id.equals(raw("random()::text") as any))),
+    Array(2).fill(db.select(parent, { region: parent.$region }).orderBy(parent.$id, "ASC").one()),
+    Array(2).fill(db.select(child, { region: child.$region }).where(child.$id.equals("a"))),
   ];
   for (const regions of cases) {
     await db.insertMany(

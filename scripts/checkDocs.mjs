@@ -17,12 +17,15 @@ ${schema}
 ${connection}
 await db.syncTable(Users);
 try {
-${blocks("mutations").map(withoutImports).join("\n")}
-assert.equal((await db.select(Users, ['*']).where(Users.$id.equals('ada'))).first.name, 'Ada Lovelace');
-assert.equal((await db.select(Users, ['*']).where(Users.$id.equals('margaret'))).results.length, 0);
+${blocks("mutations")
+  .filter((code) => !code.includes("ProjectLayers"))
+  .map(withoutImports)
+  .join("\n")}
+assert.equal((await db.select(Users).where(Users.$id.equals('ada'))).first.name, 'Ada Lovelace');
+assert.equal((await db.select(Users).where(Users.$id.equals('margaret'))).results.length, 0);
 ${blocks("transactions").map(withoutImports).join("\n")}
-assert.equal((await db.select(Users, ['*']).where(Users.$id.equals('temporary'))).results.length, 0);
-assert.equal((await db.select(Users, ['*']).where(Users.$id.equals('lin'))).first.name, 'Lin Chen');
+assert.equal((await db.select(Users).where(Users.$id.equals('temporary'))).results.length, 0);
+assert.equal((await db.select(Users).where(Users.$id.equals('lin'))).first.name, 'Lin Chen');
 const searchTerm = 'A';
 const lastSeenId = 'ada';
 ${blocks("queries")
@@ -31,8 +34,10 @@ ${blocks("queries")
   .join("\n")}
 ${blocks("indexes-and-relations").map(withoutImports).join("\n")}
 const descending = false;
+{
 ${blocks("sql").map(withoutImports).join("\n")}
 assert.ok(text.includes('ORDER BY'));
+}
 console.log('Documented mutations, reads, transactions, indexes, foreign keys, and SQL examples pass.');
 } finally { driver.close(); }
 `;

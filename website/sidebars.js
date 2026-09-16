@@ -11,7 +11,7 @@ module.exports = {
       type: "category",
       label: "Read and write",
       collapsed: false,
-      items: ["queries", "mutations", "results-and-validation", "transactions"],
+      items: ["queries", "joins", "mutations", "results-and-validation", "transactions"],
     },
     {
       type: "category",

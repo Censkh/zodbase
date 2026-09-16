@@ -17,12 +17,12 @@ This reference summarizes the current API. Zodbase is under active development; 
 
 | API | Behavior |
 | --- | --- |
-| `db.select(table, ["*"])` | A lazy select builder. |
+| `db.select(table)` | A lazy select builder returning all columns. |
+| `db.select(table, projection)` | A lazy select builder returning named projected fields. |
 | `.where(condition)` | Adds an AND condition to a select query. |
 | `.orderBy(field, "ASC" \| "DESC")` | Appends an ordering term. |
 | `.limit(n)`, `.offset(n)` | Sets pagination bounds. |
 | `.one()` | Sets a limit of one; read the result's `first` field. |
-| `.fields(...keys)` | Changes the selected fields. |
 | `.clone()` | Copies a select builder for independent changes. |
 | `db.count(table).where(condition)` | Counts matching rows; `first._count` holds the count. |
 

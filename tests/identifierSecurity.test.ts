@@ -45,10 +45,10 @@ describe.each(TEST_DATABASE_FACTORIES)("identifier security: $name", ({ create }
     await context.db.syncTable(OddTable);
     await context.db.insert(OddTable, { id: "1", [oddColumnName]: "quoted value" });
 
-    expect((await context.db.select(OddTable, ["*"]).where(oddColumn.equals("quoted value"))).first).toEqual({
+    expect((await context.db.select(OddTable).where(oddColumn.equals("quoted value"))).first).toEqual({
       id: "1",
       [oddColumnName]: "quoted value",
     });
-    expect((await context.db.select(SafeTable, ["*"])).first).toEqual({ id: "still-here" });
+    expect((await context.db.select(SafeTable)).first).toEqual({ id: "still-here" });
   });
 });

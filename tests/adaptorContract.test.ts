@@ -113,7 +113,7 @@ describe("adaptor execution contract", () => {
     ).rejects.toThrow("rollback");
     expect(batches).toHaveLength(1);
 
-    await expect(db.transaction(async (transaction) => transaction.select(Table, ["*"]))).rejects.toThrow(
+    await expect(db.transaction(async (transaction) => transaction.select(Table))).rejects.toThrow(
       "D1 transactions support write operations only",
     );
   });
@@ -138,7 +138,7 @@ describe("adaptor execution contract", () => {
       await transaction.insert(Table, { id: "parent", name: "London" });
       await transaction.insert(Table, {
         id: "child",
-        name: transaction.select(Table, ["name"]).where(Table.$id.equals("parent")),
+        name: transaction.select(Table, { name: Table.$name }).where(Table.$id.equals("parent")),
       });
     });
     expect(batches).toHaveLength(1);
@@ -147,7 +147,7 @@ describe("adaptor execution contract", () => {
     await expect(
       db.transaction(async (transaction) => {
         await transaction
-          .insert(Table, { id: "rejected", name: transaction.select(Table, ["name"]).one() })
+          .insert(Table, { id: "rejected", name: transaction.select(Table, { name: Table.$name }).one() })
           .selectMutated();
       }),
     ).rejects.toThrow("write operations only");

@@ -53,7 +53,9 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
   it("inserts and selects projected fields", async () => {
     await db.insertMany(PeopleTable, people);
 
-    const result = await db.select(PeopleTable, ["id", "name"]).orderBy(PeopleTable.$id, "ASC");
+    const result = await db
+      .select(PeopleTable, { id: PeopleTable.$id, name: PeopleTable.$name })
+      .orderBy(PeopleTable.$id, "ASC");
 
     expect(result.results).toEqual(people.map(({ id, name }) => ({ id, name })));
     expect(result.first).toEqual({ id: "1", name: "Ada" });
@@ -69,7 +71,7 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
     });
     await db.syncTable(parent);
     await db.syncTable(parent);
-    expect((await db.select(parent, ["*"])).results).toEqual([{ id: "parent-1", name: "Original" }]);
+    expect((await db.select(parent)).results).toEqual([{ id: "parent-1", name: "Original" }]);
     await expect(Promise.resolve(db.insert(parent, { id: "parent-1", name: "Duplicate" }))).rejects.toThrow();
     const child = createTable({
       id: "legacy_child",
@@ -89,35 +91,44 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
       schema: zod.object({ id: zod.string().meta(metaStore([primaryKey()])) }),
     });
     await expect(db.syncTable(parent)).rejects.toThrow();
-    expect((await db.select(legacy, ["*"])).results).toEqual([{ id: "duplicate" }, { id: "duplicate" }]);
+    expect((await db.select(legacy)).results).toEqual([{ id: "duplicate" }, { id: "duplicate" }]);
   });
 
   it("supports every comparison and compound condition", async () => {
     await db.insertMany(PeopleTable, people);
 
-    expect((await db.select(PeopleTable, ["id"]).where(PeopleTable.$name.like("M%"))).results).toEqual([{ id: "4" }]);
-    expect((await db.select(PeopleTable, ["id"]).where(PeopleTable.$age.greaterThan(36))).results).toHaveLength(2);
-    expect((await db.select(PeopleTable, ["id"]).where(PeopleTable.$age.greaterThanOrEquals(36))).results).toHaveLength(
-      3,
+    expect((await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$name.like("M%"))).results).toEqual(
+      [{ id: "4" }],
     );
-    expect((await db.select(PeopleTable, ["id"]).where(PeopleTable.$age.lessThan(36))).results).toEqual([{ id: "3" }]);
-    expect((await db.select(PeopleTable, ["id"]).where(PeopleTable.$age.lessThanOrEquals(36))).results).toHaveLength(2);
-    expect((await db.select(PeopleTable, ["id"]).where(PeopleTable.$name.notEquals("Ada"))).results).toHaveLength(3);
-    expect((await db.select(PeopleTable, ["id"]).where(PeopleTable.$id.in(["1", "3"]))).results).toEqual([
-      { id: "1" },
-      { id: "3" },
-    ]);
+    expect(
+      (await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$age.greaterThan(36))).results,
+    ).toHaveLength(2);
+    expect(
+      (await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$age.greaterThanOrEquals(36))).results,
+    ).toHaveLength(3);
+    expect(
+      (await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$age.lessThan(36))).results,
+    ).toEqual([{ id: "3" }]);
+    expect(
+      (await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$age.lessThanOrEquals(36))).results,
+    ).toHaveLength(2);
+    expect(
+      (await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$name.notEquals("Ada"))).results,
+    ).toHaveLength(3);
+    expect(
+      (await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$id.in(["1", "3"]))).results,
+    ).toEqual([{ id: "1" }, { id: "3" }]);
     expect(
       (
         await db
-          .select(PeopleTable, ["id"])
+          .select(PeopleTable, { id: PeopleTable.$id })
           .where(PeopleTable.$age.equals(45).and(PeopleTable.$nickname.notEquals(null)))
       ).results,
     ).toEqual([{ id: "2" }, { id: "4" }]);
     expect(
       (
         await db
-          .select(PeopleTable, ["id"])
+          .select(PeopleTable, { id: PeopleTable.$id })
           .where(PeopleTable.$name.equals("Ada").or(PeopleTable.$name.equals("Linus")))
       ).results,
     ).toEqual([{ id: "1" }, { id: "3" }]);
@@ -126,8 +137,10 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
   it("handles null comparisons", async () => {
     await db.insertMany(PeopleTable, people);
 
-    const nullRows = await db.select(PeopleTable, ["id"]).where(PeopleTable.$nickname.equals(null));
-    const nonNullRows = await db.select(PeopleTable, ["id"]).where(PeopleTable.$nickname.notEquals(null));
+    const nullRows = await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$nickname.equals(null));
+    const nonNullRows = await db
+      .select(PeopleTable, { id: PeopleTable.$id })
+      .where(PeopleTable.$nickname.notEquals(null));
 
     expect(nullRows.results).toEqual([{ id: "1" }, { id: "3" }]);
     expect(nonNullRows.results).toEqual([{ id: "2" }, { id: "4" }]);
@@ -137,12 +150,12 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
     await db.insertMany(PeopleTable, people);
 
     const page = await db
-      .select(PeopleTable, ["id"])
+      .select(PeopleTable, { id: PeopleTable.$id })
       .orderBy(PeopleTable.$age, "DESC")
       .orderBy(PeopleTable.$id, "ASC")
       .limit(2)
       .offset(1);
-    const one = await db.select(PeopleTable, ["id"]).orderBy(PeopleTable.$id, "DESC").one();
+    const one = await db.select(PeopleTable, { id: PeopleTable.$id }).orderBy(PeopleTable.$id, "DESC").one();
 
     expect(page.results).toEqual([{ id: "4" }, { id: "1" }]);
     expect(page.limit).toBeUndefined();
@@ -152,35 +165,35 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
   it("treats limit zero and an empty IN list as empty results", async () => {
     await db.insertMany(PeopleTable, people);
 
-    expect((await db.select(PeopleTable, ["id"]).limit(0)).results).toEqual([]);
-    expect((await db.select(PeopleTable, ["id"]).where(PeopleTable.$id.in([]))).results).toEqual([]);
+    expect((await db.select(PeopleTable, { id: PeopleTable.$id }).limit(0)).results).toEqual([]);
+    expect((await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$id.in([]))).results).toEqual([]);
   });
 
   it("supports repeated where calls and ignores conditional falsy clauses", async () => {
     await db.insertMany(PeopleTable, people);
 
     const result = await db
-      .select(PeopleTable, ["id"])
+      .select(PeopleTable, { id: PeopleTable.$id })
       .where(PeopleTable.$age.greaterThanOrEquals(36))
       .where(PeopleTable.$name.notEquals("Grace").and(false, undefined, null, "", 0));
 
     expect(result.results).toEqual([{ id: "1" }, { id: "4" }]);
   });
 
-  it("changes projections with fields without mutating the source builder", async () => {
+  it("selects explicit projections independently", async () => {
     await db.insertMany(PeopleTable, people);
 
-    const base = db.select(PeopleTable, ["id"]);
-    const names = base.clone().fields("name");
+    const ids = db.select(PeopleTable, { id: PeopleTable.$id });
+    const names = db.select(PeopleTable, { name: PeopleTable.$name });
 
-    expect((await base.limit(1)).first).toEqual({ id: "1" });
+    expect((await ids.limit(1)).first).toEqual({ id: "1" });
     expect((await names.limit(1)).first).toEqual({ name: "Ada" });
   });
 
   it("keeps cloned builders independent", async () => {
     await db.insertMany(PeopleTable, people);
 
-    const base = db.select(PeopleTable, ["id"]);
+    const base = db.select(PeopleTable, { id: PeopleTable.$id });
     const descending = base.clone().orderBy(PeopleTable.$id, "DESC").limit(1);
     const ascending = base.clone().orderBy(PeopleTable.$id, "ASC").limit(1);
 
@@ -195,7 +208,9 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
     expect((await db.count(PeopleTable)).first).toEqual({ _count: 4 });
     expect((await db.count(PeopleTable, "nickname")).first).toEqual({ nickname: 2 });
     expect((await db.count(PeopleTable).where(PeopleTable.$age.equals(45))).first).toEqual({ _count: 2 });
-    expect((await db.select(PeopleTable, ["id"]).where(PeopleTable.$age.equals(45)).count()).first).toEqual({ id: 2 });
+    expect(
+      (await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$age.equals(45)).count()).first,
+    ).toEqual({ id: 2 });
   });
 
   it("supports insert, update, updateMany, upsert, and delete", async () => {
@@ -213,7 +228,9 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
     await db.upsert(PeopleTable, { id: "4", name: "Margaret Hamilton", age: 46, nickname: "Maggie" }, PeopleTable.$id);
     await db.delete(PeopleTable).where(PeopleTable.$id.equals("3"));
 
-    const result = await db.select(PeopleTable, ["id", "name", "age"]).orderBy(PeopleTable.$id, "ASC");
+    const result = await db
+      .select(PeopleTable, { id: PeopleTable.$id, name: PeopleTable.$name, age: PeopleTable.$age })
+      .orderBy(PeopleTable.$id, "ASC");
     expect(result.results).toEqual([
       { id: "1", name: "Ada", age: 37 },
       { id: "2", name: "Grace", age: 46 },
@@ -257,7 +274,7 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
       { id: "3", name: "Linus" },
     ]);
 
-    expect((await db.select(OptionalTable, ["*"]).orderBy(OptionalTable.$id, "ASC")).results).toEqual([
+    expect((await db.select(OptionalTable).orderBy(OptionalTable.$id, "ASC")).results).toEqual([
       { id: "1", name: "Ada", nickname: null },
       { id: "2", name: "Grace", nickname: "Amazing Grace" },
       { id: "3", name: "Linus", nickname: null },
@@ -267,10 +284,10 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
   it("commits and rolls back transactions", async () => {
     await db.transaction(async (transaction) => {
       await transaction.insert(PeopleTable, people[0]);
-      expect((await transaction.select(PeopleTable, ["id"])).results).toEqual([{ id: "1" }]);
+      expect((await transaction.select(PeopleTable, { id: PeopleTable.$id })).results).toEqual([{ id: "1" }]);
       await transaction.update(PeopleTable, { age: 37 }, PeopleTable.$id.equals("1"));
     });
-    expect((await db.select(PeopleTable, ["age"])).results).toEqual([{ age: 37 }]);
+    expect((await db.select(PeopleTable, { age: PeopleTable.$age })).results).toEqual([{ age: 37 }]);
 
     await expect(
       db.transaction(async (transaction) => {
@@ -278,7 +295,9 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
         throw new Error("rollback");
       }),
     ).rejects.toThrow("rollback");
-    expect((await db.select(PeopleTable, ["id"]).orderBy(PeopleTable.$id, "ASC")).results).toEqual([{ id: "1" }]);
+    expect((await db.select(PeopleTable, { id: PeopleTable.$id }).orderBy(PeopleTable.$id, "ASC")).results).toEqual([
+      { id: "1" },
+    ]);
 
     await expect(db.transaction(async (transaction) => transaction.transaction(async () => undefined))).rejects.toThrow(
       "Nested transactions are not supported",
@@ -300,7 +319,9 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
         throw rejection;
       }),
     ).rejects.toBe(rejection);
-    expect((await db.select(PeopleTable, ["id"]).orderBy(PeopleTable.$id, "ASC")).results).toEqual([{ id: "1" }]);
+    expect((await db.select(PeopleTable, { id: PeopleTable.$id }).orderBy(PeopleTable.$id, "ASC")).results).toEqual([
+      { id: "1" },
+    ]);
   });
 
   it("rolls back database errors and remains usable afterwards", async () => {
@@ -311,9 +332,9 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
       }),
     ).rejects.toBeDefined();
 
-    expect((await db.select(PeopleTable, ["id"])).results).toEqual([]);
+    expect((await db.select(PeopleTable, { id: PeopleTable.$id })).results).toEqual([]);
     await db.transaction(async (transaction) => transaction.insert(PeopleTable, people[1]));
-    expect((await db.select(PeopleTable, ["id"])).results).toEqual([{ id: "2" }]);
+    expect((await db.select(PeopleTable, { id: PeopleTable.$id })).results).toEqual([{ id: "2" }]);
   });
 
   it("supports concurrent independent top-level transactions", async () => {
@@ -321,7 +342,7 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
       people.map((person) => db.transaction(async (transaction) => transaction.insert(PeopleTable, person))),
     );
 
-    expect((await db.select(PeopleTable, ["id"]).orderBy(PeopleTable.$id, "ASC")).results).toEqual([
+    expect((await db.select(PeopleTable, { id: PeopleTable.$id }).orderBy(PeopleTable.$id, "ASC")).results).toEqual([
       { id: "1" },
       { id: "2" },
       { id: "3" },
@@ -358,8 +379,8 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
     await db.insert(GrandchildTable, { id: "grandchild", childId: "child" });
     await db.delete(ParentTable).where(ParentTable.$id.equals("parent"));
 
-    expect((await db.select(ChildTable, ["*"])).results).toEqual([]);
-    expect((await db.select(GrandchildTable, ["*"])).results).toEqual([]);
+    expect((await db.select(ChildTable)).results).toEqual([]);
+    expect((await db.select(GrandchildTable)).results).toEqual([]);
   });
 
   it("supports restrictive and set-null foreign-key actions", async () => {
@@ -392,12 +413,16 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
     await expect(
       Promise.resolve(db.delete(ParentTable).where(ParentTable.$id.equals("restricted"))),
     ).rejects.toBeDefined();
-    expect((await db.select(ParentTable, ["id"]).where(ParentTable.$id.equals("restricted"))).first).toEqual({
+    expect(
+      (await db.select(ParentTable, { id: ParentTable.$id }).where(ParentTable.$id.equals("restricted"))).first,
+    ).toEqual({
       id: "restricted",
     });
 
     await db.delete(ParentTable).where(ParentTable.$id.equals("nullable"));
-    expect((await db.select(NullableChildTable, ["parentId"])).first).toEqual({ parentId: null });
+    expect((await db.select(NullableChildTable, { parentId: NullableChildTable.$parentId })).first).toEqual({
+      parentId: null,
+    });
   });
 
   it("rolls back cascaded deletes with the surrounding transaction", async () => {
@@ -420,13 +445,13 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
     await expect(
       db.transaction(async (transaction) => {
         await transaction.delete(ParentTable).where(ParentTable.$id.equals("parent"));
-        expect((await transaction.select(ChildTable, ["id"])).results).toEqual([]);
+        expect((await transaction.select(ChildTable, { id: ChildTable.$id })).results).toEqual([]);
         throw new Error("rollback cascade");
       }),
     ).rejects.toThrow("rollback cascade");
 
-    expect((await db.select(ParentTable, ["id"])).results).toEqual([{ id: "parent" }]);
-    expect((await db.select(ChildTable, ["id"])).results).toEqual([{ id: "child" }]);
+    expect((await db.select(ParentTable, { id: ParentTable.$id })).results).toEqual([{ id: "parent" }]);
+    expect((await db.select(ChildTable, { id: ChildTable.$id })).results).toEqual([{ id: "child" }]);
   });
 
   it("migrates, changes, and removes foreign keys without losing rows", async () => {
@@ -455,7 +480,7 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
     });
     await db.syncTable(CascadingChildTable);
     await db.syncTable(CascadingChildTable);
-    expect((await db.select(CascadingChildTable, ["*"])).results).toEqual([{ id: "child", parentId: "parent" }]);
+    expect((await db.select(CascadingChildTable)).results).toEqual([{ id: "child", parentId: "parent" }]);
 
     const SetNullChildTable = createTable({
       id: InitialChildTable.id,
@@ -466,14 +491,15 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
     });
     await db.syncTable(SetNullChildTable);
     await db.delete(ParentTable).where(ParentTable.$id.equals("parent"));
-    expect((await db.select(SetNullChildTable, ["parentId"])).first).toEqual({ parentId: null });
+    expect((await db.select(SetNullChildTable, { parentId: SetNullChildTable.$parentId })).first).toEqual({
+      parentId: null,
+    });
 
     await db.syncTable(InitialChildTable);
     await db.insert(InitialChildTable, { id: "orphan", parentId: "missing" });
-    expect((await db.select(InitialChildTable, ["id"]).orderBy(InitialChildTable.$id, "ASC")).results).toEqual([
-      { id: "child" },
-      { id: "orphan" },
-    ]);
+    expect(
+      (await db.select(InitialChildTable, { id: InitialChildTable.$id }).orderBy(InitialChildTable.$id, "ASC")).results,
+    ).toEqual([{ id: "child" }, { id: "orphan" }]);
   });
 
   it("rejects unsafe or invalid mutations", async () => {
@@ -502,7 +528,7 @@ it("executes a lazy query only once across then, catch, and finally", async () =
   const adaptor = new CountingAdaptor();
   const db = new Database({ adaptor: adaptor as DatabaseAdaptor });
   const PeopleTable = createPeopleTable();
-  const query = db.select(PeopleTable, ["id"]);
+  const query = db.select(PeopleTable, { id: PeopleTable.$id });
 
   await Promise.all([query.then(), query.finally(() => undefined), query.catch(() => undefined)]);
 

@@ -28,7 +28,7 @@ it("select only field", async () => {
   ];
   await db.insertMany(BoardTable, items);
 
-  const { results } = await db.select(BoardTable, ["id"]);
+  const { results } = await db.select(BoardTable, { id: BoardTable.$id });
 
   expect(Array.from(results)).toEqual(items.map(({ id }) => ({ id })));
 });

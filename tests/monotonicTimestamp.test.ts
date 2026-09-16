@@ -23,7 +23,7 @@ test("concurrent writes advance versions even when the stored clock is ahead", a
       ["a", "b", "c"].map((name) => db.update(table, { name, updatedAt: 1 }, table.$id.equals("one")).selectMutated()),
     );
     expect(results.map((result) => result.first.updatedAt)).toEqual([future + 1, future + 2, future + 3]);
-    expect((await db.select(table, ["*"])).first?.name).toBe("c");
+    expect((await db.select(table)).first?.name).toBe("c");
   } finally {
     driver.close();
   }

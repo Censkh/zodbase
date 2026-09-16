@@ -66,7 +66,7 @@ export default function DocItemLayoutWrapper(props) {
               </div>
             </dl>
             <a className="schema-query" href="/queries/">
-              <code>db.select(Users, ["*"])</code>
+              <code>db.select(Users)</code>
             </a>
           </section>
         </section>

@@ -94,7 +94,7 @@ describe.each(mysqlFactories)("$name schema synchronization contract", ({ create
     await context.db.syncTable(UpdatedTable);
     await context.db.syncTable(UpdatedTable);
 
-    expect((await context.db.select(UpdatedTable, ["*"])).first).toEqual({
+    expect((await context.db.select(UpdatedTable)).first).toEqual({
       id: "1",
       email: "unknown@example.com",
       nickname: null,

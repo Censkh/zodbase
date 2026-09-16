@@ -39,3 +39,12 @@ Test schema changes against the MySQL or MariaDB version you deploy. The shared 
 ## Diagnostics and cleanup
 
 Attach `events.onExecuteStatement` to the adaptor for execution diagnostics. Call `await driver.end()` during shutdown after pending work finishes. See [configuration](/configuration/) for lazy initialization and events.
+
+## MariaDB nested collections
+
+For MariaDB 10.5 or newer, use `MariaDbAdaptor` from `zodbase/adaptors/mariadb`
+with the same `mysql2/promise` driver configuration. It inherits the MySQL schema,
+mutation and transaction support but emits MariaDB's ordered `JSON_ARRAYAGG`
+syntax for `include()` queries. MySQL requires 8.0.14 or newer for correlated
+nested collections. The older `MysqlAdaptor` remains usable for MariaDB operations
+that do not use `include()`.

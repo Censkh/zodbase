@@ -49,7 +49,7 @@ const db = new Database({ adaptor: new BunSqliteAdaptor({ driver }) });
 await db.syncTable(Users);
 await db.insert(Users, { id: "ada", name: "Ada", active: true });
 
-const { results } = await db.select(Users, ["*"])
+const { results } = await db.select(Users)
   .where(Users.$active.equals(true));
 
 console.log(results);

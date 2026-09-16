@@ -45,8 +45,8 @@ describe("CockroachDB schema synchronization contract", () => {
 
     await context.db.insert(PrimaryTable, { id: "1", name: "Ada" });
     await context.db.insert(RowIdTable, { name: "Grace" });
-    expect((await context.db.select(PrimaryTable, ["*"])).first).toEqual({ id: "1", name: "Ada" });
-    expect((await context.db.select(RowIdTable, ["*"])).first).toEqual({ name: "Grace" });
+    expect((await context.db.select(PrimaryTable)).first).toEqual({ id: "1", name: "Ada" });
+    expect((await context.db.select(RowIdTable)).first).toEqual({ name: "Grace" });
 
     expect(
       (
@@ -81,7 +81,7 @@ describe("CockroachDB schema synchronization contract", () => {
     await context.db.syncTable(UpdatedTable);
     await context.db.syncTable(UpdatedTable);
 
-    expect((await context.db.select(UpdatedTable, ["*"])).first).toEqual({
+    expect((await context.db.select(UpdatedTable)).first).toEqual({
       id: "1",
       email: "unknown@example.com",
       role: "user",
@@ -123,6 +123,6 @@ describe("CockroachDB schema synchronization contract", () => {
     await context.db.syncTable(ChildTable);
     await context.db.delete(ParentTable).where(ParentTable.$id.equals("parent"));
 
-    expect((await context.db.select(ChildTable, ["*"])).results).toEqual([]);
+    expect((await context.db.select(ChildTable)).results).toEqual([]);
   }, 30_000);
 });

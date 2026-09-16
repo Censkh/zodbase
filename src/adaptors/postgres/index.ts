@@ -32,6 +32,7 @@ import {
   type StringKeys,
   type ValueOfTable,
 } from "../../QueryBuilder";
+import { isRelationalQuery } from "../../RelationalQuery";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
 
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
@@ -127,7 +128,10 @@ export default class PostgresAdaptor<
 
   protected override materializeRepeatedSubqueries = true;
 
+  protected override selectDialect = "postgres" as const;
+
   override buildSelectSql(select: SelectQuery, scalar = false): Statement {
+    if (isRelationalQuery(select)) return this.buildRelationalSelectSql(select, scalar);
     return sql`SELECT ${raw(scalar ? select.fields.map((field) => this.quoteIdentifier(String(field.key))).join(", ") : this.selectFields(select.table, select.fields))}
                FROM ${select.table} ${
                  select.where
@@ -150,6 +154,7 @@ export default class PostgresAdaptor<
   }
 
   async executeSelect<R>(select: SelectQuery): Promise<R> {
+    if (isRelationalQuery(select)) return this.executeRelationalSelect(select) as any;
     const sql = this.buildSelectSql(select);
     return this.decodeResult(select.table, await this.execute(sql)) as any;
   }

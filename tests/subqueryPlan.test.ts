@@ -38,7 +38,7 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar insert plan: $name", ({ name, cre
         return execute(statement);
       };
       const region = db
-        .select(parent, ["region"])
+        .select(parent, { region: parent.$region })
         .where(parent.$id.equals("parent-256").and(parent.$owner.equals("owner")));
       await db.insert(child, { id: "single", region });
       expect(statements).toHaveLength(1);
@@ -77,10 +77,10 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar insert plan: $name", ({ name, cre
         expect(bulkPlan).not.toContain("scan buffer");
         expect(bulkPlan).not.toContain("FULL SCAN");
       }
-      expect((await db.select(child, ["region"])).results).toEqual(
+      expect((await db.select(child, { region: child.$region })).results).toEqual(
         Array.from({ length: 3 }, () => ({ region: "London" })),
       );
-      const missing = db.select(parent, ["region"]).where(parent.$id.equals("absent"));
+      const missing = db.select(parent, { region: parent.$region }).where(parent.$id.equals("absent"));
       await expect(
         Promise.resolve(
           db.insertMany(child, [
@@ -89,7 +89,7 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar insert plan: $name", ({ name, cre
           ]),
         ),
       ).rejects.toThrow();
-      expect((await db.select(child, ["region"])).results).toHaveLength(3);
+      expect((await db.select(child, { region: child.$region })).results).toHaveLength(3);
     } finally {
       await context.close();
     }

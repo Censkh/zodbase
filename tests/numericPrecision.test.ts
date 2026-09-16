@@ -39,18 +39,18 @@ for (const factory of TEST_DATABASE_FACTORIES.filter(({ name }) => ["postgres", 
             // A cached revision can be ahead of the server clock after legacy rounding.
             const legacyRevision = Date.now() + 86_400_000;
             await context.db.execute(sql`INSERT INTO "numeric_revisions" VALUES ('existing', ${legacyRevision}, 0.5)`);
-            previousRevision = (await context.db.select(table, ["*"])).first!.updatedAt;
+            previousRevision = (await context.db.select(table)).first!.updatedAt;
             await context.db.execute(
               sql`CREATE INDEX "numeric_revisions_updated_at" ON "numeric_revisions" ("updatedAt")`,
             );
           }
           await context.db.syncTable(table);
-          const migrated = (await context.db.select(table, ["*"])).results;
+          const migrated = (await context.db.select(table)).results;
           await context.db.syncTable(table);
-          expect((await context.db.select(table, ["*"])).results).toEqual(migrated);
+          expect((await context.db.select(table)).results).toEqual(migrated);
           const revision = 1789021226101;
           await context.db.insert(table, { id: "upload", updatedAt: revision, value: Math.PI });
-          expect((await context.db.select(table, ["*"]).where(table.$id.equals("upload"))).first).toEqual({
+          expect((await context.db.select(table).where(table.$id.equals("upload"))).first).toEqual({
             id: "upload",
             updatedAt: revision,
             value: Math.PI,
@@ -64,7 +64,7 @@ for (const factory of TEST_DATABASE_FACTORIES.filter(({ name }) => ["postgres", 
             expect(result.first.updatedAt).toBe(future + delta);
           }
           if (legacy) {
-            const existing = (await context.db.select(table, ["*"]).where(table.$id.equals("existing"))).first!;
+            const existing = (await context.db.select(table).where(table.$id.equals("existing"))).first!;
             expect(existing.updatedAt).toBeGreaterThan(previousRevision);
             expect(existing.value).toBe(0.5);
           }

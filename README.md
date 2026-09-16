@@ -34,7 +34,7 @@ const db = new Database({ adaptor: new BunSqliteAdaptor({ driver }) });
 await db.syncTable(Users);
 await db.insert(Users, { id: "ada", name: "Ada" });
 
-const { results } = await db.select(Users, ["*"])
+const { results } = await db.select(Users)
   .where(Users.$name.equals("Ada"));
 
 console.log(results); // [{ id: "ada", name: "Ada" }]

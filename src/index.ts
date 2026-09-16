@@ -1,5 +1,6 @@
-import { type InsertValues, SELECT_QUERY } from "./QueryBuilder";
-import { hasSubqueries, insertSubqueries, type SubqueryInsertResult } from "./Subquery";
+import { type InsertValues, isFieldReference, SELECT_QUERY } from "./QueryBuilder";
+import { isRelationalQuery } from "./RelationalQuery";
+import { hasSubqueries, insertSubqueries, type SubqueryInsertResult, snapshotQuery } from "./Subquery";
 
 export type { InsertValues, ScalarSubquery } from "./QueryBuilder";
 
@@ -14,6 +15,8 @@ import type {
   FieldBinding,
   InputOfTable,
   SelectCondition,
+  Selection,
+  SelectionValue,
   SelectQuery,
   SelectQueryBuilder,
   SingleFieldBinding,
@@ -152,6 +155,7 @@ const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): Data
     },
     execute: call("execute"),
     executeSelect: call("executeSelect"),
+    executeQueryCount: call("executeQueryCount"),
     executeInsert: call("executeInsert"),
     executeInsertSubqueries: call("executeInsertSubqueries"),
     executeInsertMany: call("executeInsertMany"),
@@ -312,14 +316,7 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
     table: query.table,
 
     clone() {
-      return createSelectQueryBuilder(
-        {
-          ...query,
-          fields: [...query.fields],
-          orderBy: [...query.orderBy],
-        },
-        adaptor,
-      );
+      return createSelectQueryBuilder(snapshotQuery(query), adaptor);
     },
 
     where(condition: SelectCondition<ValueOfTable<TTable>>) {
@@ -348,8 +345,24 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
       });
       return this;
     },
-    fields(...fields: TKey[]) {
-      query.fields = getFieldBindingsByKeys(query.table, fields) as any;
+    leftJoin(table: Table, on: SelectCondition) {
+      (query.joins ??= []).push({ type: "LEFT", table, on });
+      return this;
+    },
+    innerJoin(table: Table, on: SelectCondition) {
+      (query.joins ??= []).push({ type: "INNER", table, on });
+      return this;
+    },
+    include(includes: Record<string, { [SELECT_QUERY]: { query: SelectQuery } }>) {
+      query.includes = {
+        ...query.includes,
+        ...Object.fromEntries(
+          Object.entries(includes).map(([key, value]) => {
+            if (!value?.[SELECT_QUERY]) throw new Error("Includes must be SELECT query builders");
+            return [key, snapshotQuery(value[SELECT_QUERY].query)];
+          }),
+        ),
+      };
       return this;
     },
 
@@ -357,6 +370,7 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
       return adaptor.executeSelect(query);
     },
     async count() {
+      if (isRelationalQuery(query)) return adaptor.executeQueryCount(query);
       // @ts-expect-error
       return adaptor.executeCount(query.table, query.fields, query.where);
     },
@@ -412,24 +426,33 @@ export class Database {
     );
   }
 
-  select<TTable extends Table, TKey extends BindingKeys<ValueOfTable<TTable>>>(
+  select<TTable extends Table>(table: TTable): SelectQueryBuilder<TTable, ValueOfTable<TTable>, number>;
+  select<TTable extends Table, P extends Selection>(
     table: TTable,
-    fields: TKey[],
-  ): SelectQueryBuilder<
-    TTable,
-    "*" extends TKey ? ValueOfTable<TTable> : Pick<ValueOfTable<TTable>, Exclude<TKey, "*">>,
-    number
-  > {
-    const query = {
-      table: table as any,
-      fields: getFieldBindingsByKeys(table, fields) as any,
+    projection: P,
+  ): SelectQueryBuilder<TTable, { [K in keyof P]: SelectionValue<P[K]> }, number, never, P>;
+  select(table: Table, projection?: Selection): SelectQueryBuilder<any, any, number, any, any> {
+    if (
+      projection !== undefined &&
+      (projection === null || Array.isArray(projection) || typeof projection !== "object")
+    ) {
+      throw new Error("select() expects a projection object; omit it to select all columns");
+    }
+    const entries = projection && Object.entries(projection);
+    // Keep ordinary column reads on the adaptor's existing fast path, including scalar inserts.
+    const plain =
+      entries?.length &&
+      entries.every(([key, value]) => isFieldReference(value) && value.table === table && String(value.key) === key);
+    const query: SelectQuery = {
+      table,
+      fields: plain ? entries!.map(([, value]) => value as SingleFieldBinding) : getFieldBindingsByKeys(table, ["*"]),
+      projection: plain ? undefined : projection,
       where: undefined,
       orderBy: [],
       limit: undefined,
       offset: undefined,
-    } as SelectQuery<TTable>;
-
-    return createSelectQueryBuilder(query, this.options.adaptor);
+    };
+    return createSelectQueryBuilder(query, this.options.adaptor) as any;
   }
 
   count<TTable extends Table>(table: TTable): CountBuilder<TTable, { _count: number }>;
@@ -843,3 +866,5 @@ export { metaStore } from "zod-meta";
 export type { default as DatabaseAdaptor } from "./DatabaseAdaptor";
 export * from "./MetaTypes";
 export type { SelectCondition, SelectQueryBuilder } from "./QueryBuilder";
+
+export { expression } from "./SqlExpression";

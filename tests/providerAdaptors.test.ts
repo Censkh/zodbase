@@ -28,10 +28,10 @@ const captureMssql = () => {
 describe("SQL Server dialect", () => {
   it("uses TOP and OFFSET/FETCH with escaped identifiers and Unicode predicates", async () => {
     const { db, statements } = captureMssql();
-    await db.select(table, ["id"]).where(table.$id.equals("東京'🦄")).limit(1);
-    await db.select(table, ["id"]).offset(2).limit(3).orderBy(table.$id, "DESC");
-    await db.select(table, ["id"]).offset(2);
-    await db.select(table, ["id"]).offset(2).limit(0);
+    await db.select(table, { id: table.$id }).where(table.$id.equals("東京'🦄")).limit(1);
+    await db.select(table, { id: table.$id }).offset(2).limit(3).orderBy(table.$id, "DESC");
+    await db.select(table, { id: table.$id }).offset(2);
+    await db.select(table, { id: table.$id }).offset(2).limit(0);
     expect(statements[0]).toContain("SELECT TOP (1) [id] FROM [items]] quoted]");
     expect(statements[0]).toContain("N'東京''🦄'");
     expect(statements[1]).toContain("ORDER BY [id] DESC OFFSET 2 ROWS FETCH NEXT 3 ROWS ONLY");
@@ -45,8 +45,8 @@ describe("SQL Server dialect", () => {
       .insert(table, {
         id: "new",
         active: false,
-        date: db.select(table, ["date"]).limit(1),
-        big: db.select(table, ["big"]).limit(1),
+        date: db.select(table, { date: table.$date }).limit(1),
+        big: db.select(table, { big: table.$big }).limit(1),
       })
       .selectMutated();
     const text = statements[0]!;
@@ -61,7 +61,7 @@ describe("SQL Server dialect", () => {
   });
   it("uses BIT literals for predicates and updates", async () => {
     const { db, statements } = captureMssql();
-    await db.select(table, ["id"]).where(table.$active.equals(true));
+    await db.select(table, { id: table.$id }).where(table.$active.equals(true));
     await db.update(table, { active: false }, table.$active.equals(true)).selectMutated();
     expect(statements[0]).toMatch(/\[active\] =\s+1/);
     expect(statements[1]).toContain("SET [active] = 0 OUTPUT");
@@ -88,7 +88,7 @@ describe("SQL Server dialect", () => {
         }),
       },
     });
-    expect((await new Database({ adaptor }).select(jsonTable, ["*"])).first).toEqual({
+    expect((await new Database({ adaptor }).select(jsonTable)).first).toEqual({
       id: "x",
       active: true,
       date: new Date("2026-09-16T01:02:03.456Z"),
@@ -159,7 +159,9 @@ describe("Neon HTTP", () => {
     };
     const db = new Database({ adaptor: new NeonHttpAdaptor({ driver }) });
     const simple = createTable({ id: "simple", schema: z.object({ id: z.string() }) });
-    expect((await db.insert(simple, { id: db.select(simple, ["id"]).one() }).selectMutated()).first).toEqual({
+    expect(
+      (await db.insert(simple, { id: db.select(simple, { id: simple.$id }).one() }).selectMutated()).first,
+    ).toEqual({
       id: "new",
     });
     expect(calls).toHaveLength(1);
@@ -228,4 +230,28 @@ describe("Neon HTTP", () => {
     expect(statements).toEqual(["BEGIN", "SELECT 1", "ROLLBACK"]);
     expect(released).toBe(true);
   });
+});
+
+it("SQL Server compiles joined selections and paged includes into one FOR JSON statement", async () => {
+  const child = createTable({
+    id: "child] table",
+    schema: z.object({ id: z.string(), parentId: z.string(), at: z.date() }),
+  });
+  const { db, statements } = captureMssql();
+  await db
+    .select(table, { id: table.$id })
+    .include({
+      children: db.select(child).where(child.$parentId.equals(table.$id)).orderBy(child.$id, "ASC").offset(1).limit(2),
+    })
+    .one();
+  expect(statements).toHaveLength(1);
+  expect(statements[0]).toContain("SELECT TOP (1)");
+  expect(statements[0]).toContain("FOR JSON PATH, INCLUDE_NULL_VALUES");
+  expect(statements[0]).toContain("OFFSET 1 ROWS FETCH NEXT 2 ROWS ONLY");
+  expect(statements[0]).toContain("CONVERT(NVARCHAR(30), [child]] table].[at], 126)");
+  expect(statements[0]).not.toContain("LIMIT");
+  statements.length = 0;
+  await db.select(table, { parent: table, child }).leftJoin(child, child.$parentId.equals(table.$id));
+  expect(statements).toHaveLength(1);
+  expect(statements[0]).toContain("LEFT JOIN");
 });

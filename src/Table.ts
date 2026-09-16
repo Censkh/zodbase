@@ -23,8 +23,8 @@ export interface TableForeignKeyInfo {
   constraintName?: string;
 }
 
-export type Bindings<TValue> = {
-  [K in keyof TValue]-?: K extends StringKeys<TValue> ? SingleFieldBinding<TValue, K> : never;
+export type Bindings<TValue, TName extends string = string> = {
+  [K in keyof TValue]-?: K extends StringKeys<TValue> ? SingleFieldBinding<TValue, K, TName> : never;
 };
 
 export type PrefixKeys<T, P extends string> = {
@@ -35,11 +35,12 @@ export type Table<
   TValue extends zod.infer<TSchema> = any,
   TName extends string = string,
   TSchema extends BaseSchema = BaseSchema,
-> = PrefixKeys<Bindings<TValue>, "$"> &
+> = PrefixKeys<Bindings<TValue, TName>, "$"> &
   ToSql &
   Omit<TableOptions<TValue, TName, TSchema>, "id"> & {
     id: TName & ToSql;
-    fields: Bindings<TValue>;
+    sourceTable?: Table;
+    fields: Bindings<TValue, TName>;
     indexes: TableIndex[];
     addIndex(id: string, fields: SingleFieldBinding[], options?: TableIndexOptions): Table<TValue, TName, TSchema>;
   };
@@ -103,4 +104,14 @@ export const createTable = <TValue extends zod.infer<TSchema>, TName extends str
     table[`$${key}`] = field;
   }
   return table;
+};
+
+/** A distinct SQL scope for self joins and correlated subqueries. */
+export const alias = <T extends Table, N extends string>(
+  table: T,
+  name: N,
+): Table<zod.infer<T["schema"]>, N, T["schema"]> => {
+  const aliased = createTable({ id: name, schema: table.schema });
+  aliased.sourceTable = table.sourceTable ?? table;
+  return aliased as Table<zod.infer<T["schema"]>, N, T["schema"]>;
 };

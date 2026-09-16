@@ -38,17 +38,20 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar edge contracts: $name", ({ name, 
         { id: "a", value: "東京 🦄", owner: "alice", rank: 1 },
         { id: "b", value: null, owner: "bob", rank: 2 },
       ]);
-      const source = () => db.select(parent, ["value"]).where(parent.$id.equals("a"));
+      const source = () => db.select(parent, { value: parent.$value }).where(parent.$id.equals("a"));
       await db.insertMany(child, [
         { value: source(), id: "aligned-first" },
         { extra: "present", label: "custom", id: "aligned-second", value: "literal" },
-        { id: "missing", value: db.select(parent, ["value"]).where(parent.$id.equals("absent")) },
+        { id: "missing", value: db.select(parent, { value: parent.$value }).where(parent.$id.equals("absent")) },
         { id: "wrong-owner", value: source().where(parent.$owner.equals("bob")) },
-        { id: "sql-null", value: db.select(parent, ["value"]).where(parent.$id.equals("b")) },
-        { id: "offset", value: db.select(parent, ["value"]).orderBy(parent.$rank, "DESC").offset(1).limit(1) },
+        { id: "sql-null", value: db.select(parent, { value: parent.$value }).where(parent.$id.equals("b")) },
+        {
+          id: "offset",
+          value: db.select(parent, { value: parent.$value }).orderBy(parent.$rank, "DESC").offset(1).limit(1),
+        },
         { id: "zero", value: source().limit(0) },
       ]);
-      const rows = Object.fromEntries((await db.select(child, ["*"])).results.map((row) => [row.id, row]));
+      const rows = Object.fromEntries((await db.select(child)).results.map((row) => [row.id, row]));
       expect(rows["aligned-first"]).toEqual({ id: "aligned-first", value: "東京 🦄", label: "default", extra: null });
       expect(rows["aligned-second"]).toEqual({
         id: "aligned-second",
@@ -63,24 +66,26 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar edge contracts: $name", ({ name, 
           Promise.resolve(
             db.insertMany(child, [
               { id: "atomic-good", value: source() },
-              { id: "atomic-bad", value: db.select(parent, ["value"]) },
+              { id: "atomic-bad", value: db.select(parent, { value: parent.$value }) },
             ]),
           ),
         ).rejects.toThrow();
-        expect((await db.select(child, ["id"]).where(child.$id.in(["atomic-good", "atomic-bad"]))).results).toEqual([]);
+        expect(
+          (await db.select(child, { id: child.$id }).where(child.$id.in(["atomic-good", "atomic-bad"]))).results,
+        ).toEqual([]);
       }
-      const uncommitted = db.select(parent, ["value"]).where(parent.$id.equals("tx"));
+      const uncommitted = db.select(parent, { value: parent.$value }).where(parent.$id.equals("tx"));
       await expect(
         db.transaction(async (tx) => {
           await tx.insert(parent, { id: "tx", value: "uncommitted", owner: "alice", rank: 3 });
           await tx.insert(child, { id: "tx-child", value: uncommitted });
-          expect((await tx.select(child, ["value"]).where(child.$id.equals("tx-child"))).first?.value).toBe(
-            "uncommitted",
-          );
+          expect(
+            (await tx.select(child, { value: child.$value }).where(child.$id.equals("tx-child"))).first?.value,
+          ).toBe("uncommitted");
           throw new Error("rollback edge test");
         }),
       ).rejects.toThrow("rollback edge test");
-      expect((await db.select(child, ["id"]).where(child.$id.equals("tx-child"))).results).toEqual([]);
+      expect((await db.select(child, { id: child.$id }).where(child.$id.equals("tx-child"))).results).toEqual([]);
     } finally {
       await close();
     }

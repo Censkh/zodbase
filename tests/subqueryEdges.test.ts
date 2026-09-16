@@ -48,14 +48,14 @@ describe("scalar insert edge cases", () => {
     statements.length = 0;
   });
   afterEach(() => driver.close());
-  const projection = () => db.select(source, ["value"]).where(source.$id.equals("a'\\"));
+  const projection = () => db.select(source, { value: source.$value }).where(source.$id.equals("a'\\"));
 
   it("is lazy, quotes identifiers and values, and memoizes concurrent awaits", async () => {
     const mutation = db.insert(target, { id: "safe", value: projection(), label: " trimmed " });
     expect(statements).toHaveLength(0);
     await Promise.all([mutation, mutation]);
     expect(statements).toHaveLength(1);
-    expect((await db.select(target, ["*"])).first).toEqual({
+    expect((await db.select(target)).first).toEqual({
       id: "safe",
       value: "東京 🦄 ' \\ ; DROP TABLE nope; --",
       label: "trimmed",
@@ -71,7 +71,7 @@ describe("scalar insert edge cases", () => {
     await db.syncTable(nullableDefault);
     for (const id of ["absent", "null"]) {
       const result = await db
-        .insert(nullableDefault, { value: db.select(source, ["value"]).where(source.$id.equals(id)) })
+        .insert(nullableDefault, { value: db.select(source, { value: source.$value }).where(source.$id.equals(id)) })
         .selectMutated();
       expect(result.first).toEqual({ value: null });
     }
@@ -91,7 +91,7 @@ describe("scalar insert edge cases", () => {
   });
 
   it("honors ordered limit/offset and a zero limit", async () => {
-    const query = db.select(source, ["value"]).orderBy(source.$rank, "ASC").limit(1).offset(1);
+    const query = db.select(source, { value: source.$value }).orderBy(source.$rank, "ASC").limit(1).offset(1);
     expect((await db.insert(target, { id: "offset", value: query }).selectMutated()).first?.value).toBe("second");
     expect(
       (await db.insert(target, { id: "zero", value: projection().limit(0) }).selectMutated()).first?.value,
@@ -99,15 +99,15 @@ describe("scalar insert edge cases", () => {
   });
 
   it("snapshots reusable query builders when constructing an insert", async () => {
-    const query = db.select(source, ["value"]).orderBy(source.$rank, "ASC").limit(1);
+    const query = db.select(source, { value: source.$value }).orderBy(source.$rank, "ASC").limit(1);
     const mutation = db.insert(target, { id: "snapshot", value: query });
-    query.offset(1).fields("id").where(source.$id.equals("b"));
+    query.offset(1).where(source.$id.equals("b"));
     expect((await mutation.selectMutated()).first?.value).toBe("東京 🦄 ' \\ ; DROP TABLE nope; --");
   });
 
   it("snapshots mutable IN values inside compound predicates", async () => {
     const ids = ["a'\\"];
-    const query = db.select(source, ["value"]).where(source.$id.in(ids).and(source.$rank.equals(1)));
+    const query = db.select(source, { value: source.$value }).where(source.$id.in(ids).and(source.$rank.equals(1)));
     const mutation = db.insert(target, { id: "predicate-snapshot", value: query });
     ids[0] = "b";
     expect((await mutation.selectMutated()).first?.value).toBe("東京 🦄 ' \\ ; DROP TABLE nope; --");
@@ -118,10 +118,10 @@ describe("scalar insert edge cases", () => {
     expect(() => db.insert(target, { id: "x", value: "literal", unknown: projection() } as any)).toThrow(
       "Unknown insert column",
     );
-    expect(() => db.insert(target, { id: "x", value: db.select(source, ["id", "value"]) } as any)).toThrow(
-      "exactly one column",
-    );
-    expect(() => db.insert(target, { id: "x", value: db.select(source, ["*"]) } as any)).toThrow("exactly one column");
+    expect(() =>
+      db.insert(target, { id: "x", value: db.select(source, { id: source.$id, value: source.$value }) } as any),
+    ).toThrow("exactly one column");
+    expect(() => db.insert(target, { id: "x", value: db.select(source) } as any)).toThrow("exactly one column");
     expect(statements).toHaveLength(0);
   });
 
@@ -134,11 +134,11 @@ describe("scalar insert edge cases", () => {
         ]),
       ),
     ).rejects.toThrow();
-    expect((await db.select(target, ["*"])).results).toEqual([]);
+    expect((await db.select(target)).results).toEqual([]);
   });
 
   it("executes the subquery on the transaction connection and rolls back both writes", async () => {
-    const query = db.select(source, ["value"]).where(source.$id.equals("new"));
+    const query = db.select(source, { value: source.$value }).where(source.$id.equals("new"));
     await expect(
       db.transaction(async (tx) => {
         await tx.insert(source, { id: "new", value: "uncommitted", rank: 4 });
@@ -146,7 +146,7 @@ describe("scalar insert edge cases", () => {
         throw new Error("abort");
       }),
     ).rejects.toThrow("abort");
-    expect((await db.select(target, ["*"])).results).toEqual([]);
+    expect((await db.select(target)).results).toEqual([]);
     expect((await query).results).toEqual([]);
   });
 

@@ -49,7 +49,7 @@ test("preserves regional rows, foreign keys and indexes across repeated syncs", 
   await context.db.insert(children, { id: "c", userId: "u", homeRegion: "aws-ap-southeast-1" });
   await context.db.syncTable(users);
   await context.db.syncTable(children);
-  expect((await context.db.select(children, ["*"])).first).toEqual({
+  expect((await context.db.select(children)).first).toEqual({
     id: "c",
     userId: "u",
     homeRegion: "aws-ap-southeast-1",
@@ -58,7 +58,7 @@ test("preserves regional rows, foreign keys and indexes across repeated syncs", 
     'LOCALITY REGIONAL BY ROW AS "homeRegion"',
   );
   await context.db.delete(users).where(users.$id.equals("u"));
-  expect((await context.db.select(children, ["*"])).results).toHaveLength(0);
+  expect((await context.db.select(children)).results).toHaveLength(0);
 }, 60_000);
 
 test("preserves Cockroach's implicit region column when syncing", async () => {
@@ -71,7 +71,7 @@ test("preserves Cockroach's implicit region column when syncing", async () => {
   await context.db.syncTable(table);
   await context.db.insert(table, { id: "one" });
   await context.db.syncTable(table);
-  expect((await context.db.select(table, ["*"])).first).toEqual({ id: "one" });
+  expect((await context.db.select(table)).first).toEqual({ id: "one" });
 }, 60_000);
 
 test("regional scalar inserts retain point lookups and the auto-commit fast path", async () => {
@@ -111,7 +111,7 @@ test("regional scalar inserts retain point lookups and the auto-commit fast path
     statement = value[TO_SQL_SYMBOL]();
     return execute(value);
   };
-  const homeRegion = db.select(parent, ["homeRegion"]).where(parent.$id.equals("parent-64"));
+  const homeRegion = db.select(parent, { homeRegion: parent.$homeRegion }).where(parent.$id.equals("parent-64"));
   await db.insertMany(child, [
     { id: "one", homeRegion },
     { id: "two", homeRegion },
@@ -121,7 +121,7 @@ test("regional scalar inserts retain point lookups and the auto-commit fast path
   expect(plan).not.toContain("FULL SCAN");
   expect(plan).toContain("auto commit");
   expect(statement).not.toContain("CAST");
-  expect((await db.select(child, ["homeRegion"])).results).toEqual([
+  expect((await db.select(child, { homeRegion: child.$homeRegion })).results).toEqual([
     { homeRegion: "aws-ap-southeast-1" },
     { homeRegion: "aws-ap-southeast-1" },
   ]);

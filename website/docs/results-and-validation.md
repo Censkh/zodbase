@@ -6,7 +6,7 @@ description: Understand Zodbase input parsing, defaults, row decoding, mutation 
 ## The result object
 
 ```ts
-const result = await db.select(Users, ["id", "name"]);
+const result = await db.select(Users, { id: Users.$id, name: Users.$name });
 console.log(result.results); // Selected records
 console.log(result.first);   // First record, or undefined
 ```

@@ -5,6 +5,7 @@ import { toLazyPromise } from "./LazyPromise";
 import { primaryKey } from "./MetaTypes";
 import {
   type InsertValues,
+  isScalarSelect,
   type ScalarSubquery,
   SELECT_QUERY,
   type SelectCondition,
@@ -28,10 +29,22 @@ const snapshotValue = (value: unknown): unknown => {
   return value;
 };
 
-const snapshotCondition = (condition: SelectCondition): SelectCondition =>
+export const snapshotCondition = (condition: SelectCondition): SelectCondition =>
   "conditions" in condition
     ? { ...condition, conditions: condition.conditions.map(snapshotCondition) }
     : { ...condition, value: snapshotValue(condition.value) };
+
+export const snapshotQuery = (query: SelectQuery): SelectQuery => ({
+  ...query,
+  fields: [...query.fields],
+  orderBy: query.orderBy.map((order) => ({ ...order })),
+  where: query.where ? snapshotCondition(query.where) : undefined,
+  joins: query.joins?.map((join) => ({ ...join, on: snapshotCondition(join.on) })),
+  projection: query.projection ? (snapshotValue(query.projection) as SelectQuery["projection"]) : undefined,
+  includes: query.includes
+    ? Object.fromEntries(Object.entries(query.includes).map(([key, child]) => [key, snapshotQuery(child)]))
+    : undefined,
+});
 
 export const isSubquery = (value: unknown): value is ScalarSubquery<unknown> =>
   typeof value === "object" && value !== null && SELECT_QUERY in value;
@@ -58,17 +71,11 @@ export const insertSubqueries = <TTable extends Table>(
       // biome-ignore lint/suspicious/noPrototypeBuiltins: Support consumers targeting pre-ES2022 runtimes.
       if (!Object.prototype.hasOwnProperty.call(schema.shape, key)) throw new Error(`Unknown insert column: ${key}`);
       const query = value[SELECT_QUERY].query;
-      if (query.fields.length !== 1 || query.fields[0]?.key === "*")
-        throw new Error("Scalar subqueries must select exactly one column");
+      if (!isScalarSelect(query)) throw new Error("Scalar subqueries must select exactly one column");
       // Snapshot the AST: later changes to a reusable builder must not change this insert.
       expressions[key] = {
         [SELECT_QUERY]: {
-          query: {
-            ...query,
-            fields: [...query.fields],
-            orderBy: query.orderBy.map((order) => ({ ...order })),
-            where: query.where ? snapshotCondition(query.where) : undefined,
-          },
+          query: snapshotQuery(query),
         },
       };
     }
@@ -93,6 +100,10 @@ export const insertSubqueries = <TTable extends Table>(
 /** Only share deterministic point reads, never arbitrary/volatile or self-referencing queries. */
 export const canShareSubquery = (query: SelectQuery, destination: Table): boolean => {
   if (
+    query.joins?.length ||
+    query.includes ||
+    query.projection ||
+    query.table.sourceTable ||
     String(query.table.id) === String(destination.id) ||
     !query.where ||
     query.orderBy.length ||

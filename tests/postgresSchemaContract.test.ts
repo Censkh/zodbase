@@ -83,7 +83,7 @@ describe("PostgreSQL schema synchronization contract", () => {
     });
     await context.db.syncTable(UpdatedTable);
 
-    expect((await context.db.select(UpdatedTable, ["*"])).first).toEqual({
+    expect((await context.db.select(UpdatedTable)).first).toEqual({
       id: "1",
       name: "Ada",
       nickname: null,
@@ -114,7 +114,7 @@ describe("PostgreSQL schema synchronization contract", () => {
     expect(await columnInfo("pg_schema_people")).toContainEqual(
       expect.objectContaining({ column_name: "email", is_nullable: "NO" }),
     );
-    expect((await context.db.select(RequiredTable, ["*"]).orderBy(RequiredTable.$id, "ASC")).results).toEqual([
+    expect((await context.db.select(RequiredTable).orderBy(RequiredTable.$id, "ASC")).results).toEqual([
       { id: "1", email: "unknown@example.com" },
       { id: "2", email: "grace@example.com" },
     ]);
@@ -136,7 +136,7 @@ describe("PostgreSQL schema synchronization contract", () => {
     await context.db.syncTable(UpdatedTable);
     await context.db.syncTable(UpdatedTable);
 
-    expect((await context.db.select(UpdatedTable, ["*"])).first).toEqual({ id: "1", email: "ada@example.com" });
+    expect((await context.db.select(UpdatedTable)).first).toEqual({ id: "1", email: "ada@example.com" });
     expect(await columnInfo("pg_schema_people")).not.toContainEqual(
       expect.objectContaining({ column_name: "obsolete" }),
     );

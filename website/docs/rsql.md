@@ -15,7 +15,7 @@ bun add @rsql/parser
 import { rsqlToCondition } from "zodbase/rsql";
 
 const condition = rsqlToCondition(Users, "name==Ada");
-const query = db.select(Users, ["*"]);
+const query = db.select(Users);
 const { results } = await (condition ? query.where(condition) : query);
 ```
 

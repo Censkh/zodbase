@@ -72,7 +72,7 @@ describe("schema synchronization contract", () => {
     });
     await db.syncTable(UpdatedTable);
 
-    expect((await db.select(UpdatedTable, ["*"])).results).toEqual([{ id: "1", name: "Ada", nickname: null }]);
+    expect((await db.select(UpdatedTable)).results).toEqual([{ id: "1", name: "Ada", nickname: null }]);
   });
 
   it("adds required columns with backfill in one synchronization", async () => {
@@ -93,7 +93,7 @@ describe("schema synchronization contract", () => {
     });
     await db.syncTable(UpdatedTable);
 
-    expect((await db.select(UpdatedTable, ["*"])).results).toEqual([{ id: "1", name: "Ada", role: "user" }]);
+    expect((await db.select(UpdatedTable)).results).toEqual([{ id: "1", name: "Ada", role: "user" }]);
     expect(driver.query("PRAGMA table_info(schema_people)").all()).toContainEqual(
       expect.objectContaining({ name: "role", notnull: 1 }),
     );
@@ -133,7 +133,7 @@ describe("schema synchronization contract", () => {
     });
     await db.syncTable(UpdatedTable);
 
-    expect((await db.select(UpdatedTable, ["*"])).results).toEqual([{ id: "1", name: "Ada" }]);
+    expect((await db.select(UpdatedTable)).results).toEqual([{ id: "1", name: "Ada" }]);
     expect(driver.query("PRAGMA table_info(schema_people)").all()).not.toContainEqual(
       expect.objectContaining({ name: "obsolete" }),
     );
@@ -161,7 +161,7 @@ describe("schema synchronization contract", () => {
     RequiredTable.addIndex("schema_people_email_index", [RequiredTable.$email]);
     await db.syncTable(RequiredTable);
 
-    expect((await db.select(RequiredTable, ["*"]).orderBy(RequiredTable.$id, "ASC")).results).toEqual([
+    expect((await db.select(RequiredTable).orderBy(RequiredTable.$id, "ASC")).results).toEqual([
       { id: "1", email: "unknown@example.com" },
       { id: "2", email: "grace@example.com" },
     ]);
@@ -179,7 +179,7 @@ describe("schema synchronization contract", () => {
     expect(driver.query("PRAGMA table_info(schema_people)").all()).toContainEqual(
       expect.objectContaining({ name: "email", notnull: 0 }),
     );
-    expect((await db.select(NullableAgainTable, ["*"])).results).toHaveLength(2);
+    expect((await db.select(NullableAgainTable)).results).toHaveLength(2);
   });
 
   it("migrates an existing table to a cascading foreign key", async () => {
@@ -211,7 +211,7 @@ describe("schema synchronization contract", () => {
       expect.objectContaining({ from: "parentId", table: "schema_parents", to: "id", on_delete: "CASCADE" }),
     );
     await db.delete(ParentTable).where(ParentTable.$id.equals("parent"));
-    expect((await db.select(ChildTable, ["*"])).results).toEqual([]);
+    expect((await db.select(ChildTable)).results).toEqual([]);
   });
 
   it("is idempotent after a complex synchronization", async () => {

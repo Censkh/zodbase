@@ -72,7 +72,10 @@ describe.each(TEST_DATABASE_FACTORIES)("RSQL contract: $name", ({ create }) => {
 
   const idsFor = async (filter: string) => {
     const condition = rsqlToCondition(AssetsTable, filter);
-    const result = await context.db.select(AssetsTable, ["id"]).where(condition!).orderBy(AssetsTable.$id, "ASC");
+    const result = await context.db
+      .select(AssetsTable, { id: AssetsTable.$id })
+      .where(condition!)
+      .orderBy(AssetsTable.$id, "ASC");
     return result.results.map(({ id }) => id);
   };
 

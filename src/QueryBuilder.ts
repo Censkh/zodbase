@@ -12,7 +12,8 @@ export const query = <T extends object>(table: Table<T>) => QueryBuilder<T> => {
 }
 */
 import { join, type OrderDirection, raw, sql, type Table } from "./index";
-import type { Statement, ToSql } from "./Statement";
+import { SqlExpression } from "./SqlExpression";
+import { type Statement, TO_SQL_SYMBOL, type ToSql } from "./Statement";
 
 export const SELECT_QUERY = Symbol("selectQuery");
 
@@ -30,34 +31,53 @@ export type InsertValues<TTable extends Table> = {
 };
 
 export type StringKeys<T> = {
-  [K in keyof T]: K extends string ? K : never;
+  [K in keyof T]-?: K extends string ? K : never;
 }[keyof T];
 
 export type BindingKeys<TValue> = "*" | StringKeys<TValue>;
 
-export interface BaseFieldBinding<TValue, TKey extends BindingKeys<TValue>> extends ToSql {
+export interface BaseFieldBinding<TValue, TKey extends BindingKeys<TValue>, TName extends string = string>
+  extends ToSql {
   key: TKey & ToSql;
-  table: Table<TValue, string, zod.ZodType<TValue>>;
-  schema: zod.ZodType<TValue>;
+  table: Table<TValue, TName, zod.ZodType<TValue>>;
+  schema: zod.ZodType;
 }
 
 export interface AllFieldsBinding<TValue> extends BaseFieldBinding<TValue, "*"> {}
 
-export interface SingleFieldBinding<TValue = any, TKey extends StringKeys<TValue> = StringKeys<TValue>>
-  extends BaseFieldBinding<TValue, TKey> {
-  equals(value: TValue[TKey]): SelectFieldCondition<TValue, TKey>;
+export interface FieldReference<T> {
+  readonly key: string & ToSql;
+  readonly table: Table;
+  readonly schema: zod.ZodType<T>;
+}
+
+export interface SingleFieldBinding<
+  TValue = any,
+  TKey extends StringKeys<TValue> = StringKeys<TValue>,
+  TName extends string = string,
+> extends BaseFieldBinding<TValue, TKey, TName> {
+  schema: zod.ZodType<TValue[TKey]>;
+  equals(value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined>): SelectFieldCondition<TValue, TKey>;
 
   like(value: TValue[TKey]): SelectFieldCondition<TValue, TKey>;
 
-  greaterThan(value: TValue[TKey]): SelectFieldCondition<TValue, TKey>;
+  greaterThan(
+    value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined>,
+  ): SelectFieldCondition<TValue, TKey>;
 
-  lessThan(value: TValue[TKey]): SelectFieldCondition<TValue, TKey>;
+  lessThan(value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined>): SelectFieldCondition<TValue, TKey>;
 
-  greaterThanOrEquals(value: TValue[TKey]): SelectFieldCondition<TValue, TKey>;
+  greaterThanOrEquals(
+    value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined>,
+  ): SelectFieldCondition<TValue, TKey>;
 
-  lessThanOrEquals(value: TValue[TKey]): SelectFieldCondition<TValue, TKey>;
+  lessThanOrEquals(
+    value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined>,
+  ): SelectFieldCondition<TValue, TKey>;
 
-  notEquals(value: TValue[TKey] | undefined | null): SelectFieldCondition<TValue, TKey>;
+  notEquals(
+    value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined> | undefined | null,
+  ): SelectFieldCondition<TValue, TKey>;
 
   in(values: TValue[TKey][]): SelectFieldCondition<TValue, TKey>;
 
@@ -75,9 +95,9 @@ export type SelectCondition<TValue = any> =
 export type Falsy = false | null | undefined | "" | 0;
 
 export interface BaseSelectCondition<TValue> {
-  and(...condition: Array<SelectCondition<TValue> | Falsy>): SelectCondition<TValue>;
+  and(...condition: Array<SelectCondition | Falsy>): SelectCondition<TValue>;
 
-  or(...condition: Array<SelectCondition<TValue> | Falsy>): SelectCondition<TValue>;
+  or(...condition: Array<SelectCondition | Falsy>): SelectCondition<TValue>;
 }
 
 export interface SelectCompoundCondition<TValue> extends BaseSelectCondition<TValue> {
@@ -95,6 +115,14 @@ export interface SelectFieldCondition<TValue = any, TKey extends StringKeys<TVal
   operator: SqlOperator;
   value: TValue[TKey];
 }
+
+export const isFieldReference = (value: unknown): value is SingleFieldBinding =>
+  typeof value === "object" &&
+  value !== null &&
+  TO_SQL_SYMBOL in value &&
+  "table" in value &&
+  "key" in value &&
+  "schema" in value;
 
 export const buildConditionSql = (
   adaptor: DatabaseAdaptor,
@@ -126,7 +154,7 @@ export const buildConditionSql = (
   }
 
   let check = sql`${raw(condition.operator)}
-  ${raw(adaptor.valueToSql(condition.value))}`;
+  ${raw(isFieldReference(condition.value) ? `${adaptor.quoteIdentifier(String(condition.value.table.id))}.${adaptor.quoteIdentifier(String(condition.value.key))}` : adaptor.valueToSql(condition.value))}`;
 
   if (condition.operator === "=" && condition.value === null) {
     check = sql`IS NULL`;
@@ -139,6 +167,9 @@ export const buildConditionSql = (
 
 export interface SelectQuery<TTable extends Table = Table, TLimit extends number = number> {
   table: TTable;
+  joins?: { type: "LEFT" | "INNER"; table: Table; on: SelectCondition }[];
+  projection?: Selection;
+  includes?: Record<string, SelectQuery>;
   fields: FieldBinding<ValueOfTable<TTable>>[];
   where: SelectCondition<ValueOfTable<TTable>> | undefined;
   orderBy: Array<{
@@ -149,35 +180,110 @@ export interface SelectQuery<TTable extends Table = Table, TLimit extends number
   offset: number | undefined;
 }
 
-export type SelectQueryBuilder<TTable extends Table, TResultValue, TResultLimit extends number> = Promise<
-  SqlResult<TResultValue, TResultLimit>
-> &
-  ScalarValue<TResultValue> & {
-    table: TTable;
+export interface Selection {
+  [key: string]: Table | SingleFieldBinding | SqlExpression | Selection;
+}
+type SelectedTables<P> =
+  P extends Table<any, infer N>
+    ? N
+    : P extends SingleFieldBinding<any, any, infer N>
+      ? N
+      : P extends Selection
+        ? { [K in keyof P]: SelectedTables<P[K]> }[keyof P]
+        : never;
+type NullableSelection<P, N, R> = [SelectedTables<P>] extends [never]
+  ? R
+  : true extends IsUnion<SelectedTables<P>>
+    ? R
+    : SelectedTables<P> extends N
+      ? R | null
+      : R;
+export type SelectionValue<P, N = never> =
+  P extends SqlExpression<infer S>
+    ? zod.infer<S>
+    : P extends Table<infer V, infer Name>
+      ? Name extends N
+        ? V | null
+        : V
+      : P extends SingleFieldBinding<infer V, infer K, infer Name>
+        ? Name extends N
+          ? V[K] | null
+          : V[K]
+        : P extends Selection
+          ? NullableSelection<P, N, { [K in keyof P]: SelectionValue<P[K], SelectedTables<P> extends N ? never : N> }>
+          : never;
+export type IncludeQuery = Promise<SqlResult<any>> & { readonly [SELECT_QUERY]: { query: SelectQuery } };
+type JoinSelection<R, P, N> = P extends Selection ? Omit<R, keyof P> & { [K in keyof P]: SelectionValue<P[K], N> } : R;
+type IncludedValue<Q> = Q extends Promise<SqlResult<infer V, any>> ? V[] : never;
+type IncludeValues<I> = { [K in keyof I]: IncludedValue<I[K]> };
+type NonScalarSelection = { readonly nonScalarSelection: unique symbol };
+type QueryScalarValue<R, P, I> = keyof I extends never
+  ? P extends undefined
+    ? ScalarValue<R>
+    : P extends Selection
+      ? P[keyof P] extends SingleFieldBinding | SqlExpression
+        ? ScalarValue<R>
+        : ScalarSubquery<NonScalarSelection>
+      : ScalarSubquery<NonScalarSelection>
+  : ScalarSubquery<NonScalarSelection>;
 
-    fields<TKey extends BindingKeys<ValueOfTable<TTable>>>(
-      ...fields: TKey[]
+export const isScalarSelect = (query: SelectQuery): boolean => {
+  if (query.includes && Object.keys(query.includes).length) return false;
+  if (query.projection) {
+    const values = Object.values(query.projection);
+    return values.length === 1 && (isFieldReference(values[0]) || values[0] instanceof SqlExpression);
+  }
+  return query.fields.length === 1 && query.fields[0]?.key !== "*";
+};
+
+export type SelectQueryBuilder<
+  TTable extends Table,
+  TResultValue,
+  TResultLimit extends number,
+  TNullable extends string = never,
+  TProjection extends Selection | undefined = undefined,
+  TIncludes extends Record<string, IncludeQuery> = {},
+> = Promise<SqlResult<TResultValue, TResultLimit>> &
+  QueryScalarValue<TResultValue, TProjection, TIncludes> & {
+    table: TTable;
+    leftJoin<T extends Table>(
+      table: T,
+      on: SelectCondition,
     ): SelectQueryBuilder<
       TTable,
-      "*" extends TKey ? ValueOfTable<TTable> : Pick<ValueOfTable<TTable>, Exclude<TKey, "*">>,
-      TResultLimit
+      JoinSelection<TResultValue, TProjection, TNullable | (T extends Table<any, infer N> ? N : never)>,
+      TResultLimit,
+      TNullable | (T extends Table<any, infer N> ? N : never),
+      TProjection,
+      TIncludes
     >;
-
-    clone(): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
-
-    where(condition: SelectCondition<ValueOfTable<TTable>>): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
-
-    limit<TLimit extends number>(limit: TLimit): SelectQueryBuilder<TTable, TResultValue, TLimit>;
-
-    offset(offset: number): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
-
-    one(): SelectQueryBuilder<TTable, TResultValue, 1>;
-
+    innerJoin<T extends Table>(
+      table: T,
+      on: SelectCondition,
+    ): SelectQueryBuilder<TTable, TResultValue, TResultLimit, TNullable, TProjection, TIncludes>;
+    include<I extends Record<string, IncludeQuery>>(
+      includes: I,
+    ): SelectQueryBuilder<
+      TTable,
+      Omit<TResultValue, keyof I> & IncludeValues<I>,
+      TResultLimit,
+      TNullable,
+      TProjection,
+      Omit<TIncludes, keyof I> & I
+    >;
+    clone(): SelectQueryBuilder<TTable, TResultValue, TResultLimit, TNullable, TProjection, TIncludes>;
+    where(
+      condition: SelectCondition,
+    ): SelectQueryBuilder<TTable, TResultValue, TResultLimit, TNullable, TProjection, TIncludes>;
+    limit<TLimit extends number>(
+      limit: TLimit,
+    ): SelectQueryBuilder<TTable, TResultValue, TLimit, TNullable, TProjection, TIncludes>;
+    offset(offset: number): SelectQueryBuilder<TTable, TResultValue, TResultLimit, TNullable, TProjection, TIncludes>;
+    one(): SelectQueryBuilder<TTable, TResultValue, 1, TNullable, TProjection, TIncludes>;
     orderBy(
-      field: SingleFieldBinding<ValueOfTable<TTable>>,
+      field: SingleFieldBinding,
       direction: OrderDirection,
-    ): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
-
+    ): SelectQueryBuilder<TTable, TResultValue, TResultLimit, TNullable, TProjection, TIncludes>;
     count(): Promise<SqlResult<Record<StringKeys<ValueOfTable<TTable>>, number>, 1>>;
   };
 

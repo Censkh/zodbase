@@ -10,6 +10,7 @@ import type { Database as DatabaseApi } from "../../src";
 import { Database } from "../../src";
 import BunSqliteAdaptor from "../../src/adaptors/bun-sqlite";
 import CockroachAdaptor from "../../src/adaptors/cockroach";
+import MariaDbAdaptor from "../../src/adaptors/mariadb";
 import MysqlAdaptor from "../../src/adaptors/mysql";
 import PostgresAdaptor from "../../src/adaptors/postgres";
 import TursoAdaptor from "../../src/adaptors/turso";
@@ -115,7 +116,7 @@ const createMysqlDatabase = async (container: StartedMySqlContainer | undefined)
   });
 
   return {
-    db: new Database({ adaptor: new MysqlAdaptor({ driver }) }),
+    db: new Database({ adaptor: new (container === mariadbContainer ? MariaDbAdaptor : MysqlAdaptor)({ driver }) }),
     async close() {
       await driver.end();
       const cleanupDriver = await createConnection({
