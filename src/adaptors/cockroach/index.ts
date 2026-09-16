@@ -8,6 +8,9 @@ import PostgresAdaptor from "../postgres";
 import { cockroachLocality, cockroachRegion } from "./metadata";
 
 export default class CockroachAdaptor extends PostgresAdaptor {
+  // Materialized CTE buffers disable Cockroach's auto-commit fast path for these inserts.
+  protected override materializeRepeatedSubqueries = false;
+
   override typeToSql(schema: zod.ZodType): string {
     return getMetaItem(schema, cockroachRegion) ? '"public"."crdb_internal_region"' : super.typeToSql(schema);
   }

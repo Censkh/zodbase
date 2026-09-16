@@ -43,3 +43,19 @@ PeopleTable.$age.equals("old");
 db.insert(PeopleTable, { id: "1", name: "Ada" });
 // @ts-expect-error update values must match the schema
 db.update(PeopleTable, { age: "old" }, PeopleTable.$id.equals("1"));
+
+// Scalar SELECTs retain their selected value type through chaining.
+db.insert(PeopleTable, {
+  id: "subquery",
+  name: db.select(PeopleTable, ["name"]).where(PeopleTable.$id.equals("1")),
+  age: 1,
+}).selectMutated();
+db.insertMany(PeopleTable, [{ id: "many", name: "Ada", age: db.select(PeopleTable, ["age"]).one() }]);
+// @ts-expect-error numeric projections cannot fill text columns
+db.insert(PeopleTable, { id: "wrong", name: db.select(PeopleTable, ["age"]), age: 1 });
+// @ts-expect-error multiple selected columns are not scalar values
+db.insert(PeopleTable, { id: "wide", name: db.select(PeopleTable, ["id", "name"]), age: 1 });
+// @ts-expect-error SELECT * is not a scalar projection
+db.insert(PeopleTable, { id: "star", name: db.select(PeopleTable, ["*"]), age: 1 });
+// @ts-expect-error parsed inputs cannot expose a database-computed value
+db.insert(PeopleTable, { id: "parsed", name: db.select(PeopleTable, ["name"]), age: 1 }).selectParsed();

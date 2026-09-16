@@ -14,6 +14,21 @@ export const query = <T extends object>(table: Table<T>) => QueryBuilder<T> => {
 import { join, type OrderDirection, raw, sql, type Table } from "./index";
 import type { Statement, ToSql } from "./Statement";
 
+export const SELECT_QUERY = Symbol("selectQuery");
+
+/** A SELECT usable as one SQL value; only single-column projections qualify. */
+export interface ScalarSubquery<T> {
+  readonly [SELECT_QUERY]: { query: SelectQuery; value: T };
+}
+type IsUnion<T, U = T> = T extends U ? ([U] extends [T] ? false : true) : never;
+type ScalarValue<T> = ScalarSubquery<
+  true extends IsUnion<keyof T> ? { readonly multipleColumns: unique symbol } : T[keyof T]
+>;
+
+export type InsertValues<TTable extends Table> = {
+  [K in keyof InputOfTable<TTable>]: InputOfTable<TTable>[K] | ScalarSubquery<InputOfTable<TTable>[K]>;
+};
+
 export type StringKeys<T> = {
   [K in keyof T]: K extends string ? K : never;
 }[keyof T];
@@ -111,7 +126,7 @@ export const buildConditionSql = (
   }
 
   let check = sql`${raw(condition.operator)}
-  ${condition.value}`;
+  ${raw(adaptor.valueToSql(condition.value))}`;
 
   if (condition.operator === "=" && condition.value === null) {
     check = sql`IS NULL`;
@@ -136,34 +151,35 @@ export interface SelectQuery<TTable extends Table = Table, TLimit extends number
 
 export type SelectQueryBuilder<TTable extends Table, TResultValue, TResultLimit extends number> = Promise<
   SqlResult<TResultValue, TResultLimit>
-> & {
-  table: TTable;
+> &
+  ScalarValue<TResultValue> & {
+    table: TTable;
 
-  fields<TKey extends BindingKeys<ValueOfTable<TTable>>>(
-    ...fields: TKey[]
-  ): SelectQueryBuilder<
-    TTable,
-    "*" extends TKey ? ValueOfTable<TTable> : Pick<ValueOfTable<TTable>, Exclude<TKey, "*">>,
-    TResultLimit
-  >;
+    fields<TKey extends BindingKeys<ValueOfTable<TTable>>>(
+      ...fields: TKey[]
+    ): SelectQueryBuilder<
+      TTable,
+      "*" extends TKey ? ValueOfTable<TTable> : Pick<ValueOfTable<TTable>, Exclude<TKey, "*">>,
+      TResultLimit
+    >;
 
-  clone(): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
+    clone(): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
 
-  where(condition: SelectCondition<ValueOfTable<TTable>>): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
+    where(condition: SelectCondition<ValueOfTable<TTable>>): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
 
-  limit<TLimit extends number>(limit: TLimit): SelectQueryBuilder<TTable, TResultValue, TLimit>;
+    limit<TLimit extends number>(limit: TLimit): SelectQueryBuilder<TTable, TResultValue, TLimit>;
 
-  offset(offset: number): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
+    offset(offset: number): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
 
-  one(): SelectQueryBuilder<TTable, TResultValue, 1>;
+    one(): SelectQueryBuilder<TTable, TResultValue, 1>;
 
-  orderBy(
-    field: SingleFieldBinding<ValueOfTable<TTable>>,
-    direction: OrderDirection,
-  ): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
+    orderBy(
+      field: SingleFieldBinding<ValueOfTable<TTable>>,
+      direction: OrderDirection,
+    ): SelectQueryBuilder<TTable, TResultValue, TResultLimit>;
 
-  count(): Promise<SqlResult<Record<StringKeys<ValueOfTable<TTable>>, number>, 1>>;
-};
+    count(): Promise<SqlResult<Record<StringKeys<ValueOfTable<TTable>>, number>, 1>>;
+  };
 
 export type SqlOperator = "=" | "<" | ">" | "<=" | ">=" | "!=" | "LIKE" | "IN" | "NOT IN" | "JSON_CONTAINS";
 export type StringOrNever<T> = T extends string ? T : never;

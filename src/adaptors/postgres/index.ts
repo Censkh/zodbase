@@ -1,4 +1,3 @@
-import type * as pg from "pg";
 import type * as zod from "zod";
 import { getMetaItem, type ZodMetaItem } from "zod-meta";
 import DatabaseAdaptor, { type DatabaseAdaptorOptions, type PossiblySelectedResult } from "../../DatabaseAdaptor";
@@ -37,6 +36,15 @@ import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
 
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
 
+/** The query surface shared by node-postgres and Neon WebSocket clients. */
+export interface PostgresClient {
+  query(text: string): PromiseLike<{ rows: any[] }>;
+}
+export interface PostgresPool extends PostgresClient {
+  readonly totalCount: number;
+  connect(): Promise<PostgresClient & { release(): void }>;
+}
+
 const getRequiredBackfillMeta = (schema: zod.Schema<any>): BackfillMetaItem | undefined => {
   if (isZodRequired(schema)) {
     return getMetaItem(schema, backfill);
@@ -51,12 +59,12 @@ const TYPE_ORDERING: Record<FieldDiffType, number> = {
 };
 
 export default class PostgresAdaptor<
-  TDriver extends pg.Client | pg.Pool = pg.Client | pg.Pool,
+  TDriver extends PostgresClient | PostgresPool = PostgresClient | PostgresPool,
 > extends DatabaseAdaptor<TDriver> {
   override async transaction<TResult>(callback: (adaptor: DatabaseAdaptor) => Promise<TResult>): Promise<TResult> {
     if ("totalCount" in this.driver) {
-      const client = await this.driver.connect();
-      const Adaptor = this.constructor as new (options: DatabaseAdaptorOptions<pg.PoolClient>) => DatabaseAdaptor;
+      const client = await (this.driver as PostgresPool).connect();
+      const Adaptor = this.constructor as new (options: DatabaseAdaptorOptions<PostgresClient>) => DatabaseAdaptor;
       const adaptor = new Adaptor({ ...this.options, driver: client });
       try {
         return await adaptor.transaction(callback);
@@ -117,8 +125,10 @@ export default class PostgresAdaptor<
     return value;
   }
 
-  buildSelectSql(select: SelectQuery): Statement {
-    return sql`SELECT ${raw(this.selectFields(select.table, select.fields))}
+  protected override materializeRepeatedSubqueries = true;
+
+  override buildSelectSql(select: SelectQuery, scalar = false): Statement {
+    return sql`SELECT ${raw(scalar ? select.fields.map((field) => this.quoteIdentifier(String(field.key))).join(", ") : this.selectFields(select.table, select.fields))}
                FROM ${select.table} ${
                  select.where
                    ? sql` WHERE

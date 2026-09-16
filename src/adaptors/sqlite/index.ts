@@ -172,8 +172,8 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     return value;
   }
 
-  buildSelectSql(select: SelectQuery): Statement {
-    return sql`SELECT ${raw(this.selectFields(select.table, select.fields))}
+  override buildSelectSql(select: SelectQuery, scalar = false): Statement {
+    return sql`SELECT ${raw(scalar ? select.fields.map((field) => this.quoteIdentifier(String(field.key))).join(", ") : this.selectFields(select.table, select.fields))}
             FROM ${select.table} ${select.where ? sql` WHERE ${buildConditionSql(this, select.where)}` : raw("")}${
               select.orderBy.length > 0
                 ? sql` ORDER BY ${raw(

@@ -14,6 +14,7 @@ import {
   type Table,
   type TableColumnInfo,
   type TableDiff,
+  valueToSql,
 } from "./index";
 import type {
   InputOfTable,
@@ -24,7 +25,9 @@ import type {
   StringKeys,
   ValueOfTable,
 } from "./QueryBuilder";
-import type { Statement } from "./Statement";
+import { SELECT_QUERY } from "./QueryBuilder";
+import { type Statement, TO_SQL_SYMBOL } from "./Statement";
+import { canShareSubquery, isSubquery } from "./Subquery";
 
 export interface DatabaseAdaptorOptions<TDriver = any> {
   driver: TDriver;
@@ -48,6 +51,14 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
 
   quoteIdentifier(value: string): string {
     return quoteIdentifier(value);
+  }
+
+  valueToSql(value: unknown, nested = false): string {
+    return valueToSql(value, nested);
+  }
+
+  protected insertReturningSql(table: Table, position: "before-values" | "after-values"): string {
+    return position === "after-values" ? ` RETURNING ${this.selectFields(table)}` : "";
   }
 
   protected selectFields(table: Table, fields?: SelectQuery["fields"]): string {
@@ -116,6 +127,73 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     select: SelectQuery<Table, TLimit>,
   ): Promise<SqlResult<ValueOfTable<TTable>, TLimit>>;
   abstract execute(statement: Statement): Promise<SqlResult>;
+  protected supportsSubqueryReturning = true;
+  protected materializeRepeatedSubqueries = false;
+
+  buildSelectSql(_select: SelectQuery, _scalar = false): Statement {
+    throw new Error("This adaptor does not support scalar subqueries");
+  }
+
+  async executeInsertSubqueries(
+    table: Table,
+    rows: Record<string, unknown>[],
+    shouldReturn: boolean,
+  ): Promise<SqlResult> {
+    if (shouldReturn && !this.supportsSubqueryReturning)
+      throw new Error(
+        "This adaptor does not support subquery INSERT RETURNING; await the insert without selectMutated()",
+      );
+    const quote = (name: string) => this.quoteIdentifier(name);
+    const keys = [...new Set(rows.flatMap((row) => Object.keys(row)))];
+    const shared = new Map<string, { count: number; name: string }>();
+    const compiled = new Map<unknown, string>();
+    const names = new Set([String(table.id)]);
+    for (const row of rows)
+      for (const value of Object.values(row)) {
+        if (!isSubquery(value)) continue;
+        const query = value[SELECT_QUERY].query;
+        names.add(String(query.table.id));
+        const text = this.buildSelectSql(query, true)[TO_SQL_SYMBOL]();
+        compiled.set(value, text);
+        if (this.materializeRepeatedSubqueries && canShareSubquery(query, table)) {
+          const entry = shared.get(text) ?? { count: 0, name: "" };
+          entry.count++;
+          shared.set(text, entry);
+        }
+      }
+    let alias = 0;
+    const common: Statement[] = [];
+    for (const [text, entry] of shared) {
+      if (entry.count < 2) {
+        shared.delete(text);
+        continue;
+      }
+      do {
+        entry.name = `_zodbase_scalar_${alias++}`;
+      } while (names.has(entry.name));
+      names.add(entry.name);
+      common.push(sql`${raw(quote(entry.name))} AS MATERIALIZED (SELECT (${raw(text)}) AS ${raw(quote("value"))})`);
+    }
+    const tuples = rows.map(
+      (row) =>
+        sql`(${join(
+          keys.map((key) => {
+            const value = row[key];
+            return isSubquery(value)
+              ? shared.has(compiled.get(value)!)
+                ? sql`(SELECT ${raw(quote("value"))} FROM ${raw(quote(shared.get(compiled.get(value)!)!.name))})`
+                : sql`(${raw(compiled.get(value)!)})`
+              : raw(this.valueToSql(value, true));
+          }),
+          ", ",
+        )})`,
+    );
+    const result = await this.execute(
+      sql`INSERT INTO ${raw(quote(String(table.id)))} (${raw(keys.map(quote).join(", "))})${raw(shouldReturn ? this.insertReturningSql(table, "before-values") : "")} ${common.length ? sql`WITH ${join(common, ", ")} ` : raw("")}VALUES ${join(tuples, ", ")}${raw(shouldReturn ? this.insertReturningSql(table, "after-values") : "")}`,
+    );
+    return shouldReturn ? this.decodeResult(table, result) : { results: [], first: undefined };
+  }
+
   abstract executeInsert<TTable extends Table>(
     table: TTable,
     values: InputOfTable<TTable>,

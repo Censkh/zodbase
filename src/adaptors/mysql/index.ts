@@ -53,6 +53,7 @@ const TYPE_ORDERING: Record<FieldDiffType, number> = {
 export default class MysqlAdaptor<
   TDriver extends Connection | Pool = Connection | Pool,
 > extends DatabaseAdaptor<TDriver> {
+  protected override supportsSubqueryReturning = false;
   override async transaction<TResult>(callback: (adaptor: DatabaseAdaptor) => Promise<TResult>): Promise<TResult> {
     if ("getConnection" in this.driver) {
       const connection = await this.driver.getConnection();
@@ -138,7 +139,7 @@ export default class MysqlAdaptor<
     return value;
   }
 
-  buildSelectSql(select: SelectQuery): Statement {
+  override buildSelectSql(select: SelectQuery, scalar = false): Statement {
     const tableName = this.quoteIdentifier(String(select.table.id));
     const offsetSql = select.offset === undefined ? "" : ` OFFSET ${select.offset}`;
     const limitSql =
@@ -148,7 +149,7 @@ export default class MysqlAdaptor<
           ? " LIMIT 18446744073709551615"
           : "";
 
-    return sql`SELECT ${raw(this.selectFields(select.table, select.fields))}
+    return sql`SELECT ${raw(scalar ? select.fields.map((field) => this.quoteIdentifier(String(field.key))).join(", ") : this.selectFields(select.table, select.fields))}
       FROM ${raw(tableName)}${select.where ? sql` WHERE ${buildConditionSql(this, select.where)}` : raw("")}${
         select.orderBy.length > 0
           ? sql` ORDER BY ${raw(

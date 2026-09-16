@@ -73,3 +73,56 @@ test("preserves Cockroach's implicit region column when syncing", async () => {
   await context.db.syncTable(table);
   expect((await context.db.select(table, ["*"])).first).toEqual({ id: "one" });
 }, 60_000);
+
+test("regional scalar inserts retain point lookups and the auto-commit fast path", async () => {
+  const region = z.string().meta(metaStore([cockroachRegion()]));
+  const locality = metaStore([cockroachLocality({ type: "regional-by-row", regionColumn: "homeRegion" })]);
+  const parent = createTable({
+    id: "plan_regional_parent",
+    schema: z
+      .object({
+        id: z.string().meta(metaStore([primaryKey()])),
+        homeRegion: region,
+      })
+      .meta(locality),
+  });
+  const child = createTable({
+    id: "plan_regional_child",
+    schema: z
+      .object({
+        id: z.string().meta(metaStore([primaryKey()])),
+        homeRegion: region,
+      })
+      .meta(locality),
+  });
+  const { db } = context;
+  await db.syncTable(parent);
+  await db.syncTable(child);
+  await db.insertMany(
+    parent,
+    Array.from({ length: 128 }, (_, i) => ({ id: `parent-${i}`, homeRegion: "aws-ap-southeast-1" })),
+  );
+  await db.execute(sql`ANALYZE ${parent}`);
+  const { TO_SQL_SYMBOL } = await import("../src/Statement");
+  const adaptor = (db as any).options.adaptor;
+  const execute = adaptor.execute.bind(adaptor);
+  let statement = "";
+  adaptor.execute = (value: any) => {
+    statement = value[TO_SQL_SYMBOL]();
+    return execute(value);
+  };
+  const homeRegion = db.select(parent, ["homeRegion"]).where(parent.$id.equals("parent-64"));
+  await db.insertMany(child, [
+    { id: "one", homeRegion },
+    { id: "two", homeRegion },
+  ]);
+  const plan = JSON.stringify((await execute(raw(`EXPLAIN ${statement}`))).results);
+  expect(plan).toContain("plan_regional_parent_pkey");
+  expect(plan).not.toContain("FULL SCAN");
+  expect(plan).toContain("auto commit");
+  expect(statement).not.toContain("CAST");
+  expect((await db.select(child, ["homeRegion"])).results).toEqual([
+    { homeRegion: "aws-ap-southeast-1" },
+    { homeRegion: "aws-ap-southeast-1" },
+  ]);
+}, 60_000);

@@ -118,6 +118,42 @@ describe("adaptor execution contract", () => {
     );
   });
 
+  it("keeps scalar subqueries inside D1 write batches and rejects returning before commit", async () => {
+    const batches: string[][] = [];
+    const db = new Database({
+      adaptor: new D1Adaptor({
+        driver: {
+          prepare(statement: string) {
+            return { statement };
+          },
+          async batch(statements: { statement: string }[]) {
+            batches.push(statements.map((s) => s.statement));
+            return [];
+          },
+        } as never,
+      }),
+    });
+    const Table = createTable({ id: "source", schema: zod.object({ id: zod.string(), name: zod.string() }) });
+    await db.transaction(async (transaction) => {
+      await transaction.insert(Table, { id: "parent", name: "London" });
+      await transaction.insert(Table, {
+        id: "child",
+        name: transaction.select(Table, ["name"]).where(Table.$id.equals("parent")),
+      });
+    });
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toHaveLength(2);
+    expect(batches[0]?.[1]).toMatch(/^INSERT[\s\S]*SELECT/);
+    await expect(
+      db.transaction(async (transaction) => {
+        await transaction
+          .insert(Table, { id: "rejected", name: transaction.select(Table, ["name"]).one() })
+          .selectMutated();
+      }),
+    ).rejects.toThrow("write operations only");
+    expect(batches).toHaveLength(1);
+  });
+
   it("propagates D1 batch failures", async () => {
     const batchError = new Error("batch failed");
     const driver = {

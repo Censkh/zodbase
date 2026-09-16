@@ -1,3 +1,8 @@
+import { type InsertValues, SELECT_QUERY } from "./QueryBuilder";
+import { hasSubqueries, insertSubqueries, type SubqueryInsertResult } from "./Subquery";
+
+export type { InsertValues, ScalarSubquery } from "./QueryBuilder";
+
 import * as zod from "zod";
 import { findFieldMetaItems, getMetaItem } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
@@ -148,6 +153,7 @@ const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): Data
     execute: call("execute"),
     executeSelect: call("executeSelect"),
     executeInsert: call("executeInsert"),
+    executeInsertSubqueries: call("executeInsertSubqueries"),
     executeInsertMany: call("executeInsertMany"),
     executeUpdate: call("executeUpdate"),
     executeUpsert: call("executeUpsert"),
@@ -302,6 +308,7 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
   number
 > => {
   const builder = {
+    [SELECT_QUERY]: { query },
     table: query.table,
 
     clone() {
@@ -476,7 +483,13 @@ export class Database {
   insert<TTable extends Table>(
     table: TTable,
     values: InputOfTable<TTable>,
-  ): InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
+  ): InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, 1>>;
+  insert<TTable extends Table>(table: TTable, values: InsertValues<TTable>): SubqueryInsertResult<ValueOfTable<TTable>>;
+  insert<TTable extends Table>(
+    table: TTable,
+    values: InsertValues<TTable>,
+  ): InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, 1>> | SubqueryInsertResult<ValueOfTable<TTable>> {
+    if (hasSubqueries([values as object])) return insertSubqueries(this.options.adaptor, table, [values]);
     const parsedValues = table.schema.parse(values);
     const adaptor = this.options.adaptor;
     return toLazyPromise(
@@ -654,7 +667,18 @@ export class Database {
   insertMany<TTable extends Table>(
     table: TTable,
     values: InputOfTable<TTable>[],
-  ): InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, number>> {
+  ): InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, number>>;
+  insertMany<TTable extends Table>(
+    table: TTable,
+    values: InsertValues<TTable>[],
+  ): SubqueryInsertResult<ValueOfTable<TTable>>;
+  insertMany<TTable extends Table>(
+    table: TTable,
+    values: InsertValues<TTable>[],
+  ):
+    | InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, number>>
+    | SubqueryInsertResult<ValueOfTable<TTable>> {
+    if (hasSubqueries(values as object[])) return insertSubqueries(this.options.adaptor, table, values);
     if (values.length === 0) {
       return Promise.resolve({
         results: [],
