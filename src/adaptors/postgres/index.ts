@@ -134,7 +134,7 @@ export default class PostgresAdaptor<
                    ? sql` WHERE
                ${buildConditionSql(this, select.where, true)}`
                    : raw("")
-}${
+               }${
                  select.orderBy.length > 0
                    ? sql` ORDER BY
                    ${raw(
@@ -144,7 +144,7 @@ export default class PostgresAdaptor<
                      ),
                    )}`
                    : raw("")
-}${raw(select.limit !== undefined ? ` LIMIT ${select.limit}` : "")}${raw(
+               }${raw(select.limit !== undefined ? ` LIMIT ${select.limit}` : "")}${raw(
                  select.offset !== undefined ? ` OFFSET ${select.offset}` : "",
                )}`;
   }
