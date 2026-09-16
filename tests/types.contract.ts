@@ -53,19 +53,23 @@ db.insert(PeopleTable, {
 db.insertMany(PeopleTable, [{ id: "many", name: "Ada", age: db.select(PeopleTable, { age: PeopleTable.$age }).one() }]);
 // @ts-expect-error numeric projections cannot fill text columns
 db.insert(PeopleTable, { id: "wrong", name: db.select(PeopleTable, { age: PeopleTable.$age }), age: 1 });
-// @ts-expect-error multiple selected columns are not scalar values
 db.insert(PeopleTable, {
   id: "wide",
+  // @ts-expect-error multiple selected columns are not scalar values
   name: db.select(PeopleTable, { id: PeopleTable.$id, name: PeopleTable.$name }),
   age: 1,
 });
-// @ts-expect-error SELECT * is not a scalar projection
-db.insert(PeopleTable, { id: "star", name: db.select(PeopleTable), age: 1 });
-// @ts-expect-error parsed inputs cannot expose a database-computed value
+db.insert(PeopleTable, {
+  id: "star",
+  // @ts-expect-error SELECT * is not a scalar projection
+  name: db.select(PeopleTable),
+  age: 1,
+});
 db.insert(PeopleTable, {
   id: "parsed",
   name: db.select(PeopleTable, { name: PeopleTable.$name }),
   age: 1,
+  // @ts-expect-error parsed inputs cannot expose a database-computed value
 }).selectParsed();
 
 // Real provider driver types must work without casts or bundled runtime dependencies.
@@ -98,9 +102,9 @@ db.insert(NullableTarget, {
 });
 // @ts-expect-error a nullable projection cannot fill a non-nullable text column
 db.insert(PeopleTable, { id: "nullable", name: db.select(NullableSource, { value: NullableSource.$value }), age: 1 });
-// @ts-expect-error a date projection cannot fill a text column
 db.insert(PeopleTable, {
   id: "date",
+  // @ts-expect-error a date projection cannot fill a text column
   name: db.select(NullableSource, { timestamp: NullableSource.$timestamp }),
   age: 1,
 });
