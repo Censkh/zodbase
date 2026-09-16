@@ -12,7 +12,26 @@ import {
   type SqlResult,
   type ValueOfTable,
 } from "./QueryBuilder";
+import { TO_SQL_SYMBOL } from "./Statement";
 import type { Table } from "./Table";
+
+const snapshotValue = (value: unknown): unknown => {
+  if (value instanceof Date) return new Date(value.getTime());
+  if (Array.isArray(value)) return value.map(snapshotValue);
+  if (
+    value &&
+    typeof value === "object" &&
+    !(TO_SQL_SYMBOL in value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  )
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, snapshotValue(item)]));
+  return value;
+};
+
+const snapshotCondition = (condition: SelectCondition): SelectCondition =>
+  "conditions" in condition
+    ? { ...condition, conditions: condition.conditions.map(snapshotCondition) }
+    : { ...condition, value: snapshotValue(condition.value) };
 
 export const isSubquery = (value: unknown): value is ScalarSubquery<unknown> =>
   typeof value === "object" && value !== null && SELECT_QUERY in value;
@@ -43,7 +62,14 @@ export const insertSubqueries = <TTable extends Table>(
         throw new Error("Scalar subqueries must select exactly one column");
       // Snapshot the AST: later changes to a reusable builder must not change this insert.
       expressions[key] = {
-        [SELECT_QUERY]: { query: { ...query, fields: [...query.fields], orderBy: [...query.orderBy] } },
+        [SELECT_QUERY]: {
+          query: {
+            ...query,
+            fields: [...query.fields],
+            orderBy: query.orderBy.map((order) => ({ ...order })),
+            where: query.where ? snapshotCondition(query.where) : undefined,
+          },
+        },
       };
     }
     const mask = Object.fromEntries(Object.keys(expressions).map((key) => [key, true as const]));

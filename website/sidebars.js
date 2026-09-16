@@ -25,6 +25,9 @@ module.exports = {
         "adaptors/better-sqlite3",
         "adaptors/d1",
         "adaptors/postgres",
+        "adaptors/neon-http",
+        "adaptors/mssql",
+        "adaptors/cloud-providers",
         "adaptors/mysql",
         "adaptors/cockroach",
         "adaptors/turso",
@@ -39,5 +42,6 @@ module.exports = {
       items: ["configuration", "rsql", "sql"],
     },
     "reference",
+    "subquery-testing",
   ],
 };

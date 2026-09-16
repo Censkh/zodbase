@@ -4,11 +4,7 @@ import PostgresAdaptor from "../postgres";
 
 /** Pass the function returned by neon(connectionString). No driver dependency is bundled. */
 export interface NeonHttpDriver {
-  query(
-    text: string,
-    params: any[],
-    options: { arrayMode: false; fullResults: true },
-  ): PromiseLike<{ rows: any[] }>;
+  query(text: string, params: any[], options: { arrayMode: false; fullResults: true }): PromiseLike<{ rows: any[] }>;
 }
 
 export default class NeonHttpAdaptor extends PostgresAdaptor {
@@ -20,6 +16,8 @@ export default class NeonHttpAdaptor extends PostgresAdaptor {
   }
 
   override async transaction<TResult>(_callback: (adaptor: DatabaseAdaptor) => Promise<TResult>): Promise<TResult> {
-    throw new Error("Neon HTTP does not support interactive transactions; use PostgresAdaptor with Neon's Pool or Client");
+    throw new Error(
+      "Neon HTTP does not support interactive transactions; use PostgresAdaptor with Neon's Pool or Client",
+    );
   }
 }
