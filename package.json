@@ -3,14 +3,15 @@
   "version": "0.0.2",
   "main": "src/index.ts",
   "scripts": {
-    "test": "bun test --timeout 40000 --pass-with-no-tests && bun run test:types",
-    "test:compiled": "bun test --preload zod/compile --timeout 40000 --pass-with-no-tests && bun run test:types",
+    "test": "bun run test:runtime && bun run test:types",
+    "test:compiled": "bun run test:runtime --compiled && bun run test:types",
     "test:types": "tsc --noEmit --project tsconfig.types.json && bun run test:provider-types",
-    "check:fix": "tsc --noEmit --project tsconfig.json && npx @biomejs/biome check --write .",
-    "check": "tsc --noEmit --project tsconfig.json && npx @biomejs/biome check .",
+    "check:fix": "tsc --noEmit --project tsconfig.json && tsc --noEmit --project tsconfig.runner.json && npx @biomejs/biome check --write .",
+    "check": "tsc --noEmit --project tsconfig.json && tsc --noEmit --project tsconfig.runner.json && npx @biomejs/biome check .",
     "docs:dev": "cd website && bun run start",
     "docs:build": "cd website && bun run build",
-    "test:provider-types": "tsc --noEmit --project tsconfig.providers.json"
+    "test:provider-types": "tsc --noEmit --project tsconfig.providers.json",
+    "test:runtime": "bun run scripts/test.mts"
   },
   "repository": {
     "type": "git",

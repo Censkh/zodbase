@@ -4,7 +4,7 @@ import { createClient } from "@libsql/client";
 import { CockroachDbContainer, type StartedCockroachDbContainer } from "@testcontainers/cockroachdb";
 import { MySqlContainer, type StartedMySqlContainer } from "@testcontainers/mysql";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { createConnection } from "mysql2/promise";
+import { type ConnectionOptions, createConnection } from "mysql2/promise";
 import { Client } from "pg";
 import type { Database as DatabaseApi } from "../../src";
 import { Database } from "../../src";
@@ -14,6 +14,18 @@ import MariaDbAdaptor from "../../src/adaptors/mariadb";
 import MysqlAdaptor from "../../src/adaptors/mysql";
 import PostgresAdaptor from "../../src/adaptors/postgres";
 import TursoAdaptor from "../../src/adaptors/turso";
+
+interface SharedTestDatabases {
+  postgres: string;
+  cockroach: string;
+  mysql: ConnectionOptions;
+  mariadb: ConnectionOptions;
+}
+
+// Only the parent runner owns these disposable containers. Each test still gets its own database.
+const sharedDatabases: SharedTestDatabases | undefined = process.env.ZODBASE_TEST_DATABASES
+  ? JSON.parse(process.env.ZODBASE_TEST_DATABASES)
+  : undefined;
 
 export interface TestDatabaseContext {
   db: DatabaseApi;
@@ -55,17 +67,18 @@ const createTursoDatabase = async (): Promise<TestDatabaseContext> => {
 };
 
 const createPostgresDatabase = async (): Promise<TestDatabaseContext> => {
-  if (!postgresContainer) {
+  const uri = sharedDatabases?.postgres ?? postgresContainer?.getConnectionUri();
+  if (!uri) {
     throw new Error("PostgreSQL test container has not been started");
   }
 
   const databaseName = `zodbase_${crypto.randomUUID().replaceAll("-", "")}`;
-  const adminClient = new Client({ connectionString: postgresContainer.getConnectionUri() });
+  const adminClient = new Client({ connectionString: uri });
   await adminClient.connect();
   await adminClient.query(`CREATE DATABASE "${databaseName}"`);
   await adminClient.end();
 
-  const connectionUrl = new URL(postgresContainer.getConnectionUri());
+  const connectionUrl = new URL(uri);
   connectionUrl.pathname = `/${databaseName}`;
   const driver = new Client({ connectionString: connectionUrl.toString() });
   await driver.connect();
@@ -84,7 +97,7 @@ const createPostgresDatabase = async (): Promise<TestDatabaseContext> => {
     },
     async close() {
       await driver.end();
-      const cleanupClient = new Client({ connectionString: postgresContainer?.getConnectionUri() });
+      const cleanupClient = new Client({ connectionString: uri });
       await cleanupClient.connect();
       await cleanupClient.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
       await cleanupClient.end();
@@ -92,52 +105,48 @@ const createPostgresDatabase = async (): Promise<TestDatabaseContext> => {
   };
 };
 
-const createMysqlDatabase = async (container: StartedMySqlContainer | undefined): Promise<TestDatabaseContext> => {
-  if (!container) {
-    throw new Error("MySQL-compatible test container has not been started");
+const mysqlOptions = (container: StartedMySqlContainer): ConnectionOptions => ({
+  host: container.getHost(),
+  port: container.getPort(),
+  user: "root",
+  password: container.getRootPassword(),
+});
+
+const createMysqlDatabase = async (engine: "mysql" | "mariadb"): Promise<TestDatabaseContext> => {
+  const container = engine === "mariadb" ? mariadbContainer : mysqlContainer;
+  const options = sharedDatabases?.[engine] ?? (container && mysqlOptions(container));
+  if (!options) throw new Error("MySQL-compatible test container has not been started");
+
+  const databaseName = `zodbase_${crypto.randomUUID().replaceAll("-", "")}`;
+  const adminDriver = await createConnection(options);
+  try {
+    await adminDriver.query(`CREATE DATABASE \`${databaseName}\``);
+  } finally {
+    await adminDriver.end();
   }
-
-  const databaseName = `zodbase_${crypto.randomUUID().replace(/-/g, "")}`;
-  const adminDriver = await createConnection({
-    host: container.getHost(),
-    port: container.getPort(),
-    user: "root",
-    password: container.getRootPassword(),
-  });
-  await adminDriver.query(`CREATE DATABASE \`${databaseName}\``);
-  await adminDriver.end();
-
-  const driver = await createConnection({
-    host: container.getHost(),
-    port: container.getPort(),
-    user: "root",
-    password: container.getRootPassword(),
-    database: databaseName,
-  });
-
+  const driver = await createConnection({ ...options, database: databaseName });
   return {
-    db: new Database({ adaptor: new (container === mariadbContainer ? MariaDbAdaptor : MysqlAdaptor)({ driver }) }),
+    db: new Database({ adaptor: new (engine === "mariadb" ? MariaDbAdaptor : MysqlAdaptor)({ driver }) }),
     async close() {
       await driver.end();
-      const cleanupDriver = await createConnection({
-        host: container.getHost(),
-        port: container.getPort(),
-        user: "root",
-        password: container.getRootPassword(),
-      });
-      await cleanupDriver.query(`DROP DATABASE IF EXISTS \`${databaseName}\``);
-      await cleanupDriver.end();
+      const cleanupDriver = await createConnection(options);
+      try {
+        await cleanupDriver.query(`DROP DATABASE IF EXISTS \`${databaseName}\``);
+      } finally {
+        await cleanupDriver.end();
+      }
     },
   };
 };
 
 const createCockroachDatabase = async (): Promise<TestDatabaseContext> => {
-  if (!cockroachContainer) {
+  const uri = sharedDatabases?.cockroach ?? cockroachContainer?.getConnectionUri();
+  if (!uri) {
     throw new Error("CockroachDB test container has not been started");
   }
 
   const databaseName = `zodbase_${crypto.randomUUID().replace(/-/g, "")}`;
-  const adminDriver = new Client({ connectionString: cockroachContainer.getConnectionUri() });
+  const adminDriver = new Client({ connectionString: uri });
   await adminDriver.connect();
   try {
     await adminDriver.query(`CREATE DATABASE "${databaseName}"`);
@@ -145,7 +154,7 @@ const createCockroachDatabase = async (): Promise<TestDatabaseContext> => {
     await adminDriver.end();
   }
 
-  const connectionUrl = new URL(cockroachContainer.getConnectionUri());
+  const connectionUrl = new URL(uri);
   connectionUrl.pathname = `/${databaseName}`;
   const driver = new Client({ connectionString: connectionUrl.toString() });
   await driver.connect();
@@ -162,7 +171,7 @@ const createCockroachDatabase = async (): Promise<TestDatabaseContext> => {
     },
     async close() {
       await driver.end();
-      const cleanupDriver = new Client({ connectionString: cockroachContainer?.getConnectionUri() });
+      const cleanupDriver = new Client({ connectionString: uri });
       await cleanupDriver.connect();
       await cleanupDriver.query(`DROP DATABASE IF EXISTS "${databaseName}" CASCADE`);
       await cleanupDriver.end();
@@ -183,6 +192,7 @@ let cockroachContainerPromise: Promise<StartedCockroachDbContainer> | undefined;
 let cockroachSuiteLeases = 0;
 
 export const acquirePostgresTestContainer = async (): Promise<void> => {
+  if (sharedDatabases) return;
   process.env.TESTCONTAINERS_RYUK_DISABLED ??= "true";
   postgresSuiteLeases += 1;
   postgresContainerPromise ??= new PostgreSqlContainer("postgres:17-alpine").withStartupTimeout(120_000).start();
@@ -190,6 +200,7 @@ export const acquirePostgresTestContainer = async (): Promise<void> => {
 };
 
 export const releasePostgresTestContainer = async (): Promise<void> => {
+  if (sharedDatabases) return;
   postgresSuiteLeases -= 1;
   if (postgresSuiteLeases === 0 && postgresContainer) {
     await postgresContainer.stop();
@@ -199,6 +210,7 @@ export const releasePostgresTestContainer = async (): Promise<void> => {
 };
 
 export const acquireMysqlTestContainers = async (): Promise<void> => {
+  if (sharedDatabases) return;
   process.env.TESTCONTAINERS_RYUK_DISABLED ??= "true";
   mysqlSuiteLeases += 1;
   mysqlContainerPromise ??= new MySqlContainer("mysql:8.4")
@@ -215,10 +227,19 @@ export const acquireMysqlTestContainers = async (): Promise<void> => {
     .withRootPassword("root-password")
     .withStartupTimeout(120_000)
     .start();
-  [mysqlContainer, mariadbContainer] = await Promise.all([mysqlContainerPromise, mariadbContainerPromise]);
+  const results = await Promise.allSettled([
+    mysqlContainerPromise.then((container) => {
+      mysqlContainer = container;
+    }),
+    mariadbContainerPromise.then((container) => {
+      mariadbContainer = container;
+    }),
+  ]);
+  for (const result of results) if (result.status === "rejected") throw result.reason;
 };
 
 export const releaseMysqlTestContainers = async (): Promise<void> => {
+  if (sharedDatabases) return;
   mysqlSuiteLeases -= 1;
   if (mysqlSuiteLeases === 0) {
     await Promise.all([mysqlContainer?.stop(), mariadbContainer?.stop()]);
@@ -230,6 +251,7 @@ export const releaseMysqlTestContainers = async (): Promise<void> => {
 };
 
 export const acquireCockroachTestContainer = async (): Promise<void> => {
+  if (sharedDatabases) return;
   process.env.TESTCONTAINERS_RYUK_DISABLED ??= "true";
   cockroachSuiteLeases += 1;
   cockroachContainerPromise ??= new CockroachDbContainer("cockroachdb/cockroach:v26.2.2")
@@ -247,6 +269,7 @@ export const acquireCockroachTestContainer = async (): Promise<void> => {
 };
 
 export const releaseCockroachTestContainer = async (): Promise<void> => {
+  if (sharedDatabases) return;
   cockroachSuiteLeases -= 1;
   if (cockroachSuiteLeases === 0 && cockroachContainer) {
     await cockroachContainer.stop();
@@ -256,7 +279,12 @@ export const releaseCockroachTestContainer = async (): Promise<void> => {
 };
 
 export const acquireTestDatabaseContainers = async (): Promise<void> => {
-  await Promise.all([acquirePostgresTestContainer(), acquireMysqlTestContainers(), acquireCockroachTestContainer()]);
+  const results = await Promise.allSettled([
+    acquirePostgresTestContainer(),
+    acquireMysqlTestContainers(),
+    acquireCockroachTestContainer(),
+  ]);
+  for (const result of results) if (result.status === "rejected") throw result.reason;
 };
 
 export const releaseTestDatabaseContainers = async (): Promise<void> => {
@@ -268,6 +296,18 @@ export const TEST_DATABASE_FACTORIES: TestDatabaseFactory[] = [
   { name: "turso-local", create: createTursoDatabase },
   { name: "postgres", create: createPostgresDatabase },
   { name: "cockroach", create: createCockroachDatabase },
-  { name: "mysql", create: () => createMysqlDatabase(mysqlContainer) },
-  { name: "mariadb", create: () => createMysqlDatabase(mariadbContainer) },
+  { name: "mysql", create: () => createMysqlDatabase("mysql") },
+  { name: "mariadb", create: () => createMysqlDatabase("mariadb") },
 ];
+
+export const getSharedTestDatabases = (): string => {
+  if (!postgresContainer || !cockroachContainer || !mysqlContainer || !mariadbContainer) {
+    throw new Error("Test containers must be started before sharing connection details");
+  }
+  return JSON.stringify({
+    postgres: postgresContainer.getConnectionUri(),
+    cockroach: cockroachContainer.getConnectionUri(),
+    mysql: mysqlOptions(mysqlContainer),
+    mariadb: mysqlOptions(mariadbContainer),
+  } satisfies SharedTestDatabases);
+};

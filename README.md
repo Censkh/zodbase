@@ -48,3 +48,23 @@ driver.close();
 - [Queries](https://zodbase.knownquantity.net/queries/) and [mutations](https://zodbase.knownquantity.net/mutations/) — reading and writing data.
 - [Database adaptors](https://zodbase.knownquantity.net/adaptors/) — connection examples and database-specific behavior.
 - [API at a glance](https://zodbase.knownquantity.net/reference/) — a hand-written overview of the public surface.
+
+## Running tests
+
+Use Bun 1.4.2 or newer and Docker, then run `bun run test` (or
+`bun run test:compiled` for compiled Zod). The runner starts one container per
+server database, shares their connection details with two isolated test-file
+workers, and stops the containers when the run finishes, fails, or is interrupted.
+Every test retains its own database; schema/migration tests still create real
+fresh databases rather than reusing tables or rolling back DDL.
+
+`bun run test:runtime` skips the separate TypeScript contracts.
+`ZODBASE_TEST_WORKERS=1 bun run test:runtime` runs serially with the same shared
+containers for comparison; increase the worker count explicitly to benchmark it.
+You can pass file paths to this command. For lightweight individual tests,
+`bun test tests/select.test.ts` still works without starting all containers.
+
+Do not enable `--concurrent`: tests within a file share mutable beforeEach state.
+File-level process isolation avoids those races. CI keeps the existing Zod matrix
+and runs checks, type contracts, and runtime tests alongside each other inside each
+job, without sharding the suite into additional jobs.
