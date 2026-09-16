@@ -1,6 +1,6 @@
 import { getZodTypeFields } from "zod-meta";
 import { quoteIdentifier } from "./Escaping";
-import type { SelectCondition, SingleFieldBinding, ValueOfTable } from "./QueryBuilder";
+import type { Falsy, SelectCondition, SingleFieldBinding, ValueOfTable } from "./QueryBuilder";
 import { TO_SQL_SYMBOL } from "./Statement";
 import type { Bindings, Table } from "./Table";
 
@@ -109,17 +109,17 @@ const createSelectCondition = (options: Omit<SelectCondition, "and" | "or">): Se
   return {
     ...options,
 
-    and(...condition: SelectCondition[]): SelectCondition {
+    and(...condition: Array<SelectCondition | Falsy>): SelectCondition {
       return createSelectCondition({
         type: "AND",
-        conditions: [this, ...condition],
+        conditions: [this, ...condition.filter((item): item is SelectCondition => Boolean(item))],
       });
     },
 
-    or(...condition: SelectCondition[]): SelectCondition {
+    or(...condition: Array<SelectCondition | Falsy>): SelectCondition {
       return createSelectCondition({
         type: "OR",
-        conditions: [this, ...condition],
+        conditions: [this, ...condition.filter((item): item is SelectCondition => Boolean(item))],
       });
     },
   } as SelectCondition;

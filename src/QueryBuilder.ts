@@ -124,11 +124,34 @@ export const isFieldReference = (value: unknown): value is SingleFieldBinding =>
   "key" in value &&
   "schema" in value;
 
+export const validateSelectCondition = (condition: unknown, context = "select condition"): SelectCondition => {
+  if (!condition || typeof condition !== "object") {
+    throw new Error(`Invalid ${context}: expected a zodbase condition, got ${String(condition)}`);
+  }
+
+  if ("conditions" in condition) {
+    const compound = condition as { conditions: unknown; type?: unknown };
+    if ((compound.type !== "AND" && compound.type !== "OR") || !Array.isArray(compound.conditions)) {
+      throw new Error(`Invalid ${context}: compound conditions must have type AND/OR and a conditions array`);
+    }
+    compound.conditions.forEach((childCondition, index) => {
+      validateSelectCondition(childCondition, `${context}.conditions[${index}]`);
+    });
+    return condition as SelectCondition;
+  }
+
+  if (!("field" in condition) || !("operator" in condition) || !("value" in condition)) {
+    throw new Error(`Invalid ${context}: expected a field condition or compound condition`);
+  }
+  return condition as SelectCondition;
+};
+
 export const buildConditionSql = (
   adaptor: DatabaseAdaptor,
   condition: SelectCondition,
   options?: boolean | { doubleQuote?: boolean; includeTable?: boolean },
 ): Statement => {
+  condition = validateSelectCondition(condition);
   const includeTable = typeof options === "boolean" ? true : (options?.includeTable ?? true);
 
   if ("conditions" in condition) {

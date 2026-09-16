@@ -12,6 +12,7 @@ import {
   type SelectQuery,
   type SqlResult,
   type ValueOfTable,
+  validateSelectCondition,
 } from "./QueryBuilder";
 import { TO_SQL_SYMBOL } from "./Statement";
 import type { Table } from "./Table";
@@ -29,10 +30,12 @@ const snapshotValue = (value: unknown): unknown => {
   return value;
 };
 
-export const snapshotCondition = (condition: SelectCondition): SelectCondition =>
-  "conditions" in condition
+export const snapshotCondition = (condition: SelectCondition): SelectCondition => {
+  condition = validateSelectCondition(condition);
+  return "conditions" in condition
     ? { ...condition, conditions: condition.conditions.map(snapshotCondition) }
     : { ...condition, value: snapshotValue(condition.value) };
+};
 
 export const snapshotQuery = (query: SelectQuery): SelectQuery => ({
   ...query,

@@ -172,12 +172,15 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
   it("supports repeated where calls and ignores conditional falsy clauses", async () => {
     await db.insertMany(PeopleTable, people);
 
-    const result = await db
+    const query = db
       .select(PeopleTable, { id: PeopleTable.$id })
       .where(PeopleTable.$age.greaterThanOrEquals(36))
       .where(PeopleTable.$name.notEquals("Grace").and(false, undefined, null, "", 0));
 
+    const result = await query.clone();
+
     expect(result.results).toEqual([{ id: "1" }, { id: "4" }]);
+    expect((await query.count()).first).toEqual({ id: 2 });
   });
 
   it("selects explicit projections independently", async () => {
