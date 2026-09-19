@@ -1,4 +1,4 @@
-import * as zod from "zod";
+import * as zod from "zod/v4";
 import type { Class } from "./Types";
 
 export const isZodTypeExtends = (type: zod.ZodType, zodType: Class<zod.ZodType>): zod.ZodType | false => {
@@ -16,7 +16,7 @@ export const isZodTypeExtends = (type: zod.ZodType, zodType: Class<zod.ZodType>)
     return false;
   }
   // @ts-expect-error
-  const rootType = type.def.innerType;
+  const rootType = type.def.innerType ?? type.def.in;
   if (rootType) {
     return isZodTypeExtends(rootType, zodType);
   }
