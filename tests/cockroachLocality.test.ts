@@ -126,3 +126,51 @@ test("regional scalar inserts retain point lookups and the auto-commit fast path
     { homeRegion: "aws-ap-southeast-1" },
   ]);
 }, 60_000);
+
+test("converts a regional-by-row parent to global while keeping its region column and children", async () => {
+  const region = z.string().meta(metaStore([cockroachRegion()]));
+  const regionalByRow = metaStore([cockroachLocality({ type: "regional-by-row", regionColumn: "homeRegion" })]);
+  const parentSchema = z.object({
+    id: z.string().meta(metaStore([primaryKey()])),
+    homeRegion: region,
+    userId: z.string(),
+  });
+  const regionalParent = createTable({ id: "global_parent", schema: parentSchema.meta(regionalByRow) });
+  regionalParent.addIndex("global_parent_user", [regionalParent.$userId]);
+  const globalParent = createTable({
+    id: "global_parent",
+    schema: parentSchema.meta(metaStore([cockroachLocality({ type: "global" })])),
+  });
+  globalParent.addIndex("global_parent_user", [globalParent.$userId]);
+  const child = createTable({
+    id: "global_parent_child",
+    schema: z
+      .object({
+        id: z.string().meta(metaStore([primaryKey()])),
+        homeRegion: region,
+        parentId: z.string().meta(metaStore([foreignKey({ field: regionalParent.$id, onDelete: "cascade" })])),
+      })
+      .meta(regionalByRow),
+  });
+  const { db } = context;
+  await db.syncTable(regionalParent);
+  await db.syncTable(child);
+  await db.insert(regionalParent, { id: "p", homeRegion: "aws-ap-southeast-1", userId: "u" });
+  await db.insert(child, { id: "c", parentId: "p", homeRegion: "aws-ap-southeast-1" });
+
+  await db.syncTable(globalParent);
+  await db.syncTable(child);
+  await db.syncTable(globalParent);
+
+  const createStatement = async (table: string) =>
+    String((await db.execute(sql`SHOW CREATE TABLE ${raw(table)}`)).first?.create_statement);
+  expect(await createStatement("global_parent")).toContain("LOCALITY GLOBAL");
+  expect(await createStatement("global_parent_child")).toContain('LOCALITY REGIONAL BY ROW AS "homeRegion"');
+  expect((await db.select(globalParent).where(globalParent.$userId.equals("u"))).first).toEqual({
+    id: "p",
+    homeRegion: "aws-ap-southeast-1",
+    userId: "u",
+  });
+  await db.delete(globalParent).where(globalParent.$id.equals("p"));
+  expect((await db.select(child)).results).toHaveLength(0);
+}, 120_000);
