@@ -113,7 +113,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
 
           await this.execute(
             sql`UPDATE ${table.id}
-                  SET ${raw(quoteIdentifier(String(fieldDiff.key)))} = ${backfillValue}
+                  SET ${raw(quoteIdentifier(String(fieldDiff.key)))} = ${raw(valueToSql(backfillValue, true))}
                   WHERE ${raw(quoteIdentifier(String(fieldDiff.key)))} IS NULL`,
           );
           remake = true;
@@ -137,7 +137,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
 
             await this.execute(
               sql`UPDATE ${table.id}
-                 SET ${raw(quoteIdentifier(String(fieldDiff.key)))} = ${backfillValue}
+                 SET ${raw(quoteIdentifier(String(fieldDiff.key)))} = ${raw(valueToSql(backfillValue, true))}
                  WHERE ${raw(quoteIdentifier(String(fieldDiff.key)))} IS NULL`,
             );
           }

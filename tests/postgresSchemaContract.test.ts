@@ -79,6 +79,8 @@ describe("PostgreSQL schema synchronization contract", () => {
         name: zod.string(),
         nickname: zod.string().nullable(),
         role: withBackfill(zod.string(), "user"),
+        tags: withBackfill(zod.array(zod.string()), ["visual"]),
+        settings: withBackfill(zod.object({ theme: zod.string() }), { theme: "dark" }),
       }),
     });
     await context.db.syncTable(UpdatedTable);
@@ -88,6 +90,8 @@ describe("PostgreSQL schema synchronization contract", () => {
       name: "Ada",
       nickname: null,
       role: "user",
+      tags: ["visual"],
+      settings: { theme: "dark" },
     });
     expect(await columnInfo("pg_schema_people")).toContainEqual(
       expect.objectContaining({ column_name: "role", is_nullable: "NO" }),

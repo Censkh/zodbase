@@ -425,7 +425,7 @@ export default class PostgresAdaptor<
 
           await this.execute(
             sql`UPDATE ${table.id}
-                SET ${raw(quoteIdentifier(String(fieldDiff.key)))} = ${backfillValue}
+                SET ${raw(quoteIdentifier(String(fieldDiff.key)))} = ${raw(valueToSql(backfillValue, true))}
                 WHERE ${raw(quoteIdentifier(String(fieldDiff.key)))} IS NULL`,
           );
         }
@@ -461,7 +461,7 @@ export default class PostgresAdaptor<
 
             await this.execute(
               sql`UPDATE ${table.id}
-                  SET ${raw(quoteIdentifier(String(fieldDiff.key)))} = ${backfillValue}
+                  SET ${raw(quoteIdentifier(String(fieldDiff.key)))} = ${raw(valueToSql(backfillValue, true))}
                   WHERE ${raw(quoteIdentifier(String(fieldDiff.key)))} IS NULL`,
             );
           }

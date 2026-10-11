@@ -385,7 +385,9 @@ export default class MysqlAdaptor<
           if (backfillValue === undefined || backfillValue === null) {
             throw new Error(`[zodbase] Backfill value is required when adding required field '${field?.key}'`);
           }
-          await this.execute(sql`UPDATE ${tableSql} SET ${columnSql} = ${backfillValue} WHERE ${columnSql} IS NULL`);
+          await this.execute(
+            sql`UPDATE ${tableSql} SET ${columnSql} = ${raw(valueToSql(backfillValue, true))} WHERE ${columnSql} IS NULL`,
+          );
         }
         if (isZodRequired(schema)) {
           await this.execute(
@@ -415,7 +417,9 @@ export default class MysqlAdaptor<
           if (backfillValue === undefined || backfillValue === null) {
             throw new Error(`[zodbase] Backfill value is required when adding required field '${field?.key}'`);
           }
-          await this.execute(sql`UPDATE ${tableSql} SET ${columnSql} = ${backfillValue} WHERE ${columnSql} IS NULL`);
+          await this.execute(
+            sql`UPDATE ${tableSql} SET ${columnSql} = ${raw(valueToSql(backfillValue, true))} WHERE ${columnSql} IS NULL`,
+          );
         }
         for (const modification of fieldDiff.modifications ?? []) {
           if (modification.type === "add-constraint" || modification.type === "remove-constraint") {
