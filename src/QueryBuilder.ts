@@ -179,9 +179,10 @@ export const buildConditionSql = (
   let check = sql`${raw(condition.operator)}
   ${raw(isFieldReference(condition.value) ? `${adaptor.quoteIdentifier(String(condition.value.table.id))}.${adaptor.quoteIdentifier(String(condition.value.key))}` : adaptor.valueToSql(condition.value))}`;
 
-  if (condition.operator === "=" && condition.value === null) {
+  // `= NULL` never matches, so a missing value (null or undefined) compares with IS [NOT] NULL.
+  if (condition.operator === "=" && condition.value == null) {
     check = sql`IS NULL`;
-  } else if (condition.operator === "!=" && condition.value === null) {
+  } else if (condition.operator === "!=" && condition.value == null) {
     check = sql`IS NOT NULL`;
   }
 

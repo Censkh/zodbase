@@ -33,7 +33,7 @@ const parseValue = (schema: zod.ZodType, value: string): string | number | boole
   }
   if (isZodTypeExtends(valueSchema, zod.ZodNumber)) {
     const numberValue = Number(value);
-    if (!Number.isNaN(numberValue) && value !== "") {
+    if (Number.isFinite(numberValue) && value !== "") {
       return numberValue;
     }
     throw new Error(`Invalid numeric value: ${value}`);

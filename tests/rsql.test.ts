@@ -349,3 +349,11 @@ describe("RSQL Filter", () => {
     });
   });
 });
+
+describe("RSQL numeric values", () => {
+  it("rejects numbers that are not finite", () => {
+    for (const filter of ["price>1e999", "price==Infinity", "quantity<-Infinity"]) {
+      expect(() => rsqlToCondition(AssetTable, filter)).toThrow();
+    }
+  });
+});

@@ -328,17 +328,18 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
       return this;
     },
     limit<TLimit extends number>(limit: TLimit) {
-      query.limit = limit;
+      query.limit = assertPageBound("limit", limit);
       return this;
     },
     offset(offset: number) {
-      query.offset = offset;
+      query.offset = assertPageBound("offset", offset);
       return this;
     },
     one() {
       return this.limit(1);
     },
     orderBy(field: SingleFieldBinding<ValueOfTable<TTable>>, direction: OrderDirection) {
+      if (direction !== "ASC" && direction !== "DESC") throw new Error("Invalid order direction");
       query.orderBy.push({
         field: field,
         direction,
@@ -379,12 +380,23 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
   return toLazyPromise(() => adaptor.executeSelect(query), builder) as any;
 };
 
+// Limits and offsets are spliced into SQL text, so only non-negative safe integers are accepted.
+const assertPageBound = <T extends number>(name: "limit" | "offset", value: T): T => {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`Invalid ${name}`);
+  return value;
+};
+
 const parseUpdateValues = (schema: zod.ZodObject<any>, values: Record<string, unknown>) => {
   const parsedValues: Record<string, unknown> = {};
   for (const key of Object.keys(values)) {
     // biome-ignore lint/suspicious/noPrototypeBuiltins: Consumers may target Object APIs older than ES2022.
     if (!Object.prototype.hasOwnProperty.call(schema.shape, key)) continue;
+    // An explicit undefined leaves the column alone; parsing it would write the field's default.
+    if (values[key] === undefined) continue;
     parsedValues[key] = schema.shape[key].parse(values[key]);
+  }
+  if (Object.keys(parsedValues).length === 0) {
+    throw new Error("No values to update");
   }
   return parsedValues;
 };
