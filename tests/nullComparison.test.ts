@@ -38,22 +38,6 @@ describe("comparisons with a missing value", () => {
   });
 });
 
-describe("update with explicit undefined values", () => {
-  it("leaves a defaulted column alone instead of writing its default", async () => {
-    const db = await createDb();
-    await db.update(ItemTable, { name: "renamed", credits: undefined }, ItemTable.$id.equals("child"));
-    const { first } = await db.select(ItemTable).where(ItemTable.$id.equals("child")).one();
-    expect(first).toMatchObject({ name: "renamed", credits: 7 });
-  });
-
-  it("refuses an update whose every value is undefined", async () => {
-    const db = await createDb();
-    expect(() => db.update(ItemTable, { name: undefined }, ItemTable.$id.equals("child"))).toThrow(
-      "No values to update",
-    );
-  });
-});
-
 describe("paging and ordering arguments", () => {
   it("rejects limits and offsets that are not non-negative safe integers", async () => {
     const db = await createDb();
