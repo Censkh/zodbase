@@ -328,18 +328,17 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
       return this;
     },
     limit<TLimit extends number>(limit: TLimit) {
-      query.limit = assertPageBound("limit", limit);
+      query.limit = limit;
       return this;
     },
     offset(offset: number) {
-      query.offset = assertPageBound("offset", offset);
+      query.offset = offset;
       return this;
     },
     one() {
       return this.limit(1);
     },
     orderBy(field: SingleFieldBinding<ValueOfTable<TTable>>, direction: OrderDirection) {
-      if (direction !== "ASC" && direction !== "DESC") throw new Error("Invalid order direction");
       query.orderBy.push({
         field: field,
         direction,
@@ -368,6 +367,7 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
     },
 
     async execute() {
+      assertSelectArguments(query);
       return adaptor.executeSelect(query);
     },
     async count() {
@@ -377,13 +377,27 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
     },
   };
 
-  return toLazyPromise(() => adaptor.executeSelect(query), builder) as any;
+  return toLazyPromise(() => {
+    assertSelectArguments(query);
+    return adaptor.executeSelect(query);
+  }, builder) as any;
 };
 
-// Limits and offsets are spliced into SQL text, so only non-negative safe integers are accepted.
-const assertPageBound = <T extends number>(name: "limit" | "offset", value: T): T => {
-  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`Invalid ${name}`);
-  return value;
+/**
+ * Limits, offsets and order directions are spliced into SQL text, so a query runs only with
+ * non-negative safe integers and ASC/DESC. Checked when the query executes, like the relational
+ * compiler does, so an invalid value rejects rather than throwing while the query is being built.
+ */
+const assertSelectArguments = (query: SelectQuery) => {
+  for (const [name, value] of [
+    ["limit", query.limit],
+    ["offset", query.offset],
+  ] as const) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) throw new Error(`Invalid ${name}`);
+  }
+  for (const { direction } of query.orderBy) {
+    if (direction !== "ASC" && direction !== "DESC") throw new Error("Invalid order direction");
+  }
 };
 
 const parseUpdateValues = (schema: zod.ZodObject<any>, values: Record<string, unknown>) => {

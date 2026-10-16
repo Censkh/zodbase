@@ -42,8 +42,8 @@ describe("paging and ordering arguments", () => {
   it("rejects limits and offsets that are not non-negative safe integers", async () => {
     const db = await createDb();
     for (const value of [-1, 1.5, Number.NaN, 1e21, "5" as unknown as number]) {
-      expect(() => db.select(ItemTable).limit(value)).toThrow("Invalid limit");
-      expect(() => db.select(ItemTable).offset(value)).toThrow("Invalid offset");
+      await expect(Promise.resolve(db.select(ItemTable).limit(value))).rejects.toThrow("Invalid limit");
+      await expect(Promise.resolve(db.select(ItemTable).offset(value))).rejects.toThrow("Invalid offset");
     }
     const { results } = await db.select(ItemTable).limit(1).offset(1);
     expect(results).toHaveLength(1);
@@ -51,8 +51,8 @@ describe("paging and ordering arguments", () => {
 
   it("rejects an order direction other than ASC or DESC", async () => {
     const db = await createDb();
-    expect(() => db.select(ItemTable).orderBy(ItemTable.$name, "ASC; DROP TABLE item" as any)).toThrow(
-      "Invalid order direction",
-    );
+    await expect(
+      Promise.resolve(db.select(ItemTable).orderBy(ItemTable.$name, "ASC; DROP TABLE item" as any)),
+    ).rejects.toThrow("Invalid order direction");
   });
 });
