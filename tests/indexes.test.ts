@@ -96,6 +96,69 @@ describe("indexes", () => {
     ).toMatchObject({ count: 1 });
   });
 
+  it("drops stale indexes on a column before removing it", async () => {
+    const AssetTable = createAssetTable();
+    AssetTable.addIndex("asset_project_status", [AssetTable.$projectId, AssetTable.$status]);
+    AssetTable.addIndex("asset_status_index", [AssetTable.$status]);
+
+    const { db, rawDb } = createTestDatabase();
+    await db.syncTable(AssetTable);
+    rawDb.run("INSERT INTO asset (id, projectId, status) VALUES ('a1', 'p1', 'ready')");
+
+    const WithoutStatus = createTable({
+      id: "asset",
+      schema: zod.object({
+        id: zod.string(),
+        projectId: zod.string(),
+        externalId: zod.string().nullish(),
+      }),
+    });
+    WithoutStatus.addIndex("asset_project", [WithoutStatus.$projectId]);
+    await db.syncTable(WithoutStatus);
+
+    expect(rawDb.query("PRAGMA table_info(asset)").all()).not.toContainEqual(
+      expect.objectContaining({ name: "status" }),
+    );
+    const indexNames = rawDb
+      .query("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'asset'")
+      .all()
+      .map((row) => (row as { name: string }).name);
+    expect(indexNames).not.toContain("asset_project_status");
+    expect(indexNames).not.toContain("asset_status_index");
+    expect(indexNames).toContain("asset_project");
+    expect(rawDb.query("SELECT id, projectId FROM asset").all()).toEqual([{ id: "a1", projectId: "p1" }]);
+  });
+
+  it("drops stale partial indexes whose predicate uses a removed column", async () => {
+    const AssetTable = createAssetTable();
+    AssetTable.addIndex("asset_project_external_id_unique", [AssetTable.$projectId, AssetTable.$externalId], {
+      unique: true,
+      where: AssetTable.$status.equals("ready"),
+    });
+    AssetTable.addIndex("asset_external_id", [AssetTable.$externalId]);
+
+    const { db, rawDb } = createTestDatabase();
+    await db.syncTable(AssetTable);
+
+    const WithoutStatus = createTable({
+      id: "asset",
+      schema: zod.object({
+        id: zod.string(),
+        projectId: zod.string(),
+        externalId: zod.string().nullish(),
+      }),
+    });
+    WithoutStatus.addIndex("asset_external_id", [WithoutStatus.$externalId]);
+    await db.syncTable(WithoutStatus);
+
+    const indexNames = rawDb
+      .query("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'asset'")
+      .all()
+      .map((row) => (row as { name: string }).name);
+    expect(indexNames).not.toContain("asset_project_external_id_unique");
+    expect(indexNames).toContain("asset_external_id");
+  });
+
   it("enforces partial unique indexes without rejecting null values", async () => {
     const AssetTable = createAssetTable();
     AssetTable.addIndex("asset_project_external_id_unique", [AssetTable.$projectId, AssetTable.$externalId], {

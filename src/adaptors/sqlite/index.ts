@@ -122,6 +122,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
           remake = true;
         }
       } else if (fieldDiff.type === "removed") {
+        await this.dropIndexesReferencingColumn(table, String(fieldDiff.key));
         await this.execute(sql`ALTER TABLE ${table.id}
             DROP COLUMN ${raw(quoteIdentifier(String(fieldDiff.key)))}`);
       } else if (fieldDiff.type === "modified") {
@@ -156,6 +157,37 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
       );
       await this.execute(sql`DROP TABLE ${table.id}`);
       await this.execute(sql`ALTER TABLE ${raw(quoteIdentifier(tempTableId))} RENAME TO ${table}`);
+    }
+  }
+
+  // SQLite refuses to drop a column while an index still uses it, and the table definition no longer
+  // knows about indexes that were removed along with the column. Drop every explicitly created index
+  // that lists the column or mentions it in its partial predicate; indexes the table still declares
+  // are recreated by syncTableIndexes afterwards.
+  private async dropIndexesReferencingColumn(table: Table, column: string): Promise<void> {
+    const indexes = await this.execute(sql`PRAGMA index_list(${raw(quoteIdentifier(table.id))})`);
+    for (const index of indexes.results as { name: string; origin: string }[]) {
+      if (index.origin !== "c") continue;
+      const columns = await this.execute(sql`PRAGMA index_info(${raw(quoteIdentifier(index.name))})`);
+      const listsColumn = (columns.results as { name: string | null }[]).some((info) => info.name === column);
+      let mentionsColumn = false;
+      if (!listsColumn) {
+        const definition = await this.execute(
+          sql`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ${index.name}`,
+        );
+        const definitionSql = String((definition.first as { sql?: string | null } | undefined)?.sql ?? "");
+        const whereAt = definitionSql.toUpperCase().lastIndexOf(" WHERE ");
+        if (whereAt !== -1) {
+          const predicate = definitionSql.slice(whereAt);
+          const escapedColumn = column.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          mentionsColumn =
+            predicate.includes(quoteIdentifier(column)) ||
+            new RegExp(`(^|[^\\w"])${escapedColumn}([^\\w"]|$)`).test(predicate);
+        }
+      }
+      if (listsColumn || mentionsColumn) {
+        await this.execute(sql`DROP INDEX IF EXISTS ${raw(quoteIdentifier(index.name))}`);
+      }
     }
   }
 
