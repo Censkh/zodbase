@@ -79,9 +79,9 @@ export interface SingleFieldBinding<
     value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined> | undefined | null,
   ): SelectFieldCondition<TValue, TKey>;
 
-  in(values: TValue[TKey][]): SelectFieldCondition<TValue, TKey>;
+  in(values: TValue[TKey][] | Statement): SelectFieldCondition<TValue, TKey>;
 
-  notIn(values: TValue[TKey][]): SelectFieldCondition<TValue, TKey>;
+  notIn(values: TValue[TKey][] | Statement): SelectFieldCondition<TValue, TKey>;
 
   contains(value: unknown): SelectFieldCondition<TValue, TKey>;
 }
@@ -172,7 +172,11 @@ export const buildConditionSql = (
     return adaptor.buildJsonArrayContainsSql(fieldSql, condition.value);
   }
 
-  if ((condition.operator === "IN" || condition.operator === "NOT IN") && condition.value.length === 0) {
+  if (
+    (condition.operator === "IN" || condition.operator === "NOT IN") &&
+    Array.isArray(condition.value) &&
+    condition.value.length === 0
+  ) {
     return sql`${raw(condition.operator === "IN" ? "1 = 0" : "1 = 1")}`;
   }
 
