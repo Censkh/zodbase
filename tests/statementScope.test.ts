@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import BunDatabase from "bun:sqlite";
+import { expect, test } from "bun:test";
 import * as zod from "zod";
 import { createTable, Database, sql } from "../src";
 import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
