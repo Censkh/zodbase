@@ -9,11 +9,11 @@
   },
   "linter": {
     "enabled": true,
-
     "rules": {
       "preset": "recommended",
       "complexity": {
-        "noBannedTypes": "off"
+        "noBannedTypes": "off",
+        "noImportantStyles": "off"
       },
       "a11y": {
         "useKeyWithClickEvents": "off"
@@ -28,7 +28,8 @@
         "noArrayIndexKey": "off"
       },
       "style": {
-        "noNonNullAssertion": "off"
+        "noNonNullAssertion": "off",
+        "noDescendingSpecificity": "off"
       }
     }
   },
@@ -41,5 +42,13 @@
     "enabled": true,
     "clientKind": "git",
     "useIgnoreFile": true
+  },
+  "markdown": {
+    "formatter": {
+      "enabled": false
+    },
+    "linter": {
+      "enabled": false
+    }
   }
 }
