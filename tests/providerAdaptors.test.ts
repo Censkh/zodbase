@@ -288,7 +288,11 @@ describe("PostgreSQL numeric result decoding", () => {
 
   it("rejects invalid numbers and out-of-range integer timestamps instead of silently changing them", async () => {
     const numericTable = createTable({ id: "invalid_numeric_results", schema: z.object({ at: z.number().int() }) });
-    for (const at of ["", "not-a-number", "9007199254740993"]) {
+    for (const [at, code] of [
+      ["", "invalid_type"],
+      ["not-a-number", "invalid_type"],
+      ["9007199254740993", "too_big"],
+    ]) {
       const db = new Database({
         adaptor: new PostgresAdaptor({
           driver: {
@@ -298,7 +302,9 @@ describe("PostgreSQL numeric result decoding", () => {
           },
         }),
       });
-      await expect(db.select(numericTable).one().execute()).rejects.toThrow(z.ZodError);
+      await expect(Promise.resolve(db.select(numericTable).one())).rejects.toMatchObject({
+        issues: [expect.objectContaining({ code })],
+      });
     }
   });
 });
