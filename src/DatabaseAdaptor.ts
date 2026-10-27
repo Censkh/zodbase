@@ -87,6 +87,12 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   decodeSelectedValue(schema: zod.ZodType | undefined, value: any): any {
     if (!schema || value == null) return value;
     if (isZodTypeExtends(schema, zod.ZodBigInt)) return BigInt(value);
+    const numberType = isZodTypeExtends(schema, zod.ZodNumber);
+    if (numberType && (typeof value === "string" || typeof value === "bigint")) {
+      // PostgreSQL INT8/NUMERIC arrive as strings; keep the declared number contract on reads.
+      const number = typeof value === "string" && !value.trim() ? Number.NaN : Number(value);
+      return numberType.parse(number);
+    }
     if (isZodTypeExtends(schema, zod.ZodBoolean)) return value === true || value === 1 || value === BigInt(1);
     if (isZodTypeExtends(schema, zod.ZodDate)) {
       if (value instanceof Date) return value;

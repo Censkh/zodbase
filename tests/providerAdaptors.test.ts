@@ -255,3 +255,50 @@ it("SQL Server compiles joined selections and paged includes into one FOR JSON s
   expect(statements).toHaveLength(1);
   expect(statements[0]).toContain("LEFT JOIN");
 });
+
+describe("PostgreSQL numeric result decoding", () => {
+  it("returns numeric timestamps and decimal fields while preserving numeric-looking identifiers", async () => {
+    const numericTable = createTable({
+      id: "numeric_results",
+      schema: z.object({
+        id: z.string(),
+        updatedAt: z.number().int(),
+        price: z.number(),
+        optional: z.number().nullable(),
+        exact: z.bigint(),
+      }),
+    });
+    const db = new Database({
+      adaptor: new PostgresAdaptor({
+        driver: {
+          async query() {
+            return {
+              rows: [
+                { id: "00123", updatedAt: "1793135838869", price: "12.5", optional: null, exact: "9007199254740993" },
+              ],
+            };
+          },
+        },
+      }),
+    });
+    const expected = { id: "00123", updatedAt: 1793135838869, price: 12.5, optional: null, exact: 9007199254740993n };
+    expect((await db.select(numericTable).one()).first).toEqual(expected);
+    expect((await db.insert(numericTable, expected).selectMutated()).first).toEqual(expected);
+  });
+
+  it("rejects invalid numbers and out-of-range integer timestamps instead of silently changing them", async () => {
+    const numericTable = createTable({ id: "invalid_numeric_results", schema: z.object({ at: z.number().int() }) });
+    for (const at of ["", "not-a-number", "9007199254740993"]) {
+      const db = new Database({
+        adaptor: new PostgresAdaptor({
+          driver: {
+            async query() {
+              return { rows: [{ at }] };
+            },
+          },
+        }),
+      });
+      await expect(db.select(numericTable).one().execute()).rejects.toThrow(z.ZodError);
+    }
+  });
+});
