@@ -6,6 +6,14 @@ import type { InputOfTable, SingleFieldBinding, SqlResult, StringKeys, ValueOfTa
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
 import type { Table } from "../../Table";
 import SqliteAdaptor from "../sqlite";
+import { bindLongLiterals } from "./BoundLiterals";
+
+/** Prepares SQL text, binding long string literals so large values fit D1's statement limit. */
+const prepare = (driver: D1Database, rawSql: string): D1PreparedStatement => {
+  const { sql, params } = bindLongLiterals(rawSql);
+  const statement = driver.prepare(sql);
+  return params.length > 0 ? statement.bind(...params) : statement;
+};
 
 export default class D1Adaptor extends SqliteAdaptor<D1Database> {
   protected override async executeTransaction<TResult>(
@@ -26,7 +34,7 @@ export default class D1Adaptor extends SqliteAdaptor<D1Database> {
     }
 
     const rawSql = statement[TO_SQL_SYMBOL]();
-    const preparedStatement = this.driver.prepare(rawSql);
+    const preparedStatement = prepare(this.driver, rawSql);
     const normalizedSql = rawSql.trim().toUpperCase();
     const returnsRows =
       normalizedSql.startsWith("SELECT") ||
@@ -47,7 +55,8 @@ export default class D1Adaptor extends SqliteAdaptor<D1Database> {
     TKey extends StringKeys<ValueOfTable<TTable>>,
   >(table: TTable, values: TValue[], field: SingleFieldBinding<TValue, TKey>): Promise<SqlResult<void, 0>> {
     const statements = values.map((value) => {
-      return this.driver.prepare(
+      return prepare(
+        this.driver,
         this.buildUpdateSql(table, value, field.equals(value[field.key] as any) as any)[TO_SQL_SYMBOL](),
       );
     });
@@ -83,7 +92,7 @@ class D1BatchTransactionAdaptor extends D1Adaptor {
     ) {
       throw new Error("D1 transactions support write operations only");
     }
-    this.statements.push(this.driver.prepare(rawSql));
+    this.statements.push(prepare(this.driver, rawSql));
     return { results: [], first: undefined };
   }
 
