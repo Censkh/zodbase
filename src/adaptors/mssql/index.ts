@@ -26,6 +26,7 @@ import {
 } from "../../QueryBuilder";
 import { isRelationalQuery } from "../../RelationalQuery";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
+import type { TableIndex } from "../../Table";
 
 /** Compatible with a connected node-mssql ConnectionPool or Transaction. */
 export interface MssqlDriver {
@@ -261,7 +262,7 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
     return raw(`EXISTS (SELECT 1 FROM OPENJSON(${fieldSql}) WHERE [type] = ${type} AND ${comparison})`);
   }
 
-  async createTable(table: Table, name?: string): Promise<SqlResult> {
+  override createTableStatement(table: Table, name?: string): Statement {
     const tableName = this.quoteIdentifier(name ?? String(table.id));
     const columns = Object.values(table.fields).map((field) => {
       const schema = field.schema;
@@ -269,10 +270,8 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
       const action = fk?.onDelete === "restrict" ? "no action" : (fk?.onDelete ?? "no action");
       return `${this.quoteIdentifier(String(field.key))} ${this.typeToSql(schema)} ${isZodRequired(schema) ? "NOT NULL" : "NULL"}${getMetaItem(schema, primaryKey) ? " PRIMARY KEY" : ""}${fk ? ` REFERENCES ${this.quoteIdentifier(String(fk.field.table.id))} (${this.quoteIdentifier(String(fk.field.key))}) ON DELETE ${action.toUpperCase()}` : ""}`;
     });
-    return this.execute(
-      raw(
-        `IF OBJECT_ID(${this.valueToSql(tableName)}, N'U') IS NULL CREATE TABLE ${tableName} (${columns.join(", ")})`,
-      ),
+    return raw(
+      `IF OBJECT_ID(${this.valueToSql(tableName)}, N'U') IS NULL CREATE TABLE ${tableName} (${columns.join(", ")})`,
     );
   }
 
@@ -317,13 +316,19 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
   async syncTableIndexes(table: Table): Promise<void> {
     const target = this.quoteIdentifier(String(table.id));
     for (const index of table.indexes) {
-      const fields = index.fields.map((field) => this.quoteIdentifier(String(field.key))).join(", ");
       await this.execute(
         raw(
-          `IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(${this.valueToSql(target)}) AND name=${this.valueToSql(index.id)}) CREATE ${index.unique ? "UNIQUE " : ""}INDEX ${this.quoteIdentifier(index.id)} ON ${target} (${fields})${index.where ? ` WHERE ${buildConditionSql(this, index.where, { includeTable: false })[TO_SQL_SYMBOL]()}` : ""}`,
+          `IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(${this.valueToSql(target)}) AND name=${this.valueToSql(index.id)}) ${this.createIndexStatement(table, index)[TO_SQL_SYMBOL]()}`,
         ),
       );
     }
+  }
+
+  createIndexStatement(table: Table, index: TableIndex): Statement {
+    const fields = index.fields.map((field) => this.quoteIdentifier(String(field.key))).join(", ");
+    return raw(
+      `CREATE ${index.unique ? "UNIQUE " : ""}INDEX ${this.quoteIdentifier(index.id)} ON ${this.quoteIdentifier(String(table.id))} (${fields})${index.where ? ` WHERE ${buildConditionSql(this, index.where, { includeTable: false })[TO_SQL_SYMBOL]()}` : ""}`,
+    );
   }
 
   async processDiff(table: Table, diff: TableDiff): Promise<void> {

@@ -29,6 +29,7 @@ import {
 } from "../../QueryBuilder";
 import { isRelationalQuery } from "../../RelationalQuery";
 import type { Statement } from "../../Statement";
+import type { TableIndex } from "../../Table";
 
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
 
@@ -193,12 +194,16 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
 
   async syncTableIndexes(table: Table): Promise<void> {
     for (const index of table.indexes) {
-      await this.execute(sql`
+      await this.execute(this.createIndexStatement(table, index));
+    }
+  }
+
+  createIndexStatement(table: Table, index: TableIndex): Statement {
+    return sql`
         CREATE ${raw(index.unique ? "UNIQUE " : "")}INDEX IF NOT EXISTS ${raw(quoteIdentifier(index.id))}
           ON ${table.id} (${raw(index.fields.map((field) => quoteIdentifier(String(field.key))).join(", "))})
           ${index.where ? sql`WHERE ${buildConditionSql(this, index.where, { includeTable: false })}` : raw("")}
-      `);
-    }
+      `;
   }
 
   protected mapResult(value: SqlResult): SqlResult {

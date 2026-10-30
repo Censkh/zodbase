@@ -35,6 +35,7 @@ import {
 } from "../../QueryBuilder";
 import { isRelationalQuery, type SelectDialect } from "../../RelationalQuery";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
+import type { TableIndex } from "../../Table";
 
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
 
@@ -474,18 +475,25 @@ export default class MysqlAdaptor<
         LIMIT 1
       `);
       if (existing.results.length === 0) {
-        await this.execute(sql`
-          CREATE ${raw(index.unique ? "UNIQUE " : "")}INDEX ${raw(this.quoteIdentifier(index.id))}
-          ON ${raw(this.quoteIdentifier(String(table.id)))} (${raw(
-            index.fields.map((field) => this.quoteIdentifier(String(field.key))).join(", "),
-          )})
-        `);
+        await this.execute(this.createIndexStatement(table, index));
       }
     }
   }
 
-  createTable(table: Table, name?: string): Promise<SqlResult> {
-    const statement = sql`CREATE TABLE IF NOT EXISTS ${raw(this.quoteIdentifier(name ?? String(table.id)))} (
+  createIndexStatement(table: Table, index: TableIndex): Statement {
+    if (index.where) {
+      throw new Error("MySQL and MariaDB do not support partial indexes");
+    }
+    return sql`
+          CREATE ${raw(index.unique ? "UNIQUE " : "")}INDEX ${raw(this.quoteIdentifier(index.id))}
+          ON ${raw(this.quoteIdentifier(String(table.id)))} (${raw(
+            index.fields.map((field) => this.quoteIdentifier(String(field.key))).join(", "),
+          )})
+        `;
+  }
+
+  override createTableStatement(table: Table, name?: string): Statement {
+    return sql`CREATE TABLE IF NOT EXISTS ${raw(this.quoteIdentifier(name ?? String(table.id)))} (
       ${join(
         Object.values(table.fields).map((field) => {
           const primaryKeyMeta = getMetaItem(field.schema, primaryKey);
@@ -508,6 +516,5 @@ export default class MysqlAdaptor<
         ", ",
       )}
     )`;
-    return this.execute(statement);
   }
 }

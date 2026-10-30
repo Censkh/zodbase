@@ -29,6 +29,7 @@ import { isScalarSelect, SELECT_QUERY } from "./QueryBuilder";
 import { compileRelationalQuery, type SelectDialect } from "./RelationalQuery";
 import { type Statement, TO_SQL_SYMBOL } from "./Statement";
 import { canShareSubquery, isSubquery } from "./Subquery";
+import type { TableIndex } from "./Table";
 
 export interface DatabaseAdaptorOptions<TDriver = any> {
   driver: TDriver;
@@ -273,6 +274,8 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
 
   abstract fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>>;
   abstract syncTableIndexes(table: Table): Promise<void>;
+  /** The statement that creates one of a table's indexes. */
+  abstract createIndexStatement(table: Table, index: TableIndex): Statement;
 
   typeToSql(type: zod.ZodType<any>): string {
     if (isZodTypeExtends(type, zod.ZodObject)) {
@@ -339,8 +342,18 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
 
   async syncTableLocality(_table: Table): Promise<void> {}
 
+  /** Statements a new table needs beyond its columns and indexes, such as where its rows live. */
+  tableSettingStatements(_table: Table): Statement[] {
+    return [];
+  }
+
   createTable(table: Table, name?: string) {
-    const statement = sql`CREATE TABLE IF NOT EXISTS ${raw(quoteIdentifier(name ?? String(table.id)))}
+    return this.execute(this.createTableStatement(table, name));
+  }
+
+  /** The statement that creates the table, doing nothing when it already exists. */
+  createTableStatement(table: Table, name?: string): Statement {
+    return sql`CREATE TABLE IF NOT EXISTS ${raw(quoteIdentifier(name ?? String(table.id)))}
       (
         ${join(
           Object.values(table.fields).map((field) => {
@@ -365,7 +378,5 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
           ", ",
         )}
       )`;
-
-    return this.execute(statement);
   }
 }

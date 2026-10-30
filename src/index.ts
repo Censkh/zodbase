@@ -27,7 +27,7 @@ import type {
   ValueOfTable,
 } from "./QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL, type ToSql } from "./Statement";
-import type { Table } from "./Table";
+import type { Table, TableIndex } from "./Table";
 import { isZodRequired } from "./ZodUtils";
 
 export * from "./index.common";
@@ -144,15 +144,17 @@ const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): Data
       return (adaptor[method] as (...args: unknown[]) => unknown).apply(adaptor, args);
     };
 
+  const initialized = () => {
+    if (!resolved) throw new Error("Database adaptor has not initialized");
+    return resolved;
+  };
+
   return {
-    typeToSql: (type: zod.ZodType) => {
-      if (!resolved) throw new Error("Database adaptor has not initialized");
-      return resolved.typeToSql(type);
-    },
-    quoteIdentifier: (value: string) => {
-      if (!resolved) throw new Error("Database adaptor has not initialized");
-      return resolved.quoteIdentifier(value);
-    },
+    typeToSql: (type: zod.ZodType) => initialized().typeToSql(type),
+    quoteIdentifier: (value: string) => initialized().quoteIdentifier(value),
+    createTableStatement: (table: Table, name?: string) => initialized().createTableStatement(table, name),
+    createIndexStatement: (table: Table, index: TableIndex) => initialized().createIndexStatement(table, index),
+    tableSettingStatements: (table: Table) => initialized().tableSettingStatements(table),
     execute: call("execute"),
     executeSelect: call("executeSelect"),
     executeQueryCount: call("executeQueryCount"),
@@ -755,6 +757,21 @@ export class Database {
         },
       },
     ) satisfies InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, number>>;
+  }
+
+  /**
+   * The SQL that creates these tables on an empty database, in order: each table, its indexes and
+   * its settings, as `syncTable` would apply them. Running it once is much faster than syncing each
+   * table, which inspects the database first, when the database is known to be empty.
+   */
+  schemaSql(tables: readonly Table[]): string[] {
+    return tables
+      .flatMap((table) => [
+        this.adaptor.createTableStatement(table),
+        ...table.indexes.map((index) => this.adaptor.createIndexStatement(table, index)),
+        ...this.adaptor.tableSettingStatements(table),
+      ])
+      .map((statement) => statement[TO_SQL_SYMBOL]().trim());
   }
 
   async syncTable<TTable extends Table>(table: TTable): Promise<void> {

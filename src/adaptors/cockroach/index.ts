@@ -4,6 +4,7 @@ import type DatabaseAdaptor from "../../DatabaseAdaptor";
 import { quoteIdentifier } from "../../Escaping";
 import { mapSqlResult, normalizeForeignKeyAction, raw, sql, type Table, type TableColumnInfo } from "../../index";
 import type { SqlResult } from "../../QueryBuilder";
+import type { Statement } from "../../Statement";
 import PostgresAdaptor from "../postgres";
 import { cockroachLocality, cockroachRegion } from "./metadata";
 
@@ -16,11 +17,29 @@ export default class CockroachAdaptor extends PostgresAdaptor {
   }
 
   override async syncTableLocality(table: Table): Promise<void> {
-    const locality = getMetaItem(table.schema, cockroachLocality)?.data;
-    if (!locality) return;
+    const expected = this.tableLocality(table);
+    if (!expected) return;
     const { first } = await this.execute(
       sql`SELECT locality FROM [SHOW TABLES] WHERE table_name = ${String(table.id)} AND schema_name = current_schema()`,
     );
+    // SHOW TABLES can omit identifier quotes for simple names.
+    if (String(first?.locality).replace(/"/g, "") === expected.replace(/"/g, "")) return;
+    await this.execute(this.setLocalityStatement(table, expected));
+  }
+
+  override tableSettingStatements(table: Table): Statement[] {
+    const expected = this.tableLocality(table);
+    return expected ? [this.setLocalityStatement(table, expected)] : [];
+  }
+
+  private setLocalityStatement(table: Table, locality: string): Statement {
+    return sql`ALTER TABLE ${table.id} SET LOCALITY ${raw(locality)}`;
+  }
+
+  /** The table's locality clause, such as `GLOBAL`, or undefined when it sets none. */
+  private tableLocality(table: Table): string | undefined {
+    const locality = getMetaItem(table.schema, cockroachLocality)?.data;
+    if (!locality) return undefined;
     let expected: string;
     if (locality.type === "global") expected = "GLOBAL";
     else if (locality.type === "regional-by-table") {
@@ -34,9 +53,7 @@ export default class CockroachAdaptor extends PostgresAdaptor {
       }
       expected = `REGIONAL BY ROW${column ? ` AS ${quoteIdentifier(column)}` : ""}`;
     }
-    // SHOW TABLES can omit identifier quotes for simple names.
-    if (String(first?.locality).replace(/"/g, "") === expected.replace(/"/g, "")) return;
-    await this.execute(sql`ALTER TABLE ${table.id} SET LOCALITY ${raw(expected)}`);
+    return expected;
   }
 
   protected override async executeTransaction<TResult>(
