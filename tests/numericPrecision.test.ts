@@ -73,5 +73,48 @@ for (const factory of TEST_DATABASE_FACTORIES.filter(({ name }) => ["postgres", 
         }
       }, 60_000);
     }
+
+    test("reads integer milliseconds exactly from legacy REAL integer columns", async () => {
+      const context = await factory.create();
+      try {
+        const table = createTable({
+          id: "integer_timestamps",
+          schema: zod.object({
+            id: zod.string().meta(metaStore([primaryKey()])),
+            createdAt: zod.number().int(),
+          }),
+        });
+        table.addIndex("integer_timestamps_created_at", [table.$createdAt]);
+        // Integer columns created before zod 4 integer checks were recognised are 32-bit REAL.
+        await context.db.execute(
+          sql`CREATE TABLE "integer_timestamps" ("id" TEXT PRIMARY KEY, "createdAt" REAL NOT NULL)`,
+        );
+        await context.db.execute(
+          sql`CREATE INDEX "integer_timestamps_created_at" ON "integer_timestamps" ("createdAt")`,
+        );
+        // 2026-11-02T23:38:40.000Z, which a 32-bit float sends as 23:40:00.
+        const legacyCreatedAt = 1793662720000;
+        await context.db.execute(sql`INSERT INTO "integer_timestamps" VALUES ('legacy', ${legacyCreatedAt})`);
+
+        await context.db.syncTable(table);
+        await context.db.syncTable(table);
+
+        const createdAt = 1793662720123;
+        await context.db.insert(table, { id: "new", createdAt });
+        expect((await context.db.select(table).where(table.$id.equals("new"))).first).toEqual({
+          id: "new",
+          createdAt,
+        });
+        if (factory.name === "cockroach") {
+          // CockroachDB stores 64-bit values in REAL columns but sends them rounded to 32 bits.
+          expect((await context.db.select(table).where(table.$id.equals("legacy"))).first).toEqual({
+            id: "legacy",
+            createdAt: legacyCreatedAt,
+          });
+        }
+      } finally {
+        await context.close();
+      }
+    }, 60_000);
   });
 }

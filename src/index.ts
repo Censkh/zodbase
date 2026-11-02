@@ -28,7 +28,7 @@ import type {
 } from "./QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL, type ToSql } from "./Statement";
 import type { Table, TableIndex } from "./Table";
-import { isZodRequired } from "./ZodUtils";
+import { isZodRequired, isZodTypeExtends } from "./ZodUtils";
 
 export * from "./index.common";
 export * from "./ZodUtils";
@@ -823,10 +823,13 @@ export class Database {
       } else {
         const isRequired = isZodRequired(field.schema);
         const modifications: FieldModification[] = [];
-        // Only widen legacy 32-bit floats; never infer destructive type conversions.
+        // Only widen legacy 32-bit floats; never infer destructive type conversions. Integer fields
+        // widen too: columns created before zod 4 integer checks were recognised are REAL, which
+        // sends millisecond timestamps rounded to the nearest 32-bit float.
         if (
           ["REAL", "FLOAT4"].includes(column.sqlType?.toUpperCase() ?? "") &&
-          this.adaptor.typeToSql(field.schema) === "DOUBLE PRECISION"
+          isZodTypeExtends(field.schema, zod.ZodNumber) &&
+          this.adaptor.typeToSql(zod.number()) === "DOUBLE PRECISION"
         ) {
           modifications.push({ type: "widen-number" });
         }
