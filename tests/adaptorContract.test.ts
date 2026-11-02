@@ -10,6 +10,28 @@ import PostgresAdaptor from "../src/adaptors/postgres";
 import TursoAdaptor from "../src/adaptors/turso";
 
 describe("adaptor execution contract", () => {
+  it("decodes rows without changing driver-owned values or special column names", async () => {
+    const row = Object.freeze({ id: "7", enabled: 1, data: '{"ok":true}', ["__proto__"]: "column" });
+    const db = new Database({
+      adaptor: new PostgresAdaptor({
+        driver: {
+          async query() {
+            return { rows: [row] };
+          },
+        },
+      }),
+    });
+    const table = createTable({
+      id: "decoded_rows",
+      schema: zod.object({ id: zod.number(), enabled: zod.boolean(), data: zod.object({ ok: zod.boolean() }) }),
+    });
+    const result = await db.select(table);
+    expect(result.results).toEqual([{ id: 7, enabled: true, data: { ok: true }, ["__proto__"]: "column" }]);
+    expect(result.first).toBe(result.results[0]);
+    expect(Object.getPrototypeOf(result.first)).toBe(Object.prototype);
+    expect(row).toEqual({ id: "7", enabled: 1, data: '{"ok":true}', ["__proto__"]: "column" });
+  });
+
   it("supports the synchronous better-sqlite3 driver contract", async () => {
     const database = new BunDatabase(":memory:");
     const executions: string[] = [];

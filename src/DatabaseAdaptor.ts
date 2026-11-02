@@ -120,11 +120,13 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   }
 
   protected decodeResult(table: Table, result: SqlResult): SqlResult {
-    return mapSqlResult(result, (row) =>
-      Object.fromEntries(
-        Object.entries(row).map(([key, value]) => [key, this.decodeSelectedValue(table.fields[key]?.schema, value)]),
-      ),
-    );
+    return mapSqlResult(result, (row) => {
+      const entries = Object.entries(row);
+      for (const entry of entries) {
+        entry[1] = this.decodeSelectedValue(table.fields[entry[0]]?.schema, entry[1]);
+      }
+      return Object.fromEntries(entries);
+    });
   }
 
   protected selectDialect?: SelectDialect;

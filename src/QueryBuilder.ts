@@ -153,12 +153,19 @@ export const buildConditionSql = (
 ): Statement => {
   condition = validateSelectCondition(condition);
   const includeTable = typeof options === "boolean" ? true : (options?.includeTable ?? true);
+  return buildValidatedConditionSql(adaptor, condition, includeTable);
+};
 
+const buildValidatedConditionSql = (
+  adaptor: DatabaseAdaptor,
+  condition: SelectCondition,
+  includeTable: boolean,
+): Statement => {
   if ("conditions" in condition) {
     return sql`(${join(
       condition.conditions.reduce((result, childCondition) => {
         if (childCondition) {
-          result.push(buildConditionSql(adaptor, childCondition, { includeTable }));
+          result.push(buildValidatedConditionSql(adaptor, childCondition, includeTable));
         }
         return result;
       }, [] as Statement[]),

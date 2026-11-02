@@ -32,8 +32,12 @@ const snapshotValue = (value: unknown): unknown => {
 
 export const snapshotCondition = (condition: SelectCondition): SelectCondition => {
   condition = validateSelectCondition(condition);
+  return snapshotValidatedCondition(condition);
+};
+
+const snapshotValidatedCondition = (condition: SelectCondition): SelectCondition => {
   return "conditions" in condition
-    ? { ...condition, conditions: condition.conditions.map(snapshotCondition) }
+    ? { ...condition, conditions: condition.conditions.map(snapshotValidatedCondition) }
     : { ...condition, value: snapshotValue(condition.value) };
 };
 

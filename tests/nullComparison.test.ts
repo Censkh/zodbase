@@ -1,4 +1,5 @@
 import BunDatabase from "bun:sqlite";
+import { describe, expect, it, spyOn } from "bun:test";
 import * as zod from "zod";
 import { createTable, Database, metaStore, primaryKey } from "../src";
 import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
@@ -24,6 +25,33 @@ const createDb = async () => {
 };
 
 describe("comparisons with a missing value", () => {
+  it("preserves nested AND/OR grouping and validates every branch", async () => {
+    const db = await createDb();
+    await db.insert(ItemTable, { id: "excluded", folderId: "f1", name: "excluded", credits: 3 });
+    const condition = ItemTable.$id
+      .equals("root")
+      .or(ItemTable.$folderId.equals("f1").and(ItemTable.$credits.greaterThan(6)));
+    expect(
+      (await db.select(ItemTable).where(condition).orderBy(ItemTable.$id, "ASC")).results.map((row) => row.id),
+    ).toEqual(["child", "root"]);
+    const invalid = ItemTable.$id
+      .equals("root")
+      .or(ItemTable.$id.equals("child").and({ type: "XOR", conditions: [] } as any));
+    expect(() => db.select(ItemTable).where(invalid).clone()).toThrow(Error);
+    const execute = spyOn(db.adaptor, "execute");
+    try {
+      await expect(Promise.resolve(db.delete(ItemTable).where(invalid))).rejects.toBeInstanceOf(Error);
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      execute.mockRestore();
+    }
+    expect((await db.select(ItemTable).orderBy(ItemTable.$id, "ASC")).results.map((row) => row.id)).toEqual([
+      "child",
+      "excluded",
+      "root",
+    ]);
+  });
+
   it("treats equals(undefined) as IS NULL", async () => {
     const db = await createDb();
     const folderId: string | null | undefined = undefined;
