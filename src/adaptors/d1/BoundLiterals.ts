@@ -11,6 +11,7 @@ export type BoundSql = { sql: string; params: string[] };
  * comments, and blob literals (`X'…'`), are left as they are.
  */
 export function bindLongLiterals(sql: string, threshold = LITERAL_BIND_THRESHOLD): BoundSql {
+  if (sql.length <= threshold) return { sql, params: [] };
   let output = "";
   const params: string[] = [];
   let index = 0;
