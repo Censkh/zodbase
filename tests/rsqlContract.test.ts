@@ -126,6 +126,32 @@ describe.each(TEST_DATABASE_FACTORIES)("RSQL contract: $name", ({ create }) => {
     expect(await idsFor("tags=out=(kee)")).toEqual(["1", "2", "3", "4"]);
   });
 
+  it("matches `=out=` on a missing JSON array, which holds none of the values", async () => {
+    const LabelsTable = createTable({
+      id: "rsql_contract_labels",
+      schema: zod.object({
+        id: zod.string().meta(metaStore([primaryKey()])),
+        tags: zod.array(zod.string()).nullable(),
+      }),
+    });
+    await context.db.syncTable(LabelsTable);
+    await context.db.insertMany(LabelsTable, [
+      { id: "1", tags: ["keep"] },
+      { id: "2", tags: null },
+    ]);
+    const labelIds = async (filter: string) =>
+      (
+        await context.db
+          .select(LabelsTable, { id: LabelsTable.$id })
+          .where(rsqlToCondition(LabelsTable, filter)!)
+          .orderBy(LabelsTable.$id, "ASC")
+      ).results.map(({ id }) => id);
+
+    expect(await labelIds("tags=out=(keep)")).toEqual(["2"]);
+    expect(await labelIds("tags=out=(other)")).toEqual(["1", "2"]);
+    expect(await labelIds("tags=in=(keep)")).toEqual(["1"]);
+  });
+
   it("handles quoted, escaped, and punctuation-heavy values", async () => {
     expect(await idsFor('name=="Ada, Lovelace"')).toEqual(["1"]);
     expect(await idsFor("name=='Flynn\\'s Device'")).toEqual(["3"]);
