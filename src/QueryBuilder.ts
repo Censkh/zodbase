@@ -90,6 +90,9 @@ export interface SingleFieldBinding<
   notIn(values: TValue[TKey][] | Statement): SelectFieldCondition<TValue, TKey>;
 
   contains(value: unknown): SelectFieldCondition<TValue, TKey>;
+
+  /** A JSON array field that doesn't hold `value`; a missing array holds nothing. */
+  notContains(value: unknown): SelectFieldCondition<TValue, TKey>;
 }
 
 export type FieldBinding<TValue> = SingleFieldBinding<TValue, StringKeys<TValue>> | AllFieldsBinding<TValue>;
@@ -183,6 +186,11 @@ const buildValidatedConditionSql = (
 
   if (condition.operator === "JSON_CONTAINS") {
     return adaptor.buildJsonArrayContainsSql(fieldSql, condition.value);
+  }
+
+  // Containment of a missing array is NULL in some databases and false in others.
+  if (condition.operator === "JSON_NOT_CONTAINS") {
+    return sql`(${raw(fieldSql)} IS NULL OR NOT (${adaptor.buildJsonArrayContainsSql(fieldSql, condition.value)}))`;
   }
 
   if (condition.operator === "MATCHES" || condition.operator === "NOT MATCHES") {
@@ -344,7 +352,8 @@ export type SqlOperator =
   | "NOT MATCHES"
   | "IN"
   | "NOT IN"
-  | "JSON_CONTAINS";
+  | "JSON_CONTAINS"
+  | "JSON_NOT_CONTAINS";
 export type StringOrNever<T> = T extends string ? T : never;
 
 export interface SqlResultTimings {

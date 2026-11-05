@@ -31,6 +31,11 @@ export interface RsqlOptions<TTable extends Table> {
   fields?: Readonly<Record<string, keyof ValueOfTable<TTable> & string>>;
   /** The operators a filter may use. Without it, every supported operator is allowed. */
   operators?: readonly RsqlOperator[];
+  /**
+   * The operators particular selectors may use instead of `operators`, such as only `=in=` and
+   * `=out=` for a JSON array field, whose other comparisons would read the stored JSON text.
+   */
+  fieldOperators?: Readonly<Record<string, readonly RsqlOperator[]>>;
 }
 
 /** A filter that can't be converted. `field` names the selector when it isn't a filterable field. */
@@ -117,7 +122,11 @@ const astNodeToCondition = <TTable extends Table>(
 
     const method = hasOwn(OPERATOR_MAP, node.operator) ? OPERATOR_MAP[node.operator as RsqlOperator] : undefined;
 
-    if (!method || (options.operators && !options.operators.includes(node.operator))) {
+    const allowed =
+      options.fieldOperators && hasOwn(options.fieldOperators, selector)
+        ? options.fieldOperators[selector]
+        : options.operators;
+    if (!method || (allowed && !allowed.includes(node.operator))) {
       throw new RsqlFilterError(`Unsupported operator: ${node.operator}`);
     }
 
@@ -146,17 +155,18 @@ const astNodeToCondition = <TTable extends Table>(
         return fieldBinding.lessThan(values[0] as any);
       case "lessThanOrEquals":
         return fieldBinding.lessThanOrEquals(values[0] as any);
+      // A JSON array matches `=in=` when it holds any of the values, and `=out=` when it holds none.
       case "in":
         if (isZodTypeExtends(fieldBinding.schema, zod.ZodArray)) {
-          const conditions = values.map((value) => fieldBinding.contains(value));
-          let combinedCondition: SelectCondition<ValueOfTable<TTable>> = conditions[0]!;
-          for (const nextCondition of conditions.slice(1)) {
-            combinedCondition = combinedCondition.or(nextCondition);
-          }
-          return combinedCondition;
+          const [first, ...rest] = values.map((value) => fieldBinding.contains(value));
+          return rest.length === 0 ? first : first!.or(...rest);
         }
         return fieldBinding.in(values as any);
       case "notIn":
+        if (isZodTypeExtends(fieldBinding.schema, zod.ZodArray)) {
+          const [first, ...rest] = values.map((value) => fieldBinding.notContains(value));
+          return rest.length === 0 ? first : first!.and(...rest);
+        }
         return fieldBinding.notIn(values as any);
       case "like":
         return fieldBinding.like(values[0] as any);

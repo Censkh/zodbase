@@ -105,6 +105,14 @@ export const createTableBinding = <TTable extends Table>(table: TTable): Binding
           value,
         }) as any;
       },
+
+      notContains(value) {
+        return createSelectCondition({
+          field: fieldBinding,
+          operator: "JSON_NOT_CONTAINS",
+          value,
+        }) as any;
+      },
     };
     // @ts-expect-error
     binding[field.key] = fieldBinding;

@@ -110,6 +110,22 @@ describe.each(TEST_DATABASE_FACTORIES)("RSQL contract: $name", ({ create }) => {
     expect(await idsFor("tags=in=(keep,urgent)")).toEqual(["1", "3"]);
   });
 
+  it("matches `=out=` on a JSON array that holds none of the values, including an empty one", async () => {
+    await context.db.insert(AssetsTable, {
+      id: "4",
+      code: "empty",
+      name: "Untagged",
+      quantity: 0,
+      active: false,
+      parentId: null,
+      tags: [],
+    });
+
+    expect(await idsFor("tags=out=(urgent)")).toEqual(["2", "3", "4"]);
+    expect(await idsFor("tags=out=(keep,urgent)")).toEqual(["2", "4"]);
+    expect(await idsFor("tags=out=(kee)")).toEqual(["1", "2", "3", "4"]);
+  });
+
   it("handles quoted, escaped, and punctuation-heavy values", async () => {
     expect(await idsFor('name=="Ada, Lovelace"')).toEqual(["1"]);
     expect(await idsFor("name=='Flynn\\'s Device'")).toEqual(["3"]);

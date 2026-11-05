@@ -334,6 +334,42 @@ describe("RSQL Filter", () => {
       );
     });
 
+    it("limits a selector to its own operators, ignoring the general list", async () => {
+      const operators = ["==", "=in=", "=out="] as const;
+      const fieldOperators = { tags: ["=out="] } as const;
+      const db = await createTestDb();
+      await db.insert(AssetTable, {
+        id: "tagged",
+        name: "Tagged",
+        status: "approved",
+        price: 1,
+        quantity: 1,
+        isActive: true,
+        category: "electronics",
+        parentId: null,
+        tags: ["archive"],
+      });
+      const condition = rsqlToCondition(AssetTable, "tags=out=(archive);status==approved", {
+        operators,
+        fieldOperators,
+      });
+      const { results } = await db.select(AssetTable).where(condition!);
+      // Untagged assets hold none of the tags.
+      expect(results.map((r) => r.id).sort()).toEqual(["1", "5"]);
+
+      for (const [filter, operator] of [
+        ["tags==archive", "=="],
+        ["tags=in=(archive)", "=in="],
+      ]) {
+        expect(() => rsqlToCondition(AssetTable, filter!, { operators, fieldOperators })).toThrow(
+          `Unsupported operator: ${operator}`,
+        );
+      }
+      expect(() => rsqlToCondition(AssetTable, "status=out=(x)", { operators: ["=="], fieldOperators })).toThrow(
+        "Unsupported operator: =out=",
+      );
+    });
+
     it("rejects an operator the allowlist leaves out", async () => {
       const operators = ["==", "=in="] as const;
       const db = await createTestDb();
