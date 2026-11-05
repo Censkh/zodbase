@@ -34,7 +34,7 @@ import {
 } from "../../QueryBuilder";
 import { isRelationalQuery } from "../../RelationalQuery";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
-import type { TableIndex } from "../../Table";
+import type { SchemaTableInfo, TableIndex } from "../../Table";
 
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
 
@@ -205,6 +205,52 @@ export default class PostgresAdaptor<
       results: [],
     };
   }
+
+  override async describeSchema(): Promise<SchemaTableInfo[]> {
+    const tables = new Map<string, SchemaTableInfo>();
+    const tableResult = await this.execute(
+      raw(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'",
+      ),
+    );
+    for (const row of tableResult.results)
+      tables.set(String(row.table_name), { name: String(row.table_name), columns: [], indexes: [] });
+    const columnResult = await this.execute(
+      raw(
+        `SELECT table_name, column_name FROM information_schema.columns
+         WHERE table_schema = current_schema() ${this.visibleColumnCondition} ORDER BY table_name, ordinal_position`,
+      ),
+    );
+    for (const row of columnResult.results) tables.get(String(row.table_name))?.columns.push(String(row.column_name));
+    // Unique constraints are backed by an index of the same name, except CockroachDB's
+    // UNIQUE WITHOUT INDEX, so both lists are read and merged by name.
+    const indexResult = await this.execute(
+      raw(
+        `SELECT t.relname AS table_name, i.relname AS index_name, ix.indisunique AS is_unique
+         FROM pg_catalog.pg_index ix
+         JOIN pg_catalog.pg_class i ON i.oid = ix.indexrelid
+         JOIN pg_catalog.pg_class t ON t.oid = ix.indrelid
+         JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+         WHERE n.nspname = current_schema() AND NOT ix.indisprimary
+         UNION ALL
+         SELECT t.relname AS table_name, c.conname AS index_name, true AS is_unique
+         FROM pg_catalog.pg_constraint c
+         JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+         JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+         WHERE n.nspname = current_schema() AND c.contype = 'u'`,
+      ),
+    );
+    for (const row of indexResult.results) {
+      const table = tables.get(String(row.table_name));
+      const name = String(row.index_name);
+      if (!table || table.indexes.some((index) => index.name === name)) continue;
+      table.indexes.push({ name, unique: row.is_unique === true || row.is_unique === "t" });
+    }
+    return [...tables.values()];
+  }
+
+  /** Narrows the information_schema.columns query to the columns a table's rows show. */
+  protected visibleColumnCondition = "";
 
   async fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>> {
     const columnResult = await this.execute(sql`

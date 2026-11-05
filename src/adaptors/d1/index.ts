@@ -28,6 +28,11 @@ export default class D1Adaptor extends SqliteAdaptor<D1Database> {
     return result;
   }
 
+  /** D1 also keeps its own `_cf_` tables, which queries can't read. */
+  protected override isInternalTable(name: string): boolean {
+    return super.isInternalTable(name) || name.startsWith("_cf_");
+  }
+
   async execute(statement: Statement): Promise<SqlResult> {
     if (typeof statement?.[TO_SQL_SYMBOL] !== "function") {
       throw new Error("Invalid statement");

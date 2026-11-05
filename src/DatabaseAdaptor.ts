@@ -29,7 +29,7 @@ import { isScalarSelect, SELECT_QUERY } from "./QueryBuilder";
 import { compileRelationalQuery, type SelectDialect } from "./RelationalQuery";
 import { type Statement, TO_SQL_SYMBOL } from "./Statement";
 import { canShareSubquery, isSubquery } from "./Subquery";
-import type { TableIndex } from "./Table";
+import type { SchemaTableInfo, TableIndex } from "./Table";
 
 export interface DatabaseAdaptorOptions<TDriver = any> {
   driver: TDriver;
@@ -288,6 +288,11 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   protected toLikePattern(pattern: string): string {
     const special = new Set(["!", "%", "_", ...this.likeSpecialCharacters]);
     return Array.from(pattern, (char) => (char === "*" ? "%" : special.has(char) ? `!${char}` : char)).join("");
+  }
+
+  /** Every table in the current schema, as `SchemaTableInfo` describes it. Read-only. */
+  describeSchema(): Promise<SchemaTableInfo[]> {
+    throw new Error("This adaptor does not support schema introspection");
   }
 
   abstract fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>>;

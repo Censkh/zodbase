@@ -29,7 +29,7 @@ import {
 } from "../../QueryBuilder";
 import { isRelationalQuery } from "../../RelationalQuery";
 import type { Statement } from "../../Statement";
-import type { TableIndex } from "../../Table";
+import type { SchemaTableInfo, TableIndex } from "../../Table";
 
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
 
@@ -260,6 +260,31 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
       first: values[0] as any,
       results: values as any,
     };
+  }
+
+  override async describeSchema(): Promise<SchemaTableInfo[]> {
+    const { results } = await this.execute(raw("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"));
+    const tables: SchemaTableInfo[] = [];
+    for (const { name } of results as { name: string }[]) {
+      if (this.isInternalTable(name)) continue;
+      const columns = await this.execute(raw(`PRAGMA table_info(${quoteIdentifier(name)})`));
+      const indexes = await this.execute(raw(`PRAGMA index_list(${quoteIdentifier(name)})`));
+      tables.push({
+        name,
+        columns: columns.results.map((row: any) => String(row.name)),
+        // A primary key's autoindex belongs to the table; UNIQUE constraints ("u") and created
+        // indexes ("c") are reported.
+        indexes: indexes.results
+          .filter((row: any) => row.origin !== "pk")
+          .map((row: any) => ({ name: String(row.name), unique: Number(row.unique) === 1 })),
+      });
+    }
+    return tables;
+  }
+
+  /** Tables the engine keeps for itself, such as `sqlite_sequence`. */
+  protected isInternalTable(name: string): boolean {
+    return name.startsWith("sqlite_");
   }
 
   async fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>> {

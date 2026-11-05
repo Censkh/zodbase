@@ -16,6 +16,31 @@ export interface TableColumnInfo {
   foreignKey?: TableForeignKeyInfo;
 }
 
+/**
+ * A table as the database holds it: its columns and its secondary indexes and unique constraints,
+ * leaving out primary keys and what the engine keeps for itself (hidden columns, autoindexes).
+ */
+export interface SchemaTableInfo {
+  name: string;
+  columns: string[];
+  indexes: SchemaIndexInfo[];
+}
+
+export interface SchemaIndexInfo {
+  name: string;
+  unique: boolean;
+}
+
+/** What a database holds that the given table definitions don't define. */
+export interface SchemaDrift {
+  /** Tables no definition names, with how many rows each holds. */
+  tables: { name: string; rowCount: number }[];
+  /** Columns of defined tables that their definition doesn't name. */
+  columns: { table: string; column: string }[];
+  /** Indexes and unique constraints of defined tables that their definition doesn't name. */
+  indexes: { table: string; index: string; unique: boolean }[];
+}
+
 export interface TableForeignKeyInfo {
   table: string;
   field: string;

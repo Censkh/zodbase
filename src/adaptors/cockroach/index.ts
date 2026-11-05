@@ -12,6 +12,9 @@ export default class CockroachAdaptor extends PostgresAdaptor {
   // Materialized CTE buffers disable Cockroach's auto-commit fast path for these inserts.
   protected override materializeRepeatedSubqueries = false;
 
+  // Hidden columns are the engine's own: rowid, crdb_region and hash-sharded index shards.
+  protected override visibleColumnCondition = "AND is_hidden = 'NO'";
+
   override typeToSql(schema: zod.ZodType): string {
     return getMetaItem(schema, cockroachRegion) ? '"public"."crdb_internal_region"' : super.typeToSql(schema);
   }

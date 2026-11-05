@@ -27,7 +27,7 @@ import type {
   ValueOfTable,
 } from "./QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL, type ToSql } from "./Statement";
-import type { Table, TableIndex } from "./Table";
+import type { SchemaDrift, SchemaTableInfo, Table, TableIndex } from "./Table";
 import { isZodRequired, isZodTypeExtends } from "./ZodUtils";
 
 export * from "./index.common";
@@ -787,6 +787,39 @@ export class Database {
       await this.adaptor.syncTableIndexes(table);
     }
     await this.adaptor.syncTableLocality(table);
+  }
+
+  /** Every table in the database's current schema: its columns, indexes and unique constraints. */
+  describeSchema(): Promise<SchemaTableInfo[]> {
+    return this.adaptor.describeSchema();
+  }
+
+  /**
+   * What the database holds that these table definitions don't: other tables with their row counts,
+   * and other columns, indexes and unique constraints on the defined tables. `syncTable` only adds,
+   * so this is how to find what a removal or rename left behind. Read-only: it changes nothing.
+   */
+  async diffSchema(tables: readonly Table[]): Promise<SchemaDrift> {
+    const defined = new Map(tables.map((table) => [String(table.id), table]));
+    const drift: SchemaDrift = { tables: [], columns: [], indexes: [] };
+    const byName = (left: { name: string }, right: { name: string }) => (left.name < right.name ? -1 : 1);
+    for (const live of [...(await this.describeSchema())].sort(byName)) {
+      const table = defined.get(live.name);
+      if (!table) {
+        const count = this.adaptor.quoteIdentifier("count");
+        const { first } = await this.adaptor.execute(
+          raw(`SELECT COUNT(*) AS ${count} FROM ${this.adaptor.quoteIdentifier(live.name)}`),
+        );
+        drift.tables.push({ name: live.name, rowCount: Number(first?.count ?? 0) });
+        continue;
+      }
+      for (const column of [...live.columns].sort())
+        if (!Object.hasOwn(table.fields, column)) drift.columns.push({ table: live.name, column });
+      const indexes = new Set(table.indexes.map((index) => index.id));
+      for (const index of [...live.indexes].sort(byName))
+        if (!indexes.has(index.name)) drift.indexes.push({ table: live.name, index: index.name, unique: index.unique });
+    }
+    return drift;
   }
 
   private get adaptor() {
