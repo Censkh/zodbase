@@ -814,7 +814,8 @@ export class Database {
         continue;
       }
       for (const column of [...live.columns].sort())
-        if (!Object.hasOwn(table.fields, column)) drift.columns.push({ table: live.name, column });
+        if (!Object.prototype.hasOwnProperty.call(table.fields, column))
+          drift.columns.push({ table: live.name, column });
       const indexes = new Set(table.indexes.map((index) => index.id));
       for (const index of [...live.indexes].sort(byName))
         if (!indexes.has(index.name)) drift.indexes.push({ table: live.name, index: index.name, unique: index.unique });
