@@ -34,6 +34,14 @@ export const createTableBinding = <TTable extends Table>(table: TTable): Binding
         }) as any;
       },
 
+      matches(pattern) {
+        return createSelectCondition({ field: fieldBinding, operator: "MATCHES", value: pattern }) as any;
+      },
+
+      notMatches(pattern) {
+        return createSelectCondition({ field: fieldBinding, operator: "NOT MATCHES", value: pattern }) as any;
+      },
+
       greaterThan(value) {
         return createSelectCondition({
           field: fieldBinding,

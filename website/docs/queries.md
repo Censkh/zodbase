@@ -74,6 +74,7 @@ SQL LIKE uses `%` for any sequence and `_` for one character. Whether comparison
 | `.greaterThanOrEquals(value)` / `.lessThanOrEquals(value)` | Inclusive comparisons. |
 | `.in(values)` / `.notIn(values)` | Membership in a value list. |
 | `.like(pattern)` | SQL LIKE matching. |
+| `.matches(pattern)` / `.notMatches(pattern)` | Case-insensitive match where `*` is the only wildcard. |
 | `.contains(value)` | JSON-array membership, using the adaptor's implementation. |
 
 An empty `in([])` condition matches no rows. An empty `notIn([])` matches all rows. Use schema-compatible values; a nullable field is needed for a typed null equality check.

@@ -87,6 +87,11 @@ export default class PostgresAdaptor<
     return sql`${raw(fieldSql)} @> ${raw(valueToSql([value], true))}::jsonb`;
   }
 
+  // LIKE is case-sensitive in PostgreSQL; ILIKE matches the other databases.
+  override buildPatternMatchSql(fieldSql: string, pattern: string, negate: boolean): Statement {
+    return sql`${raw(fieldSql)} ${raw(negate ? "NOT ILIKE" : "ILIKE")} ${this.toLikePattern(pattern)} ESCAPE '!'`;
+  }
+
   async execute(statement: Statement): Promise<SqlResult> {
     if (typeof statement?.[TO_SQL_SYMBOL] !== "function") {
       throw new Error("Invalid statement");

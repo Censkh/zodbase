@@ -274,6 +274,22 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
 
   abstract buildJsonArrayContainsSql(fieldSql: string, value: unknown): Statement;
 
+  /** Characters other than `%` and `_` that are wildcards in this database's LIKE patterns. */
+  protected likeSpecialCharacters = "";
+
+  /**
+   * A case-insensitive match against a pattern whose only wildcard is `*` (any run of characters).
+   * Every other character, including LIKE's own `%` and `_`, matches itself.
+   */
+  buildPatternMatchSql(fieldSql: string, pattern: string, negate: boolean): Statement {
+    return sql`${raw(fieldSql)} ${raw(negate ? "NOT LIKE" : "LIKE")} ${this.toLikePattern(pattern)} ESCAPE '!'`;
+  }
+
+  protected toLikePattern(pattern: string): string {
+    const special = new Set(["!", "%", "_", ...this.likeSpecialCharacters]);
+    return Array.from(pattern, (char) => (char === "*" ? "%" : special.has(char) ? `!${char}` : char)).join("");
+  }
+
   abstract fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>>;
   abstract syncTableIndexes(table: Table): Promise<void>;
   /** The statement that creates one of a table's indexes. */

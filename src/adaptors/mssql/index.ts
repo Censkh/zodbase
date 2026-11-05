@@ -249,6 +249,9 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
     return { results: [], first: undefined };
   }
 
+  // SQL Server LIKE also reads [...] as a character class.
+  protected override likeSpecialCharacters = "[";
+
   buildJsonArrayContainsSql(fieldSql: string, value: unknown): Statement {
     if (value !== null && !["string", "number", "boolean"].includes(typeof value))
       throw new Error("SQL Server JSON contains supports scalar array elements only");

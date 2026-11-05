@@ -61,6 +61,12 @@ export interface SingleFieldBinding<
 
   like(value: TValue[TKey]): SelectFieldCondition<TValue, TKey>;
 
+  /** Case-insensitively matches a pattern whose only wildcard is `*`; other characters match themselves. */
+  matches(pattern: string): SelectFieldCondition<TValue, TKey>;
+
+  /** The opposite of `matches`. */
+  notMatches(pattern: string): SelectFieldCondition<TValue, TKey>;
+
   greaterThan(
     value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined>,
   ): SelectFieldCondition<TValue, TKey>;
@@ -177,6 +183,10 @@ const buildValidatedConditionSql = (
 
   if (condition.operator === "JSON_CONTAINS") {
     return adaptor.buildJsonArrayContainsSql(fieldSql, condition.value);
+  }
+
+  if (condition.operator === "MATCHES" || condition.operator === "NOT MATCHES") {
+    return adaptor.buildPatternMatchSql(fieldSql, String(condition.value), condition.operator === "NOT MATCHES");
   }
 
   if (
@@ -322,7 +332,19 @@ export type SelectQueryBuilder<
     count(): Promise<SqlResult<Record<StringKeys<ValueOfTable<TTable>>, number>, 1>>;
   };
 
-export type SqlOperator = "=" | "<" | ">" | "<=" | ">=" | "!=" | "LIKE" | "IN" | "NOT IN" | "JSON_CONTAINS";
+export type SqlOperator =
+  | "="
+  | "<"
+  | ">"
+  | "<="
+  | ">="
+  | "!="
+  | "LIKE"
+  | "MATCHES"
+  | "NOT MATCHES"
+  | "IN"
+  | "NOT IN"
+  | "JSON_CONTAINS";
 export type StringOrNever<T> = T extends string ? T : never;
 
 export interface SqlResultTimings {

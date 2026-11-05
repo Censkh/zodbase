@@ -92,6 +92,19 @@ describe.each(TEST_DATABASE_FACTORIES)("RSQL contract: $name", ({ create }) => {
     expect(await idsFor("name=like=Grace%")).toEqual(["2"]);
   });
 
+  it("matches `*` wildcards in == and != values, with every other character literal", async () => {
+    expect(await idsFor("code==3:*")).toEqual(["3"]);
+    expect(await idsFor("code==*:15")).toEqual(["3"]);
+    expect(await idsFor("name==grace*")).toEqual(["2"]);
+    expect(await idsFor('name=="*, *"')).toEqual(["1"]);
+    expect(await idsFor("code!=0*")).toEqual(["2", "3"]);
+    // LIKE's own wildcards and escape character match only themselves.
+    expect(await idsFor("code==4_")).toEqual([]);
+    expect(await idsFor("code==%*")).toEqual([]);
+    expect(await idsFor(`name=="Flynn's*"`)).toEqual(["3"]);
+    expect(await idsFor(`name=="*!*"`)).toEqual([]);
+  });
+
   it("supports exact membership checks for JSON arrays", async () => {
     expect(await idsFor("tags=in=(urgent)")).toEqual(["1"]);
     expect(await idsFor("tags=in=(keep,urgent)")).toEqual(["1", "3"]);

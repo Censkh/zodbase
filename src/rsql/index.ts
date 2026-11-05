@@ -93,11 +93,14 @@ const astNodeToCondition = <TTable extends Table>(
       : [parseValue(fieldBinding.schema, rightValue)];
 
     // Handle different operators
+    // `*` in an `==` or `!=` string value is a wildcard for any run of characters.
+    const pattern = typeof values[0] === "string" && values[0].includes("*") ? values[0] : undefined;
+
     switch (method) {
       case "equals":
-        return fieldBinding.equals(values[0] as any);
+        return pattern === undefined ? fieldBinding.equals(values[0] as any) : fieldBinding.matches(pattern);
       case "notEquals":
-        return fieldBinding.notEquals(values[0] as any);
+        return pattern === undefined ? fieldBinding.notEquals(values[0] as any) : fieldBinding.notMatches(pattern);
       case "greaterThan":
         return fieldBinding.greaterThan(values[0] as any);
       case "greaterThanOrEquals":

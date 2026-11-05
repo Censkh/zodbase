@@ -34,6 +34,7 @@ The module implements a subset of RSQL. Refer to the [RSQL tests](https://github
 | `quantity>=20` | Numeric comparison for a numeric field. |
 | `id=in=(ada,grace)` | Match one of several values. |
 | `id=out=(ada,grace)` | Exclude several values. |
+| `name==Ada*` | `*` in an `==` or `!=` string value matches any run of characters, case-insensitively. Other characters, including `%` and `_`, match themselves. |
 | `name=like=A%` | SQL LIKE matching. |
 | `parentId==null` | Null equality for a nullable field. |
 | `active==true;quantity>=20` | AND. |
