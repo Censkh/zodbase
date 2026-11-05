@@ -2,7 +2,7 @@ import BunDatabase from "bun:sqlite";
 import * as zod from "zod";
 import { createTable, Database } from "../src";
 import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
-import { rsqlToCondition } from "../src/rsql";
+import { RsqlFilterError, rsqlToCondition } from "../src/rsql";
 
 // Test table schema
 const AssetTable = createTable({
@@ -299,6 +299,50 @@ describe("RSQL Filter", () => {
       expect(() => {
         rsqlToCondition(AssetTable, "invalid filter syntax");
       }).toThrow("Failed to parse RSQL filter");
+    });
+  });
+
+  describe("Allowed fields and operators", () => {
+    const fields = { title: "name", "state.status": "status" } as const;
+
+    it("reads each allowed selector from the field it maps to", async () => {
+      const db = await createTestDb();
+      const condition = rsqlToCondition(AssetTable, 'state.status==approved;title=="Asset One"', { fields });
+      const { results } = await db.select(AssetTable).where(condition!);
+
+      expect(results.map((r) => r.id)).toEqual(["1"]);
+    });
+
+    it("rejects a table field the allowlist leaves out, naming the selector", () => {
+      const filter = () => rsqlToCondition(AssetTable, "title==x,price>1", { fields });
+      expect(filter).toThrow(RsqlFilterError);
+      expect(filter).toThrow(expect.objectContaining({ field: "price" }));
+    });
+
+    it("rejects the column name behind an allowed selector", () => {
+      expect(() => rsqlToCondition(AssetTable, "status==approved", { fields })).toThrow(
+        expect.objectContaining({ field: "status" }),
+      );
+    });
+
+    it("rejects selectors that only exist on the object prototype", () => {
+      expect(() => rsqlToCondition(AssetTable, "constructor==x", { fields })).toThrow(
+        expect.objectContaining({ field: "constructor" }),
+      );
+      expect(() => rsqlToCondition(AssetTable, "constructor==x")).toThrow(
+        expect.objectContaining({ field: "constructor" }),
+      );
+    });
+
+    it("rejects an operator the allowlist leaves out", async () => {
+      const operators = ["==", "=in="] as const;
+      const db = await createTestDb();
+      const condition = rsqlToCondition(AssetTable, "status=in=(approved)", { operators });
+      const { results } = await db.select(AssetTable).where(condition!);
+      expect(results.map((r) => r.status)).toEqual(["approved", "approved"]);
+      expect(() => rsqlToCondition(AssetTable, "name=like=Asset%", { operators })).toThrow(
+        "Unsupported operator: =like=",
+      );
     });
   });
 

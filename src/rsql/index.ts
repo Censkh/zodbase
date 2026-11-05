@@ -16,6 +16,34 @@ const OPERATOR_MAP = {
   "=like=": "like",
 } as const;
 
+// The package targets a TypeScript lib older than `Object.hasOwn`.
+const hasOwn = (object: object, key: string) => Object.getOwnPropertyDescriptor(object, key) !== undefined;
+
+/** An RSQL comparison operator the converter implements. */
+export type RsqlOperator = keyof typeof OPERATOR_MAP;
+
+export interface RsqlOptions<TTable extends Table> {
+  /**
+   * The selectors a filter may name, each with the table field it reads. A selector not listed
+   * throws, so a filter can't reach columns the application doesn't expose. Without it, a filter
+   * may name any field of the table.
+   */
+  fields?: Readonly<Record<string, keyof ValueOfTable<TTable> & string>>;
+  /** The operators a filter may use. Without it, every supported operator is allowed. */
+  operators?: readonly RsqlOperator[];
+}
+
+/** A filter that can't be converted. `field` names the selector when it isn't a filterable field. */
+export class RsqlFilterError extends Error {
+  readonly field: string | undefined;
+
+  constructor(message: string, field?: string) {
+    super(message);
+    this.name = "RsqlFilterError";
+    this.field = field;
+  }
+}
+
 const parseValue = (schema: zod.ZodType, value: string): string | number | boolean | null => {
   const arrayType = isZodTypeExtends(schema, zod.ZodArray);
   const valueSchema: zod.ZodType = arrayType ? ((arrayType as zod.ZodArray).element as unknown as zod.ZodType) : schema;
@@ -45,11 +73,12 @@ const parseValue = (schema: zod.ZodType, value: string): string | number | boole
 const astNodeToCondition = <TTable extends Table>(
   table: TTable,
   node: any,
+  options: RsqlOptions<TTable>,
 ): SelectCondition<ValueOfTable<TTable>> | undefined => {
   // Handle logical operators (AND/OR)
   if (node.type === "LOGIC") {
-    const left = node.left ? astNodeToCondition(table, node.left) : undefined;
-    const right = node.right ? astNodeToCondition(table, node.right) : undefined;
+    const left = node.left ? astNodeToCondition(table, node.left, options) : undefined;
+    const right = node.right ? astNodeToCondition(table, node.right, options) : undefined;
 
     if (!left || !right) {
       return left || right;
@@ -70,18 +99,26 @@ const astNodeToCondition = <TTable extends Table>(
   if (node.type === "COMPARISON") {
     // RSQL parser uses 'left' property for the field selector (SelectorNode)
     const leftNode = (node as any).left;
-    const fieldName = leftNode?.selector || leftNode;
+    const selector = String(leftNode?.selector || leftNode);
+    const fieldName = options.fields
+      ? hasOwn(options.fields, selector)
+        ? options.fields[selector]
+        : undefined
+      : selector;
 
-    const fieldBinding = (table as any)[`$${fieldName}`] as SingleFieldBinding<ValueOfTable<TTable>> | undefined;
+    const fieldBinding =
+      fieldName !== undefined && hasOwn(table.fields, fieldName)
+        ? ((table as any)[`$${fieldName}`] as SingleFieldBinding<ValueOfTable<TTable>> | undefined)
+        : undefined;
 
     if (!fieldBinding) {
-      throw new Error(`Field "${fieldName}" not found in table`);
+      throw new RsqlFilterError(`Field "${selector}" not found in table`, selector);
     }
 
-    const method = OPERATOR_MAP[node.operator as keyof typeof OPERATOR_MAP];
+    const method = hasOwn(OPERATOR_MAP, node.operator) ? OPERATOR_MAP[node.operator as RsqlOperator] : undefined;
 
-    if (!method) {
-      throw new Error(`Unsupported operator: ${node.operator}`);
+    if (!method || (options.operators && !options.operators.includes(node.operator))) {
+      throw new RsqlFilterError(`Unsupported operator: ${node.operator}`);
     }
 
     // Parse values - RSQL parser uses 'right' property for the value(s)
@@ -134,6 +171,7 @@ const astNodeToCondition = <TTable extends Table>(
 export const rsqlToCondition = <TTable extends Table>(
   table: TTable,
   filterString: string | undefined,
+  options: RsqlOptions<TTable> = {},
 ): SelectCondition<ValueOfTable<TTable>> | undefined => {
   if (!filterString) {
     return undefined;
@@ -141,8 +179,11 @@ export const rsqlToCondition = <TTable extends Table>(
 
   try {
     const ast = parse(filterString);
-    return astNodeToCondition(table, ast);
+    return astNodeToCondition(table, ast, options);
   } catch (error) {
-    throw new Error(`Failed to parse RSQL filter: ${error instanceof Error ? error.message : String(error)}`);
+    throw new RsqlFilterError(
+      `Failed to parse RSQL filter: ${error instanceof Error ? error.message : String(error)}`,
+      error instanceof RsqlFilterError ? error.field : undefined,
+    );
   }
 };
