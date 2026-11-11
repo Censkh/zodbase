@@ -5,10 +5,11 @@ import {
   coalesce,
   createTable,
   Database,
+  divide,
   exists,
-  expression,
+  scalar,
   selectStatement,
-  sql,
+  subtract,
   sum,
   union,
   withCtes,
@@ -68,7 +69,7 @@ test("updates an existing value by a scalar aggregate in the database", async ()
       selectStatement(
         db
           .select(Deductions, {
-            amount: coalesce(sum(Deductions.$amount), 0),
+            amount: divide(coalesce(sum(Deductions.$amount), 0), 2),
           })
           .where(Deductions.$owner.equals("a")),
       ),
@@ -80,12 +81,12 @@ test("updates an existing value by a scalar aggregate in the database", async ()
     await db.update(
       Totals,
       {
-        amount: expression(sql`${Totals.$amount} - (${subtotal})`, z.number()),
+        amount: subtract(Totals.$amount, scalar(subtotal, z.number())),
       },
       Totals.$id.equals("a"),
     );
     expect((await db.select(Totals).orderBy(Totals.$id, "ASC")).results).toEqual([
-      { id: "a", amount: 6 },
+      { id: "a", amount: 7.5 },
       { id: "b", amount: 2 },
     ]);
   } finally {

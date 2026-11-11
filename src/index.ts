@@ -981,4 +981,4 @@ export type { default as DatabaseAdaptor } from "./DatabaseAdaptor";
 export * from "./MetaTypes";
 export type { SelectCondition, SelectQueryBuilder } from "./QueryBuilder";
 export { selectStatement, union, withCtes } from "./QueryStatement";
-export { coalesce, expression, sum } from "./SqlExpression";
+export { coalesce, divide, expression, scalar, subtract, sum } from "./SqlExpression";

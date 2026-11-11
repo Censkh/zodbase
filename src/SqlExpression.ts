@@ -30,3 +30,22 @@ export const coalesce = <T extends zod.ZodType>(
   const schema = value.schema.unwrap();
   return expression(sql`COALESCE(${value}, ${schema.parse(fallback)})`, schema);
 };
+
+/** Embed a compiled single-column SELECT as a scalar value. */
+export const scalar = <T extends zod.ZodType>(statement: Statement, schema: T) =>
+  expression(sql`(${statement})`, schema);
+
+type NumericOperand = number | SqlExpression<zod.ZodType<number>> | (FieldReference<number> & ToSql);
+
+const numericOperand = (value: NumericOperand) => {
+  if (typeof value === "number") return zod.number().parse(value);
+  if (value instanceof SqlExpression) return value;
+  return sql`${value.table.id}.${value}`;
+};
+
+/** Divide with fractional results, including when both operands are integers. */
+export const divide = (dividend: NumericOperand, divisor: NumericOperand) =>
+  expression(sql`(${numericOperand(dividend)} / (1.0 * ${numericOperand(divisor)}))`, zod.number());
+
+export const subtract = (left: NumericOperand, right: NumericOperand) =>
+  expression(sql`(${numericOperand(left)} - ${numericOperand(right)})`, zod.number());
