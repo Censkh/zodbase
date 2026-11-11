@@ -115,8 +115,8 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
 
   protected override selectDialect = "mssql" as const;
 
-  override buildSelectSql(query: SelectQuery, scalar = false): Statement {
-    if (isRelationalQuery(query)) return this.buildRelationalSelectSql(query, scalar);
+  override buildSelectSql(query: SelectQuery, scalar = false, named = false): Statement {
+    if (isRelationalQuery(query)) return this.buildRelationalSelectSql(query, scalar, named);
     for (const value of [query.limit, query.offset]) {
       if (value !== undefined && (!Number.isSafeInteger(value) || value < 0))
         throw new Error("Invalid limit or offset");

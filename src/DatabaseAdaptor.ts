@@ -26,6 +26,7 @@ import type {
   ValueOfTable,
 } from "./QueryBuilder";
 import { isScalarSelect, SELECT_QUERY } from "./QueryBuilder";
+import type { QueryStatement } from "./QueryStatement";
 import { compileRelationalQuery, type SelectDialect } from "./RelationalQuery";
 import { type Statement, TO_SQL_SYMBOL } from "./Statement";
 import { canShareSubquery, isSubquery } from "./Subquery";
@@ -130,13 +131,13 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   }
 
   protected selectDialect?: SelectDialect;
-  protected relationalSelect(query: SelectQuery, scalar = false) {
+  protected relationalSelect(query: SelectQuery, scalar = false, named = false) {
     if (!this.selectDialect) throw new Error("This adaptor does not support relational queries");
-    return compileRelationalQuery(this, this.selectDialect, query, scalar);
+    return compileRelationalQuery(this, this.selectDialect, query, scalar, named);
   }
-  protected buildRelationalSelectSql(query: SelectQuery, scalar: boolean): Statement {
+  protected buildRelationalSelectSql(query: SelectQuery, scalar: boolean, named = false): Statement {
     if (scalar && !isScalarSelect(query)) throw new Error("Scalar subqueries must select exactly one plain column");
-    return raw(this.relationalSelect(query, scalar).sql);
+    return raw(this.relationalSelect(query, scalar, named).sql);
   }
   protected async executeRelationalSelect(query: SelectQuery): Promise<SqlResult> {
     const compiled = this.relationalSelect(query);
@@ -172,7 +173,15 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   protected supportsSubqueryReturning = true;
   protected materializeRepeatedSubqueries = false;
 
-  buildSelectSql(_select: SelectQuery, _scalar = false): Statement {
+  async compileStatement(statement: QueryStatement): Promise<Statement> {
+    return statement.compile(this);
+  }
+
+  buildUpdateReturningSql(_table: Table, _values: Record<string, unknown>, _where: SelectCondition): Statement {
+    throw new Error("This adaptor does not support UPDATE RETURNING in a writable CTE");
+  }
+
+  buildSelectSql(_select: SelectQuery, _scalar = false, _named = false): Statement {
     throw new Error("This adaptor does not support scalar subqueries");
   }
 
@@ -283,6 +292,13 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
    */
   buildPatternMatchSql(fieldSql: string, pattern: string, negate: boolean): Statement {
     return sql`${raw(fieldSql)} ${raw(negate ? "NOT LIKE" : "LIKE")} ${this.toLikePattern(pattern)} ESCAPE '!'`;
+  }
+
+  /** Case-insensitive substring match. Every character in the search term is literal. */
+  buildContainsTextSql(fieldSql: string, text: string): Statement {
+    const special = new Set(["!", "%", "_", ...this.likeSpecialCharacters]);
+    const escaped = Array.from(text.toLowerCase(), (char) => (special.has(char) ? `!${char}` : char)).join("");
+    return sql`LOWER(${raw(fieldSql)}) LIKE ${`%${escaped}%`} ESCAPE '!'`;
   }
 
   protected toLikePattern(pattern: string): string {

@@ -1,6 +1,7 @@
 import { getZodTypeFields } from "zod-meta";
 import { quoteIdentifier } from "./Escaping";
 import type { Falsy, SelectCondition, SingleFieldBinding, ValueOfTable } from "./QueryBuilder";
+import type { QueryStatement } from "./QueryStatement";
 import { TO_SQL_SYMBOL } from "./Statement";
 import type { Bindings, Table } from "./Table";
 
@@ -32,6 +33,10 @@ export const createTableBinding = <TTable extends Table>(table: TTable): Binding
           operator: "LIKE",
           value,
         }) as any;
+      },
+
+      containsText(text) {
+        return createSelectCondition({ field: fieldBinding, operator: "CONTAINS_TEXT", value: text }) as any;
       },
 
       matches(pattern) {
@@ -120,6 +125,8 @@ export const createTableBinding = <TTable extends Table>(table: TTable): Binding
 
   return binding as Bindings<ValueOfTable<TTable>>;
 };
+
+export const exists = (query: QueryStatement): SelectCondition => createSelectCondition({ exists: query });
 
 const createSelectCondition = (options: Omit<SelectCondition, "and" | "or">): SelectCondition => {
   return {

@@ -1,6 +1,14 @@
-import { type InsertValues, isFieldReference, SELECT_QUERY } from "./QueryBuilder";
+import { assertSelectArguments, type InsertValues, isFieldReference, SELECT_QUERY } from "./QueryBuilder";
+import { QueryStatement, selectStatement } from "./QueryStatement";
 import { isRelationalQuery } from "./RelationalQuery";
-import { hasSubqueries, insertSubqueries, type SubqueryInsertResult, snapshotQuery } from "./Subquery";
+import { SqlExpression } from "./SqlExpression";
+import {
+  hasSubqueries,
+  insertSubqueries,
+  type SubqueryInsertResult,
+  snapshotCondition,
+  snapshotQuery,
+} from "./Subquery";
 
 export type { InsertValues, ScalarSubquery } from "./QueryBuilder";
 
@@ -24,6 +32,7 @@ import type {
   SqlResult,
   SqlResultTimings,
   StringKeys,
+  UpdateValues,
   ValueOfTable,
 } from "./QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL, type ToSql } from "./Statement";
@@ -156,6 +165,7 @@ const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): Data
     createIndexStatement: (table: Table, index: TableIndex) => initialized().createIndexStatement(table, index),
     tableSettingStatements: (table: Table) => initialized().tableSettingStatements(table),
     execute: call("execute"),
+    compileStatement: call("compileStatement"),
     executeSelect: call("executeSelect"),
     executeQueryCount: call("executeQueryCount"),
     executeInsert: call("executeInsert"),
@@ -385,29 +395,13 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
   }, builder) as any;
 };
 
-/**
- * Limits, offsets and order directions are spliced into SQL text, so a query runs only with
- * non-negative safe integers and ASC/DESC. Checked when the query executes, like the relational
- * compiler does, so an invalid value rejects rather than throwing while the query is being built.
- */
-const assertSelectArguments = (query: SelectQuery) => {
-  for (const [name, value] of [
-    ["limit", query.limit],
-    ["offset", query.offset],
-  ] as const) {
-    if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) throw new Error(`Invalid ${name}`);
-  }
-  for (const { direction } of query.orderBy) {
-    if (direction !== "ASC" && direction !== "DESC") throw new Error("Invalid order direction");
-  }
-};
-
 const parseUpdateValues = (schema: zod.ZodObject<any>, values: Record<string, unknown>) => {
   const parsedValues: Record<string, unknown> = {};
   for (const key of Object.keys(values)) {
     // biome-ignore lint/suspicious/noPrototypeBuiltins: Consumers may target Object APIs older than ES2022.
     if (!Object.prototype.hasOwnProperty.call(schema.shape, key)) continue;
-    parsedValues[key] = schema.shape[key].parse(values[key]);
+    const value = values[key];
+    parsedValues[key] = value instanceof SqlExpression ? value.statement : schema.shape[key].parse(value);
   }
   return parsedValues;
 };
@@ -425,9 +419,51 @@ export class Database {
     };
   }
 
-  async execute(sql: Statement) {
+  compile(statement: QueryStatement): Promise<Statement> {
+    return this.options.adaptor.compileStatement(statement);
+  }
+
+  /** A single UPDATE ... RETURNING usable inside a writable CTE. Only supported by compatible adaptors. */
+  updateReturningStatement<TTable extends Table>(
+    table: TTable,
+    values: UpdateValues<TTable>,
+    where: SelectCondition<ValueOfTable<TTable>>,
+  ): QueryStatement {
+    const parsed = parseUpdateValues(table.schema as zod.ZodObject<any>, values);
+    if (!Object.values(parsed).some((value) => value !== undefined)) throw new Error("No values to update");
+    const condition = snapshotCondition(where);
+    return new QueryStatement((adaptor) => adaptor.buildUpdateReturningSql(table, parsed, condition));
+  }
+
+  /** Uses the projection's keys as the destination columns in the same order. */
+  insertFromStatement<TTable extends Table, P extends Selection>(
+    table: TTable,
+    source: Table,
+    projection: P & Record<Exclude<keyof P, keyof InputOfTable<TTable>>, never>,
+    returning?: StringKeys<ValueOfTable<TTable>>,
+  ): QueryStatement {
+    const columns = Object.keys(projection);
+    // biome-ignore lint/suspicious/noPrototypeBuiltins: The library targets ES2015.
+    if (!columns.length || columns.some((key) => !Object.prototype.hasOwnProperty.call(table.fields, key))) {
+      throw new Error("Invalid insert projection");
+    }
+    // biome-ignore lint/suspicious/noPrototypeBuiltins: The library targets ES2015.
+    if (returning && !Object.prototype.hasOwnProperty.call(table.fields, returning)) {
+      throw new Error("Invalid returning column");
+    }
+    const select = selectStatement(this.select(source, projection));
+    return new QueryStatement((adaptor) => {
+      const identifiers = columns.map((key) => adaptor.quoteIdentifier(key)).join(", ");
+      const suffix = returning ? ` RETURNING ${adaptor.quoteIdentifier(returning)}` : "";
+      return sql`INSERT INTO ${table} (${raw(identifiers)}) ${select.compile(adaptor)}${raw(suffix)}`;
+    });
+  }
+
+  async execute(statement: Statement | QueryStatement) {
     const adaptor = this.options.adaptor;
-    const result = await adaptor.execute(sql);
+    const result = await adaptor.execute(
+      statement instanceof QueryStatement ? await this.compile(statement) : statement,
+    );
 
     return result;
   }
@@ -565,7 +601,7 @@ export class Database {
 
   update<TTable extends Table>(
     table: TTable,
-    values: Partial<InputOfTable<TTable>>,
+    values: UpdateValues<TTable>,
     where: SelectCondition<ValueOfTable<TTable>>,
   ) {
     if (Object.keys(values).length === 0) {
@@ -813,9 +849,11 @@ export class Database {
         drift.tables.push({ name: live.name, rowCount: Number(first?.count ?? 0) });
         continue;
       }
-      for (const column of [...live.columns].sort())
+      for (const column of [...live.columns].sort()) {
+        // biome-ignore lint/suspicious/noPrototypeBuiltins: The library targets ES2015.
         if (!Object.prototype.hasOwnProperty.call(table.fields, column))
           drift.columns.push({ table: live.name, column });
+      }
       const indexes = new Set(table.indexes.map((index) => index.id));
       for (const index of [...live.indexes].sort(byName))
         if (!indexes.has(index.name)) drift.indexes.push({ table: live.name, index: index.name, unique: index.unique });
@@ -938,8 +976,9 @@ export const mapSqlResult = <TFrom, TTo, TResultLimit extends number>(
 };
 
 export { metaStore } from "zod-meta";
+export { exists } from "./Bindings";
 export type { default as DatabaseAdaptor } from "./DatabaseAdaptor";
 export * from "./MetaTypes";
 export type { SelectCondition, SelectQueryBuilder } from "./QueryBuilder";
-
+export { selectStatement, union, withCtes } from "./QueryStatement";
 export { expression } from "./SqlExpression";

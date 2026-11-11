@@ -28,6 +28,7 @@ export const compileRelationalQuery = (
   dialect: SelectDialect,
   query: SelectQuery,
   scalar = false,
+  named = false,
 ) => {
   const q = (name: string) => adaptor.quoteIdentifier(name);
   let sequence = 0;
@@ -85,7 +86,7 @@ export const compileRelationalQuery = (
     const condition = (value: NonNullable<SelectQuery["where"]>): string => {
       const visit = (value: NonNullable<SelectQuery["where"]>) => {
         if ("conditions" in value) value.conditions.forEach(visit);
-        else {
+        else if (!("exists" in value)) {
           checkField(value.field);
           if (isFieldReference(value.value)) checkField(value.value);
         }
@@ -107,8 +108,7 @@ export const compileRelationalQuery = (
       .join(" ");
     const expressions: string[] = [];
     const columns: string[] = [];
-    const add = (expression: string) => {
-      const name = unique();
+    const add = (expression: string, name = unique()) => {
       expressions.push(`${expression} AS ${q(name)}`);
       columns.push(name);
       return name;
@@ -129,19 +129,27 @@ export const compileRelationalQuery = (
     const node = (
       value: Selection | Table | SingleFieldBinding | SqlExpression,
       root = false,
+      columnName?: string,
     ): ((row: Record<string, any>) => any) => {
       if (value instanceof SqlExpression || isFieldReference(value)) {
         const source = value instanceof SqlExpression ? value.statement[TO_SQL_SYMBOL]() : ref(value);
         let expression = source;
-        if (!scalar && (isZodTypeExtends(value.schema, zod.ZodBigInt) || isZodTypeExtends(value.schema, zod.ZodDate)))
+        if (
+          !scalar &&
+          !named &&
+          (isZodTypeExtends(value.schema, zod.ZodBigInt) || isZodTypeExtends(value.schema, zod.ZodDate))
+        )
           expression = `CAST(${source} AS ${dialect === "mysql" || dialect === "mariadb" ? "CHAR" : dialect === "mssql" ? "NVARCHAR(MAX)" : "TEXT"})`;
-        if (!scalar && dialect === "mssql" && isZodTypeExtends(value.schema, zod.ZodDate))
+        if (!scalar && !named && dialect === "mssql" && isZodTypeExtends(value.schema, zod.ZodDate))
           expression = `CONVERT(NVARCHAR(30), ${source}, 126)`;
-        const key = add(expression);
+        const key = add(expression, columnName);
         return (row) => adaptor.decodeSelectedValue(value.schema, row[key]);
       }
+      if (columnName !== undefined) throw new Error("Statement projections must be flat");
       const object = isTable(value) ? value.fields : value;
-      const entries = Object.entries(object).map(([key, child]) => [key, node(child)] as const);
+      const entries = Object.entries(object).map(
+        ([key, child]) => [key, node(child, false, named && root ? key : undefined)] as const,
+      );
       if (!entries.length) throw new Error("Empty selection objects are not supported");
       const tables = sources(value);
       const source = tables.size === 1 ? [...tables][0] : undefined;
@@ -152,6 +160,9 @@ export const compileRelationalQuery = (
           ? null
           : Object.fromEntries(entries.map(([key, decode]) => [key, decode(row)]));
     };
+    if (named && Object.keys(query.includes ?? {}).length) {
+      throw new Error("Statement projections do not support included collections");
+    }
     const decodeProjection = node(projection, true);
     const includes = Object.entries(query.includes ?? {}).map(([key, child]) => {
       // biome-ignore lint/suspicious/noPrototypeBuiltins: Support the package's ES2015 target.

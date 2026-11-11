@@ -38,7 +38,9 @@ export const snapshotCondition = (condition: SelectCondition): SelectCondition =
 const snapshotValidatedCondition = (condition: SelectCondition): SelectCondition => {
   return "conditions" in condition
     ? { ...condition, conditions: condition.conditions.map(snapshotValidatedCondition) }
-    : { ...condition, value: snapshotValue(condition.value) };
+    : "exists" in condition
+      ? condition
+      : { ...condition, value: snapshotValue(condition.value) };
 };
 
 export const snapshotQuery = (query: SelectQuery): SelectQuery => ({
@@ -122,6 +124,7 @@ export const canShareSubquery = (query: SelectQuery, destination: Table): boolea
   let hasKey = false;
   const isPointRead = (condition: SelectCondition): boolean => {
     if ("conditions" in condition) return condition.type === "AND" && condition.conditions.every(isPointRead);
+    if ("exists" in condition) return false;
     if (condition.field.table !== query.table || !["string", "number", "boolean"].includes(typeof condition.value))
       return false;
     if (condition.field === keys[0] && condition.operator === "=") hasKey = true;

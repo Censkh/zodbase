@@ -12,6 +12,7 @@ export const query = <T extends object>(table: Table<T>) => QueryBuilder<T> => {
 }
 */
 import { join, type OrderDirection, raw, sql, type Table } from "./index";
+import { QueryStatement } from "./QueryStatement";
 import { SqlExpression } from "./SqlExpression";
 import { type Statement, TO_SQL_SYMBOL, type ToSql } from "./Statement";
 
@@ -28,6 +29,12 @@ type ScalarValue<T> = ScalarSubquery<
 
 export type InsertValues<TTable extends Table> = {
   [K in keyof InputOfTable<TTable>]: InputOfTable<TTable>[K] | ScalarSubquery<InputOfTable<TTable>[K]>;
+};
+
+export type UpdateValues<TTable extends Table> = {
+  [K in keyof InputOfTable<TTable>]?:
+    | InputOfTable<TTable>[K]
+    | SqlExpression<zod.ZodType<ValueOfTable<TTable>[K & keyof ValueOfTable<TTable>]>>;
 };
 
 export type StringKeys<T> = {
@@ -61,6 +68,9 @@ export interface SingleFieldBinding<
 
   like(value: TValue[TKey]): SelectFieldCondition<TValue, TKey>;
 
+  /** Case-insensitive literal substring match. */
+  containsText(text: string): SelectFieldCondition<TValue, TKey>;
+
   /** Case-insensitively matches a pattern whose only wildcard is `*`; other characters match themselves. */
   matches(pattern: string): SelectFieldCondition<TValue, TKey>;
 
@@ -85,9 +95,9 @@ export interface SingleFieldBinding<
     value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined> | undefined | null,
   ): SelectFieldCondition<TValue, TKey>;
 
-  in(values: TValue[TKey][] | Statement): SelectFieldCondition<TValue, TKey>;
+  in(values: TValue[TKey][] | Statement | QueryStatement): SelectFieldCondition<TValue, TKey>;
 
-  notIn(values: TValue[TKey][] | Statement): SelectFieldCondition<TValue, TKey>;
+  notIn(values: TValue[TKey][] | Statement | QueryStatement): SelectFieldCondition<TValue, TKey>;
 
   contains(value: unknown): SelectFieldCondition<TValue, TKey>;
 
@@ -99,7 +109,8 @@ export type FieldBinding<TValue> = SingleFieldBinding<TValue, StringKeys<TValue>
 
 export type SelectCondition<TValue = any> =
   | SelectFieldCondition<TValue, StringKeys<TValue>>
-  | SelectCompoundCondition<TValue>;
+  | SelectCompoundCondition<TValue>
+  | SelectExistsCondition<TValue>;
 
 export type Falsy = false | null | undefined | "" | 0;
 
@@ -107,6 +118,10 @@ export interface BaseSelectCondition<TValue> {
   and(...condition: Array<SelectCondition | Falsy>): SelectCondition<TValue>;
 
   or(...condition: Array<SelectCondition | Falsy>): SelectCondition<TValue>;
+}
+
+export interface SelectExistsCondition<TValue> extends BaseSelectCondition<TValue> {
+  exists: QueryStatement;
 }
 
 export interface SelectCompoundCondition<TValue> extends BaseSelectCondition<TValue> {
@@ -137,6 +152,8 @@ export const validateSelectCondition = (condition: unknown, context = "select co
   if (!condition || typeof condition !== "object") {
     throw new Error(`Invalid ${context}: expected a zodbase condition, got ${String(condition)}`);
   }
+
+  if ("exists" in condition && condition.exists instanceof QueryStatement) return condition as SelectCondition;
 
   if ("conditions" in condition) {
     const compound = condition as { conditions: unknown; type?: unknown };
@@ -182,6 +199,8 @@ const buildValidatedConditionSql = (
     )})`;
   }
 
+  if ("exists" in condition) return sql`EXISTS (${condition.exists.compile(adaptor)})`;
+
   const fieldSql = `${includeTable ? `${adaptor.quoteIdentifier(String(condition.field.table.id))}.` : ""}${adaptor.quoteIdentifier(String(condition.field.key))}`;
 
   if (condition.operator === "JSON_CONTAINS") {
@@ -191,6 +210,10 @@ const buildValidatedConditionSql = (
   // Containment of a missing array is NULL in some databases and false in others.
   if (condition.operator === "JSON_NOT_CONTAINS") {
     return sql`(${raw(fieldSql)} IS NULL OR NOT (${adaptor.buildJsonArrayContainsSql(fieldSql, condition.value)}))`;
+  }
+
+  if (condition.operator === "CONTAINS_TEXT") {
+    return adaptor.buildContainsTextSql(fieldSql, String(condition.value));
   }
 
   if (condition.operator === "MATCHES" || condition.operator === "NOT MATCHES") {
@@ -203,6 +226,10 @@ const buildValidatedConditionSql = (
     condition.value.length === 0
   ) {
     return sql`${raw(condition.operator === "IN" ? "1 = 0" : "1 = 1")}`;
+  }
+
+  if ((condition.operator === "IN" || condition.operator === "NOT IN") && condition.value instanceof QueryStatement) {
+    return sql`${raw(fieldSql)} ${raw(condition.operator)} (${condition.value.compile(adaptor)})`;
   }
 
   let check = sql`${raw(condition.operator)}
@@ -340,6 +367,23 @@ export type SelectQueryBuilder<
     count(): Promise<SqlResult<Record<StringKeys<ValueOfTable<TTable>>, number>, 1>>;
   };
 
+/**
+ * Limits, offsets and order directions are spliced into SQL text, so a query runs only with
+ * non-negative safe integers and ASC/DESC. Checked when the query executes, like the relational
+ * compiler does, so an invalid value rejects rather than throwing while the query is being built.
+ */
+export const assertSelectArguments = (query: SelectQuery) => {
+  for (const [name, value] of [
+    ["limit", query.limit],
+    ["offset", query.offset],
+  ] as const) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) throw new Error(`Invalid ${name}`);
+  }
+  for (const { direction } of query.orderBy) {
+    if (direction !== "ASC" && direction !== "DESC") throw new Error("Invalid order direction");
+  }
+};
+
 export type SqlOperator =
   | "="
   | "<"
@@ -348,6 +392,7 @@ export type SqlOperator =
   | ">="
   | "!="
   | "LIKE"
+  | "CONTAINS_TEXT"
   | "MATCHES"
   | "NOT MATCHES"
   | "IN"

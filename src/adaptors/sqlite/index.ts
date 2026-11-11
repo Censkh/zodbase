@@ -212,8 +212,8 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
 
   protected override selectDialect = "sqlite" as const;
 
-  override buildSelectSql(select: SelectQuery, scalar = false): Statement {
-    if (isRelationalQuery(select)) return this.buildRelationalSelectSql(select, scalar);
+  override buildSelectSql(select: SelectQuery, scalar = false, named = false): Statement {
+    if (isRelationalQuery(select)) return this.buildRelationalSelectSql(select, scalar, named);
     return sql`SELECT ${raw(scalar ? select.fields.map((field) => this.quoteIdentifier(String(field.key))).join(", ") : this.selectFields(select.table, select.fields))}
             FROM ${select.table} ${select.where ? sql` WHERE ${buildConditionSql(this, select.where)}` : raw("")}${
               select.orderBy.length > 0

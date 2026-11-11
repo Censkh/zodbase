@@ -143,8 +143,8 @@ export default class MysqlAdaptor<
 
   protected override selectDialect: SelectDialect = "mysql";
 
-  override buildSelectSql(select: SelectQuery, scalar = false): Statement {
-    if (isRelationalQuery(select)) return this.buildRelationalSelectSql(select, scalar);
+  override buildSelectSql(select: SelectQuery, scalar = false, named = false): Statement {
+    if (isRelationalQuery(select)) return this.buildRelationalSelectSql(select, scalar, named);
     const tableName = this.quoteIdentifier(String(select.table.id));
     const offsetSql = select.offset === undefined ? "" : ` OFFSET ${select.offset}`;
     const limitSql =

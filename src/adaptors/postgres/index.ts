@@ -136,8 +136,8 @@ export default class PostgresAdaptor<
 
   protected override selectDialect = "postgres" as const;
 
-  override buildSelectSql(select: SelectQuery, scalar = false): Statement {
-    if (isRelationalQuery(select)) return this.buildRelationalSelectSql(select, scalar);
+  override buildSelectSql(select: SelectQuery, scalar = false, named = false): Statement {
+    if (isRelationalQuery(select)) return this.buildRelationalSelectSql(select, scalar, named);
     return sql`SELECT ${raw(scalar ? select.fields.map((field) => this.quoteIdentifier(String(field.key))).join(", ") : this.selectFields(select.table, select.fields))}
                FROM ${select.table} ${
                  select.where
@@ -379,6 +379,10 @@ export default class PostgresAdaptor<
                           FROM ${table}
                           WHERE ${buildConditionSql(this, where, true)}`;
     return this.execute(statement) as any;
+  }
+
+  override buildUpdateReturningSql(table: Table, values: Record<string, unknown>, where: SelectCondition): Statement {
+    return this.buildUpdateSql(table, values, where, true);
   }
 
   protected buildUpdateSql<TTable extends Table>(
