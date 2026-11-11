@@ -1,7 +1,18 @@
 import { Database as Sqlite } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import * as z from "zod";
-import { createTable, Database, exists, expression, selectStatement, sql, union, withCtes } from "../src";
+import {
+  coalesce,
+  createTable,
+  Database,
+  exists,
+  expression,
+  selectStatement,
+  sql,
+  sum,
+  union,
+  withCtes,
+} from "../src";
 import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
 
 test("composes recursive statements with named projections and literal text predicates", async () => {
@@ -57,11 +68,15 @@ test("updates an existing value by a scalar aggregate in the database", async ()
       selectStatement(
         db
           .select(Deductions, {
-            amount: expression(sql`SUM(${Deductions.$amount})`, z.number()),
+            amount: coalesce(sum(Deductions.$amount), 0),
           })
           .where(Deductions.$owner.equals("a")),
       ),
     );
+    const empty = await db
+      .select(Deductions, { amount: coalesce(sum(Deductions.$amount), 0) })
+      .where(Deductions.$owner.equals("missing"));
+    expect(empty.first?.amount).toBe(0);
     await db.update(
       Totals,
       {
