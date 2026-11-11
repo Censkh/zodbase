@@ -132,7 +132,7 @@ export const compileRelationalQuery = (
       columnName?: string,
     ): ((row: Record<string, any>) => any) => {
       if (value instanceof SqlExpression || isFieldReference(value)) {
-        const source = value instanceof SqlExpression ? value.statement[TO_SQL_SYMBOL]() : ref(value);
+        const source = value instanceof SqlExpression ? value.toSql(adaptor) : ref(value);
         let expression = source;
         if (
           !scalar &&

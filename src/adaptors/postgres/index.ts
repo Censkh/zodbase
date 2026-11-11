@@ -395,7 +395,7 @@ export default class PostgresAdaptor<
                SET ${raw(
                  Object.entries(valueMap).reduce((assignments, [key, value]) => {
                    if (value !== undefined) {
-                     assignments.push(`${quoteIdentifier(key)} = ${valueToSql(value, true)}`);
+                     assignments.push(`${quoteIdentifier(key)} = ${this.valueToSql(value, true)}`);
                    }
                    return assignments;
                  }, [] as string[]),

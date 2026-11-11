@@ -376,7 +376,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
                  SET ${raw(
                    Object.entries(values).reduce((acc, [key, value]) => {
                      if (value !== undefined) {
-                       acc.push(raw(`${quoteIdentifier(key)} = ${valueToSql(value, true)}`));
+                       acc.push(raw(`${quoteIdentifier(key)} = ${this.valueToSql(value, true)}`));
                      }
                      return acc;
                    }, [] as Statement[]),

@@ -1,5 +1,16 @@
 import * as zod from "zod";
-import { createTable, type Database, expression, type InputOfTable, sql } from "../src";
+import {
+  coalesce,
+  createTable,
+  type Database,
+  divide,
+  expression,
+  type InputOfTable,
+  scalar,
+  sql,
+  subtract,
+  sum,
+} from "../src";
 import type { SqlResult } from "../src/QueryBuilder";
 
 type Equal<TLeft, TRight> = (<T>() => T extends TLeft ? 1 : 2) extends <T>() => T extends TRight ? 1 : 2 ? true : false;
@@ -176,3 +187,28 @@ db.insert(PeopleTable, {
   name: db.select(PeopleTable, { person: { name: PeopleTable.$name } }),
   age: 1,
 });
+
+const numbers = createTable({
+  id: "numeric_types",
+  schema: zod.object({ amount: zod.number(), optional: zod.number().nullable() }),
+});
+const nullableSum = sum(numbers.$optional);
+const arithmetic = db.select(numbers, {
+  total: nullableSum,
+  average: divide(coalesce(nullableSum, 0), 2),
+  difference: subtract(numbers.$amount, scalar(sql`SELECT 2`, zod.number())),
+});
+export type ArithmeticProjectionContract = Expect<
+  Equal<Awaited<typeof arithmetic>["results"][number], { total: number | null; average: number; difference: number }>
+>;
+db.update(numbers, { amount: subtract(numbers.$amount, 2) }, numbers.$amount.equals(5));
+// @ts-expect-error SUM accepts numeric columns
+sum(PeopleTable.$name);
+// @ts-expect-error COALESCE's literal must fit the expression's non-null schema
+coalesce(nullableSum, "0");
+// @ts-expect-error nullable inputs require a non-null fallback before arithmetic
+divide(nullableSum, 2);
+// @ts-expect-error arithmetic requires numeric operands
+subtract(numbers.$amount, PeopleTable.$name);
+// @ts-expect-error a numeric expression cannot update a text field
+db.update(PeopleTable, { name: divide(1, 2) }, PeopleTable.$id.equals("1"));

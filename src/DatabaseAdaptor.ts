@@ -28,6 +28,7 @@ import type {
 import { isScalarSelect, SELECT_QUERY } from "./QueryBuilder";
 import type { QueryStatement } from "./QueryStatement";
 import { compileRelationalQuery, type SelectDialect } from "./RelationalQuery";
+import { SqlExpression } from "./SqlExpression";
 import { type Statement, TO_SQL_SYMBOL } from "./Statement";
 import { canShareSubquery, isSubquery } from "./Subquery";
 import type { SchemaTableInfo, TableIndex } from "./Table";
@@ -57,7 +58,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   }
 
   valueToSql(value: unknown, nested = false): string {
-    return valueToSql(value, nested);
+    return value instanceof SqlExpression ? value.toSql(this) : valueToSql(value, nested);
   }
 
   protected insertReturningSql(table: Table, position: "before-values" | "after-values"): string {

@@ -319,7 +319,7 @@ export default class MysqlAdaptor<
     return sql`UPDATE ${raw(this.quoteIdentifier(String(table.id)))} SET ${raw(
       Object.entries(values)
         .filter(([, value]) => value !== undefined)
-        .map(([key, value]) => `${this.quoteIdentifier(key)} = ${valueToSql(value, true)}`)
+        .map(([key, value]) => `${this.quoteIdentifier(key)} = ${this.valueToSql(value, true)}`)
         .join(", "),
     )} WHERE ${buildConditionSql(this, where)}`;
   }

@@ -3,6 +3,13 @@ import { ConnectionPool } from "mssql";
 import * as z from "zod";
 import { backfill, createTable, Database, foreignKey, metaStore, primaryKey, raw } from "../src";
 import MssqlAdaptor from "../src/adaptors/mssql";
+import {
+  checkAggregates,
+  checkArithmeticProjections,
+  checkScalarUpdate,
+  divideByZero,
+  seedArithmeticContract,
+} from "./helpers/arithmeticContract";
 
 // CI supplies a disposable SQL Server. Never use an application database:
 // every run creates and drops its own randomly named database.
@@ -40,6 +47,7 @@ describe.skipIf(!process.env.MSSQL_TEST_URL)("SQL Server integration", () => {
       database: name,
     }).connect();
     db = new Database({ adaptor: new MssqlAdaptor({ driver: pool }) });
+    await seedArithmeticContract(db);
     await db.syncTable(parent);
     await db.syncTable(child);
     await db.insertMany(parent, [
@@ -59,6 +67,18 @@ describe.skipIf(!process.env.MSSQL_TEST_URL)("SQL Server integration", () => {
       await admin.close();
     }
   }, 60_000);
+  it("sums numeric rows and coalesces null or empty aggregates while preserving zero", async () => {
+    await checkAggregates(db);
+  });
+  it("evaluates fractional and negative arithmetic with correct grouping", async () => {
+    await checkArithmeticProjections(db);
+  });
+  it("surfaces the server's division-by-zero error", async () => {
+    await expect(Promise.resolve(divideByZero(db))).rejects.toMatchObject({ number: 8134 });
+  });
+  it("updates only selected balances using a scalar aggregate", async () => {
+    await checkScalarUpdate(db);
+  });
   const source = (id = "a'\\") => db.select(parent, { value: parent.$value }).where(parent.$id.equals(id));
   it("creates schemas idempotently and returns Unicode, dates, booleans, bigints and JSON losslessly", async () => {
     await db.syncTable(parent);

@@ -401,7 +401,7 @@ const parseUpdateValues = (schema: zod.ZodObject<any>, values: Record<string, un
     // biome-ignore lint/suspicious/noPrototypeBuiltins: Consumers may target Object APIs older than ES2022.
     if (!Object.prototype.hasOwnProperty.call(schema.shape, key)) continue;
     const value = values[key];
-    parsedValues[key] = value instanceof SqlExpression ? value.statement : schema.shape[key].parse(value);
+    parsedValues[key] = value instanceof SqlExpression ? value : schema.shape[key].parse(value);
   }
   return parsedValues;
 };
