@@ -15,6 +15,15 @@ export default class CockroachAdaptor extends PostgresAdaptor {
   // Hidden columns are the engine's own: rowid, crdb_region and hash-sharded index shards.
   protected override visibleColumnCondition = "AND is_hidden = 'NO'";
 
+  override divideSql(dividend: string, divisor: string): string {
+    // Mixed integer, decimal and float operands can make CockroachDB resolve an invalid overload.
+    return `(CAST(${dividend} AS FLOAT8) / CAST(${divisor} AS FLOAT8))`;
+  }
+
+  override subtractSql(left: string, right: string): string {
+    return `(CAST(${left} AS FLOAT8) - CAST(${right} AS FLOAT8))`;
+  }
+
   override typeToSql(schema: zod.ZodType): string {
     return getMetaItem(schema, cockroachRegion) ? '"public"."crdb_internal_region"' : super.typeToSql(schema);
   }

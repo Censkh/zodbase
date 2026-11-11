@@ -5,7 +5,10 @@ import { backfill, createTable, Database, foreignKey, metaStore, primaryKey, raw
 import MssqlAdaptor from "../src/adaptors/mssql";
 import {
   checkAggregates,
+  checkAliasedAggregate,
   checkArithmeticProjections,
+  checkMixedOperands,
+  checkScalarProjection,
   checkScalarUpdate,
   divideByZero,
   seedArithmeticContract,
@@ -75,6 +78,15 @@ describe.skipIf(!process.env.MSSQL_TEST_URL)("SQL Server integration", () => {
   });
   it("surfaces the server's division-by-zero error", async () => {
     await expect(Promise.resolve(divideByZero(db))).rejects.toMatchObject({ number: 8134 });
+  });
+  it("keeps integer and decimal operands in order", async () => {
+    await checkMixedOperands(db);
+  });
+  it("sums repeated fractional values through a quoted table alias", async () => {
+    await checkAliasedAggregate(db);
+  });
+  it("coalesces a zero-row scalar projection using a Unicode string with an apostrophe", async () => {
+    await checkScalarProjection(db);
   });
   it("updates only selected balances using a scalar aggregate", async () => {
     await checkScalarUpdate(db);

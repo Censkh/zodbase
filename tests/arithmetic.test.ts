@@ -3,7 +3,10 @@ import { ZodError } from "zod";
 import { divide, subtract } from "../src";
 import {
   checkAggregates,
+  checkAliasedAggregate,
   checkArithmeticProjections,
+  checkMixedOperands,
+  checkScalarProjection,
   checkScalarUpdate,
   divideByZero,
   seedArithmeticContract,
@@ -41,6 +44,15 @@ describe.each(TEST_DATABASE_FACTORIES)("arithmetic expressions: $name", ({ creat
       expect((await divideByZero(context.db)).results).toEqual([{ quotient: null }]);
     });
   }
+  it("keeps integer and decimal operands in order", async () => {
+    await checkMixedOperands(context.db);
+  });
+  it("sums repeated fractional values through a quoted table alias", async () => {
+    await checkAliasedAggregate(context.db);
+  });
+  it("coalesces a zero-row scalar projection using a Unicode string with an apostrophe", async () => {
+    await checkScalarProjection(context.db);
+  });
   it("updates only selected balances using a scalar aggregate", async () => {
     await checkScalarUpdate(context.db);
   });

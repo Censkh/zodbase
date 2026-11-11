@@ -65,6 +65,9 @@ const numericOperand = (value: NumericOperand): ((adaptor?: DatabaseAdaptor) => 
   return (adaptor) => qualifiedField(value, adaptor);
 };
 
+// An exponent literal avoids integer division and fixed-scale rounding on MySQL and MariaDB.
+export const divideSql = (dividend: string, divisor: string): string => `(${dividend} / (1.0e0 * ${divisor}))`;
+
 /**
  * Divide with fractional results, including when both operands are integers.
  * Callers must supply a nonzero divisor for a numeric result.
@@ -72,13 +75,19 @@ const numericOperand = (value: NumericOperand): ((adaptor?: DatabaseAdaptor) => 
 export const divide = (dividend: NumericOperand, divisor: NumericOperand) => {
   const left = numericOperand(dividend);
   const right = numericOperand(divisor);
-  // MySQL and MariaDB round integer / DECIMAL results to a fixed scale. An exponent literal
-  // promotes the denominator to floating point there and still prevents integer division elsewhere.
-  return new SqlExpression((adaptor) => `(${left(adaptor)} / (1.0e0 * ${right(adaptor)}))`, zod.number());
+  return new SqlExpression((adaptor) => {
+    const numerator = left(adaptor);
+    const denominator = right(adaptor);
+    return adaptor ? adaptor.divideSql(numerator, denominator) : divideSql(numerator, denominator);
+  }, zod.number());
 };
 
 export const subtract = (left: NumericOperand, right: NumericOperand) => {
   const minuend = numericOperand(left);
   const subtrahend = numericOperand(right);
-  return new SqlExpression((adaptor) => `(${minuend(adaptor)} - ${subtrahend(adaptor)})`, zod.number());
+  return new SqlExpression((adaptor) => {
+    const leftSql = minuend(adaptor);
+    const rightSql = subtrahend(adaptor);
+    return adaptor ? adaptor.subtractSql(leftSql, rightSql) : `(${leftSql} - ${rightSql})`;
+  }, zod.number());
 };

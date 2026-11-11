@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import * as z from "zod";
 import {
+  alias,
   coalesce,
   createTable,
   type Database,
@@ -19,7 +20,7 @@ const Charges = createTable({
 });
 const Balances = createTable({
   id: "arithmetic balances",
-  schema: z.object({ account: z.string(), amount: z.number(), units: z.number() }),
+  schema: z.object({ account: z.string(), amount: z.number(), units: z.number().int() }),
 });
 
 export async function seedArithmeticContract(db: Database) {
@@ -33,6 +34,9 @@ export async function seedArithmeticContract(db: Database) {
     { account: "b", select: null },
     { account: "c", select: -4 },
     { account: "c", select: 4 },
+    { account: "duplicate", select: 1.25 },
+    { account: "duplicate", select: 1.25 },
+    { account: "duplicate", select: -0.5 },
   ]);
   await db.insertMany(Balances, [
     { account: "a", amount: 9, units: 2 },
@@ -71,6 +75,49 @@ export async function checkArithmeticProjections(db: Database) {
     { account: "b", quotient: -1.5, grouped: 4, difference: -4, literal: 1.25, rawOperand: 2 },
     { account: "c", quotient: -2, grouped: 1, difference: 7, literal: 1.25, rawOperand: 2 },
   ]);
+}
+
+export async function checkMixedOperands(db: Database) {
+  const { first } = await db
+    .select(Balances, {
+      integerOverDecimal: divide(Balances.$units, 1.25),
+      decimalOverInteger: divide(1.25, Balances.$units),
+      integerMinusDecimal: subtract(Balances.$units, 1.25),
+      decimalMinusInteger: subtract(1.25, Balances.$units),
+    })
+    .where(Balances.$account.equals("a"))
+    .one();
+  expect(first).toEqual({
+    integerOverDecimal: 1.6,
+    decimalOverInteger: 0.625,
+    integerMinusDecimal: 0.75,
+    decimalMinusInteger: -0.75,
+  });
+}
+
+export async function checkAliasedAggregate(db: Database) {
+  const selected = alias(Charges, 'selected "charges`]');
+  const { results } = await db
+    .select(selected, { total: sum(selected.$select) })
+    .where(selected.$account.equals("duplicate"));
+  expect(results).toEqual([{ total: 2 }]);
+}
+
+export async function checkScalarProjection(db: Database) {
+  const account = (value: string) =>
+    db.compile(
+      selectStatement(db.select(Balances, { account: Balances.$account }).where(Balances.$account.equals(value))),
+    );
+  const present = scalar(await account("c"), z.string().nullable());
+  const missing = scalar(await account("missing"), z.string().nullable());
+  const { results } = await db
+    .select(Balances, {
+      present: coalesce(present, "unused"),
+      missing,
+      fallback: coalesce(missing, "O'Connor – 東京"),
+    })
+    .where(Balances.$account.equals("a"));
+  expect(results).toEqual([{ present: "c", missing: null, fallback: "O'Connor – 東京" }]);
 }
 
 export function divideByZero(db: Database) {
