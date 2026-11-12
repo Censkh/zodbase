@@ -136,9 +136,10 @@ const astNodeToCondition = <TTable extends Table>(
     const rightNode = (node as any).right;
     // Extract the actual value from ComparisonNode or ValueNode
     const rightValue = rightNode?.arguments || rightNode?.value || rightNode;
-    const readValue = options.fieldValues && hasOwn(options.fieldValues, selector)
-      ? options.fieldValues[selector]!
-      : (value: string) => parseValue(fieldBinding.schema, value);
+    const readValue =
+      options.fieldValues && hasOwn(options.fieldValues, selector)
+        ? options.fieldValues[selector]!
+        : (value: string) => parseValue(fieldBinding.schema, value);
     const values = (Array.isArray(rightValue) ? rightValue : [rightValue]).map(readValue);
 
     // Handle different operators
