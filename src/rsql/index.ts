@@ -36,6 +36,8 @@ export interface RsqlOptions<TTable extends Table> {
    * `=out=` for a JSON array field, whose other comparisons would read the stored JSON text.
    */
   fieldOperators?: Readonly<Record<string, readonly RsqlOperator[]>>;
+  /** Maps a selector’s API values to their stored representation. */
+  fieldValues?: Readonly<Record<string, (value: string) => string | number | boolean | null>>;
 }
 
 /** A filter that can't be converted. `field` names the selector when it isn't a filterable field. */
@@ -134,9 +136,10 @@ const astNodeToCondition = <TTable extends Table>(
     const rightNode = (node as any).right;
     // Extract the actual value from ComparisonNode or ValueNode
     const rightValue = rightNode?.arguments || rightNode?.value || rightNode;
-    const values = Array.isArray(rightValue)
-      ? rightValue.map((arg: string) => parseValue(fieldBinding.schema, arg))
-      : [parseValue(fieldBinding.schema, rightValue)];
+    const readValue = options.fieldValues && hasOwn(options.fieldValues, selector)
+      ? options.fieldValues[selector]!
+      : (value: string) => parseValue(fieldBinding.schema, value);
+    const values = (Array.isArray(rightValue) ? rightValue : [rightValue]).map(readValue);
 
     // Handle different operators
     // `*` in an `==` or `!=` string value is a wildcard for any run of characters.
