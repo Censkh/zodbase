@@ -1,7 +1,8 @@
 import type * as zod from "zod";
-import { getMetaStores, getZodTypeFields } from "zod-meta";
+import { getMetaItem, getMetaStores, getZodTypeFields } from "zod-meta";
 import { createTableBinding } from "./Bindings";
 import { quoteIdentifier } from "./Escaping";
+import { primaryKey as primaryKeyMeta } from "./MetaTypes";
 import type { SelectCondition, SingleFieldBinding, StringKeys } from "./QueryBuilder";
 import { TO_SQL_SYMBOL, type ToSql } from "./Statement";
 import type { BaseSchema } from "./Types";
@@ -84,7 +85,21 @@ export interface TableOptions<TValue extends zod.infer<TSchema>, TName extends s
   id: TName;
   as?: TypeToken<TValue>;
   schema: TSchema;
+  /**
+   * The primary key's columns in order, for a key of more than one column. A one-column key can
+   * instead mark its field with `primaryKey()`; with this option, a field marked so must be one of
+   * these.
+   */
+  primaryKey?: readonly StringKeys<TValue>[];
 }
+
+/** The table's primary key columns in order: empty when it has none. */
+export const getPrimaryKey = (table: Pick<Table, "primaryKey" | "fields">): string[] =>
+  table.primaryKey
+    ? table.primaryKey.map(String)
+    : Object.values(table.fields as Record<string, SingleFieldBinding>)
+        .filter((field) => getMetaItem(field.schema, primaryKeyMeta))
+        .map((field) => String(field.key));
 
 export const createTable = <TValue extends zod.infer<TSchema>, TName extends string, TSchema extends BaseSchema>(
   options: TableOptions<TValue, TName, TSchema>,
@@ -104,6 +119,24 @@ export const createTable = <TValue extends zod.infer<TSchema>, TName extends str
         }
       }
     }
+  }
+
+  const marked = fields.filter((field) => getMetaItem(field.schema, primaryKeyMeta)).map((field) => String(field.key));
+  if (options.primaryKey) {
+    const keys = options.primaryKey.map(String);
+    const known = new Set(fields.map((field) => String(field.key)));
+    const unknown = keys.find((key) => !known.has(key));
+    if (unknown)
+      throw new Error(`[zodbase] Primary key column '${unknown}' of '${options.id}' is not one of its fields`);
+    if (new Set(keys).size !== keys.length)
+      throw new Error(`[zodbase] Primary key of '${options.id}' names a column more than once`);
+    const outside = marked.find((key) => !keys.includes(key));
+    if (outside)
+      throw new Error(`[zodbase] '${outside}' of '${options.id}' is marked primaryKey() but isn't in its primaryKey`);
+  } else if (marked.length > 1) {
+    throw new Error(
+      `[zodbase] '${options.id}' marks ${marked.join(", ")} as primaryKey(): give a key of more than one column in order with the table's primaryKey option`,
+    );
   }
 
   const table = {

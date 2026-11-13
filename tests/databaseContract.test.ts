@@ -272,6 +272,67 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
     ]);
   });
 
+  it("keys rows on a composite primary key and upserts on it", async () => {
+    const Regional = createTable({
+      id: "contract_regional",
+      schema: zod.object({ id: zod.string(), region: zod.string(), name: zod.string() }),
+      primaryKey: ["region", "id"],
+    });
+    await db.syncTable(Regional);
+    await db.syncTable(Regional);
+    await db.insert(Regional, { id: "1", region: "eu", name: "Ada" });
+    // The same id in another region is another row; the same pair is a duplicate.
+    await db.insert(Regional, { id: "1", region: "us", name: "Grace" });
+    await expect(Promise.resolve(db.insert(Regional, { id: "1", region: "eu", name: "Again" }))).rejects.toThrow();
+
+    const updated = await db
+      .upsert(Regional, { id: "1", region: "eu", name: "Ada Lovelace" }, [Regional.$region, Regional.$id])
+      .selectMutated();
+    expect(updated.first).toEqual({ id: "1", region: "eu", name: "Ada Lovelace" });
+    await db.upsertMany(
+      Regional,
+      [
+        { id: "1", region: "us", name: "Grace Hopper" },
+        { id: "2", region: "eu", name: "Linus" },
+        { id: "2", region: "eu", name: "Linus Torvalds" },
+      ],
+      [Regional.$region, Regional.$id],
+    );
+
+    const rows = await db.select(Regional).orderBy(Regional.$region, "ASC").orderBy(Regional.$id, "ASC");
+    expect(rows.results).toEqual([
+      { id: "1", region: "eu", name: "Ada Lovelace" },
+      { id: "2", region: "eu", name: "Linus Torvalds" },
+      { id: "1", region: "us", name: "Grace Hopper" },
+    ]);
+  });
+
+  it("changes a one-column primary key to a composite one, keeping its rows", async () => {
+    const single = createTable({
+      id: "contract_rekeyed",
+      schema: zod.object({
+        id: zod.string().meta(metaStore([primaryKey()])),
+        region: zod.string(),
+        name: zod.string(),
+      }),
+    });
+    await db.syncTable(single);
+    await db.insert(single, { id: "1", region: "eu", name: "Ada" });
+    await expect(Promise.resolve(db.insert(single, { id: "1", region: "us", name: "Grace" }))).rejects.toThrow();
+
+    const composite = createTable({ id: "contract_rekeyed", schema: single.schema, primaryKey: ["region", "id"] });
+    await db.syncTable(composite);
+    await db.syncTable(composite);
+
+    expect((await db.select(composite)).results).toEqual([{ id: "1", region: "eu", name: "Ada" }]);
+    await db.insert(composite, { id: "1", region: "us", name: "Grace" });
+    await expect(Promise.resolve(db.insert(composite, { id: "1", region: "eu", name: "Again" }))).rejects.toThrow();
+    expect((await db.select(composite).orderBy(composite.$region, "ASC")).results).toEqual([
+      { id: "1", region: "eu", name: "Ada" },
+      { id: "1", region: "us", name: "Grace" },
+    ]);
+  });
+
   it("returns parsed and mutated rows", async () => {
     const parsed = await db.insert(PeopleTable, people[0]).selectParsed();
     const inserted = await db.insert(PeopleTable, people[1]).selectMutated();

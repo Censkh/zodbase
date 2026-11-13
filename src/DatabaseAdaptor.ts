@@ -8,7 +8,6 @@ import {
   isZodTypeExtends,
   join,
   mapSqlResult,
-  primaryKey,
   raw,
   sql,
   type Table,
@@ -31,7 +30,7 @@ import { compileRelationalQuery, type SelectDialect } from "./RelationalQuery";
 import { divideSql, SqlExpression } from "./SqlExpression";
 import { type Statement, TO_SQL_SYMBOL } from "./Statement";
 import { canShareSubquery, isSubquery } from "./Subquery";
-import type { SchemaTableInfo, TableIndex } from "./Table";
+import { getPrimaryKey, type SchemaTableInfo, type TableIndex } from "./Table";
 
 export interface DatabaseAdaptorOptions<TDriver = any> {
   driver: TDriver;
@@ -48,11 +47,15 @@ export interface PossiblySelectedResult<TValue = any, TLimit extends number = nu
  * Rows to upsert, grouped by the columns they set so each group can share one statement. A key
  * given more than once keeps its last row, as upserting them in turn would.
  */
-export const groupUpsertRows = <TRow extends Record<string, unknown>>(rows: readonly TRow[], key: string) => {
-  const latest = new Map<unknown, TRow>();
+export const groupUpsertRows = <TRow extends Record<string, unknown>>(
+  rows: readonly TRow[],
+  keys: readonly string[],
+) => {
+  const latest = new Map<string, TRow>();
   for (const row of rows) {
-    latest.delete(row[key]);
-    latest.set(row[key], row);
+    const key = JSON.stringify(keys.map((name) => row[name]));
+    latest.delete(key);
+    latest.set(key, row);
   }
   const groups = new Map<string, TRow[]>();
   for (const row of latest.values()) {
@@ -291,19 +294,23 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   abstract executeUpsert<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>,
-    field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
+    /** The conflict target: the columns of the key the row is matched on, in order. */
+    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
   ): Promise<SqlResult<void, 0>>;
   /**
-   * Upserts each row by `field`, as `executeUpsert` would. Adaptors that can write the rows in one
+   * Upserts each row by `fields`, as `executeUpsert` would. Adaptors that can write the rows in one
    * statement override this; the default writes them one at a time.
    */
   async executeUpsertMany<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>[],
-    field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
+    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
   ): Promise<SqlResult<void, 0>> {
-    for (const rows of groupUpsertRows(values, String(field.key)))
-      for (const row of rows) await this.executeUpsert(table, row, field);
+    for (const rows of groupUpsertRows(
+      values,
+      fields.map((field) => String(field.key)),
+    ))
+      for (const row of rows) await this.executeUpsert(table, row, fields);
     return { results: [], first: undefined };
   }
   abstract executeUpdateMany<
@@ -430,30 +437,44 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     return this.execute(this.createTableStatement(table, name));
   }
 
+  /** Whether `field` declares the table's primary key itself: the key is that one column. */
+  protected isInlinePrimaryKey(table: Table, field: { key: unknown }): boolean {
+    const keys = getPrimaryKey(table);
+    return keys.length === 1 && keys[0] === String(field.key);
+  }
+
+  /** The table constraint naming a primary key of more than one column, in order. */
+  protected primaryKeyConstraintSql(table: Table): string | undefined {
+    const keys = getPrimaryKey(table);
+    return keys.length > 1 ? `PRIMARY KEY (${keys.map((key) => this.quoteIdentifier(key)).join(", ")})` : undefined;
+  }
+
   /** The statement that creates the table, doing nothing when it already exists. */
   createTableStatement(table: Table, name?: string): Statement {
+    const constraint = this.primaryKeyConstraintSql(table);
     return sql`CREATE TABLE IF NOT EXISTS ${raw(quoteIdentifier(name ?? String(table.id)))}
       (
         ${join(
-          Object.values(table.fields).map((field) => {
-            const schema = field.schema;
-            const primaryKeyMeta = getMetaItem(schema, primaryKey);
-            const foreignKeyMeta = getMetaItem(schema, foreignKey);
-            //const autoIncrementMeta = getMetaItem(schema, autoIncrement);
-            return raw(
-              [
-                quoteIdentifier(String(field.key)),
-                this.typeToSql(schema),
-                primaryKeyMeta ? "PRIMARY KEY" : "",
-                isZodRequired(schema) ? " NOT NULL" : "",
-                foreignKeyMeta
-                  ? `REFERENCES ${quoteIdentifier(String(foreignKeyMeta.data.field.table.id))} (${quoteIdentifier(String(foreignKeyMeta.data.field.key))}) ON DELETE ${(foreignKeyMeta.data.onDelete ?? "no action").toUpperCase()}`
-                  : "",
-              ]
-                .filter(Boolean)
-                .join(" "),
-            );
-          }),
+          Object.values(table.fields)
+            .map((field) => {
+              const schema = field.schema;
+              const foreignKeyMeta = getMetaItem(schema, foreignKey);
+              //const autoIncrementMeta = getMetaItem(schema, autoIncrement);
+              return raw(
+                [
+                  quoteIdentifier(String(field.key)),
+                  this.typeToSql(schema),
+                  this.isInlinePrimaryKey(table, field) ? "PRIMARY KEY" : "",
+                  isZodRequired(schema) ? " NOT NULL" : "",
+                  foreignKeyMeta
+                    ? `REFERENCES ${quoteIdentifier(String(foreignKeyMeta.data.field.table.id))} (${quoteIdentifier(String(foreignKeyMeta.data.field.key))}) ON DELETE ${(foreignKeyMeta.data.onDelete ?? "no action").toUpperCase()}`
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" "),
+              );
+            })
+            .concat(constraint ? [raw(constraint)] : []),
           ", ",
         )}
       )`;

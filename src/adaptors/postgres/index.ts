@@ -17,7 +17,6 @@ import {
   mapSqlResult,
   monotonicTimestamp,
   normalizeForeignKeyAction,
-  primaryKey,
   raw,
   sql,
   type Table,
@@ -343,22 +342,26 @@ export default class PostgresAdaptor<
   async executeUpsert<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>,
-    field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
+    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
   ): Promise<SqlResult<void, 0>> {
-    const sql = this.buildUpsertSql(table, values as any, field);
+    const sql = this.buildUpsertSql(table, values as any, fields);
     return this.decodeResult(table, await this.execute(sql)) as any;
   }
 
   override async executeUpsertMany<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>[],
-    field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
+    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
   ): Promise<SqlResult<void, 0>> {
-    for (const rows of groupUpsertRows(values as Record<string, unknown>[], String(field.key))) {
+    const target = raw(fields.map((field) => quoteIdentifier(String(field.key))).join(", "));
+    for (const rows of groupUpsertRows(
+      values as Record<string, unknown>[],
+      fields.map((field) => String(field.key)),
+    )) {
       const keys = Object.keys(rows[0]!);
       await this.execute(sql`INSERT INTO ${table.id} (${raw(keys.map(quoteIdentifier))})
                              VALUES ${raw(rows.map((row) => sql`(${raw(keys.map((key) => valueToSql(row[key], true)))})`))}
-                             ON CONFLICT (${raw(quoteIdentifier(String(field.key)))})
+                             ON CONFLICT (${target})
                              DO UPDATE SET ${raw(keys.map((key) => raw(`${quoteIdentifier(key)} = excluded.${quoteIdentifier(key)}`)))}`);
     }
     return { results: [], first: undefined };
@@ -425,12 +428,11 @@ export default class PostgresAdaptor<
   protected buildUpsertSql<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     values: Partial<ValueOfTable<TTable>>,
-    field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
+    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
   ): Statement {
+    const target = raw(fields.map((field) => quoteIdentifier(String(field.key))).join(", "));
     return sql`INSERT INTO ${table.id} (${raw(Object.keys(values).map(quoteIdentifier))})
-               VALUES (${raw(Object.values(values).map((v) => valueToSql(v, true)))}) ON CONFLICT (${raw(
-                 quoteIdentifier(String(field.key)),
-               )})
+               VALUES (${raw(Object.values(values).map((v) => valueToSql(v, true)))}) ON CONFLICT (${target})
                  DO
     UPDATE SET ${raw(
       Object.entries(values).map(
@@ -483,7 +485,7 @@ export default class PostgresAdaptor<
         if (!schema) {
           continue;
         }
-        const primaryKeyMeta = getMetaItem(schema, primaryKey);
+        const primaryKeyMeta = this.isInlinePrimaryKey(table, fieldDiff);
 
         const statement = sql`
           ALTER TABLE ${table.id}
@@ -590,10 +592,29 @@ export default class PostgresAdaptor<
         }
       }
     }
+    if (diff.primaryKey) await this.setPrimaryKey(table, diff.primaryKey);
   }
 
   protected async addPrimaryKey(table: Table, key: string): Promise<void> {
     await this.execute(sql`ALTER TABLE ${table.id} ADD PRIMARY KEY (${raw(quoteIdentifier(key))})`);
+  }
+
+  /**
+   * Makes `keys` the table's primary key, in order. The old constraint is replaced in the same
+   * statement, so CockroachDB keeps no unique index of the old key (as ALTER PRIMARY KEY would).
+   */
+  protected async setPrimaryKey(table: Table, keys: string[]): Promise<void> {
+    const { results } = await this.execute(sql`
+      SELECT constraint_name FROM information_schema.table_constraints
+      WHERE table_name = ${String(table.id)} AND table_schema = current_schema() AND constraint_type = 'PRIMARY KEY'`);
+    const current = (results[0] as { constraint_name?: string } | undefined)?.constraint_name;
+    const name = current ?? `${String(table.id)}_pkey`;
+    const columns = raw(keys.map((key) => quoteIdentifier(key)).join(", "));
+    await this.execute(
+      current
+        ? sql`ALTER TABLE ${table.id} DROP CONSTRAINT ${raw(quoteIdentifier(current))}, ADD CONSTRAINT ${raw(quoteIdentifier(name))} PRIMARY KEY (${columns})`
+        : sql`ALTER TABLE ${table.id} ADD CONSTRAINT ${raw(quoteIdentifier(name))} PRIMARY KEY (${columns})`,
+    );
   }
 
   async syncTableIndexes(table: Table): Promise<void> {
@@ -633,28 +654,30 @@ export default class PostgresAdaptor<
   }
 
   override createTableStatement(table: Table, name?: string): Statement {
+    const constraint = this.primaryKeyConstraintSql(table);
     return sql`CREATE TABLE IF NOT EXISTS ${raw(quoteIdentifier(name ?? String(table.id)))}
                           (
                             ${join(
-                              Object.values(table.fields).map((field) => {
-                                const schema = field.schema;
-                                const primaryKeyMeta = getMetaItem(schema, primaryKey);
-                                const foreignKeyMeta = getMetaItem(schema, foreignKey);
-                                //const autoIncrementMeta = getMetaItem(schema, autoIncrement);
-                                return raw(
-                                  [
-                                    quoteIdentifier(String(field.key)),
-                                    this.typeToSql(schema),
-                                    primaryKeyMeta ? "PRIMARY KEY" : "",
-                                    isZodRequired(schema) ? "NOT NULL" : "",
-                                    foreignKeyMeta
-                                      ? `REFERENCES ${quoteIdentifier(String(foreignKeyMeta.data.field.table.id))} (${quoteIdentifier(String(foreignKeyMeta.data.field.key))}) ON DELETE ${(foreignKeyMeta.data.onDelete ?? "no action").toUpperCase()}`
-                                      : "",
-                                  ]
-                                    .filter(Boolean)
-                                    .join(" "),
-                                );
-                              }),
+                              Object.values(table.fields)
+                                .map((field) => {
+                                  const schema = field.schema;
+                                  const foreignKeyMeta = getMetaItem(schema, foreignKey);
+                                  //const autoIncrementMeta = getMetaItem(schema, autoIncrement);
+                                  return raw(
+                                    [
+                                      quoteIdentifier(String(field.key)),
+                                      this.typeToSql(schema),
+                                      this.isInlinePrimaryKey(table, field) ? "PRIMARY KEY" : "",
+                                      isZodRequired(schema) ? "NOT NULL" : "",
+                                      foreignKeyMeta
+                                        ? `REFERENCES ${quoteIdentifier(String(foreignKeyMeta.data.field.table.id))} (${quoteIdentifier(String(foreignKeyMeta.data.field.key))}) ON DELETE ${(foreignKeyMeta.data.onDelete ?? "no action").toUpperCase()}`
+                                        : "",
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" "),
+                                  );
+                                })
+                                .concat(constraint ? [raw(constraint)] : []),
                               ", ",
                             )}
                           )`;

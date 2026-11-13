@@ -8,7 +8,6 @@ import {
   isZodTypeExtends,
   mapSqlResult,
   normalizeForeignKeyAction,
-  primaryKey,
   raw,
   type Table,
   type TableColumnInfo,
@@ -197,12 +196,12 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
   async executeUpsert<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>,
-    field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
+    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
   ): Promise<SqlResult<void, 0>> {
     const keys = Object.keys(values);
     const q = (key: string) => this.quoteIdentifier(key);
     // HOLDLOCK gives serializable key-range protection against concurrent insert races.
-    const text = `MERGE ${q(String(table.id))} WITH (HOLDLOCK) AS target USING (VALUES (${keys.map((key) => this.valueToSql((values as any)[key], true)).join(", ")})) AS source (${keys.map(q).join(", ")}) ON target.${q(String(field.key))} = source.${q(String(field.key))} WHEN MATCHED THEN UPDATE SET ${keys.map((key) => `target.${q(key)} = source.${q(key)}`).join(", ")} WHEN NOT MATCHED THEN INSERT (${keys.map(q).join(", ")}) VALUES (${keys.map((key) => `source.${q(key)}`).join(", ")})${this.insertReturningSql(table, "before-values")};`;
+    const text = `MERGE ${q(String(table.id))} WITH (HOLDLOCK) AS target USING (VALUES (${keys.map((key) => this.valueToSql((values as any)[key], true)).join(", ")})) AS source (${keys.map(q).join(", ")}) ON ${fields.map((field) => `target.${q(String(field.key))} = source.${q(String(field.key))}`).join(" AND ")} WHEN MATCHED THEN UPDATE SET ${keys.map((key) => `target.${q(key)} = source.${q(key)}`).join(", ")} WHEN NOT MATCHED THEN INSERT (${keys.map(q).join(", ")}) VALUES (${keys.map((key) => `source.${q(key)}`).join(", ")})${this.insertReturningSql(table, "before-values")};`;
     return this.decodeResult(table, await this.execute(raw(text))) as SqlResult<void, 0>;
   }
 
@@ -271,8 +270,10 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
       const schema = field.schema;
       const fk = getMetaItem(schema, foreignKey)?.data;
       const action = fk?.onDelete === "restrict" ? "no action" : (fk?.onDelete ?? "no action");
-      return `${this.quoteIdentifier(String(field.key))} ${this.typeToSql(schema)} ${isZodRequired(schema) ? "NOT NULL" : "NULL"}${getMetaItem(schema, primaryKey) ? " PRIMARY KEY" : ""}${fk ? ` REFERENCES ${this.quoteIdentifier(String(fk.field.table.id))} (${this.quoteIdentifier(String(fk.field.key))}) ON DELETE ${action.toUpperCase()}` : ""}`;
+      return `${this.quoteIdentifier(String(field.key))} ${this.typeToSql(schema)} ${isZodRequired(schema) ? "NOT NULL" : "NULL"}${this.isInlinePrimaryKey(table, field) ? " PRIMARY KEY" : ""}${fk ? ` REFERENCES ${this.quoteIdentifier(String(fk.field.table.id))} (${this.quoteIdentifier(String(fk.field.key))}) ON DELETE ${action.toUpperCase()}` : ""}`;
     });
+    const constraint = this.primaryKeyConstraintSql(table);
+    if (constraint) columns.push(constraint);
     return raw(
       `IF OBJECT_ID(${this.valueToSql(tableName)}, N'U') IS NULL CREATE TABLE ${tableName} (${columns.join(", ")})`,
     );
@@ -377,7 +378,7 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
             ),
           );
         if (
-          (change.type === "added" && getMetaItem(schema, primaryKey)) ||
+          (change.type === "added" && this.isInlinePrimaryKey(table, change)) ||
           change.modifications?.some((mod) => mod.type === "add-constraint" && mod.constraint === "PRIMARY KEY")
         )
           await adaptor.execute(raw(`ALTER TABLE ${target} ADD PRIMARY KEY (${column})`));
@@ -422,6 +423,21 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
             throw new Error(`Unsupported SQL Server constraint change: ${mod.type} ${mod.constraint}`);
           }
         }
+      }
+      if (diff.primaryKey) {
+        const { results } = await adaptor.execute(
+          raw(
+            `SELECT name FROM sys.key_constraints WHERE type = 'PK' AND parent_object_id = OBJECT_ID(${this.valueToSql(target)})`,
+          ),
+        );
+        const current = (results[0] as { name?: string } | undefined)?.name;
+        if (current)
+          await adaptor.execute(raw(`ALTER TABLE ${target} DROP CONSTRAINT ${this.quoteIdentifier(current)}`));
+        await adaptor.execute(
+          raw(
+            `ALTER TABLE ${target} ADD CONSTRAINT ${this.quoteIdentifier(`${String(table.id)}_pkey`)} PRIMARY KEY (${diff.primaryKey.map((key) => this.quoteIdentifier(key)).join(", ")})`,
+          ),
+        );
       }
     });
   }

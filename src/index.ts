@@ -17,7 +17,7 @@ import { findFieldMetaItems, getMetaItem } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
 import { escapeSqlValue } from "./Escaping";
 import { toLazyPromise } from "./LazyPromise";
-import { foreignKey, monotonicTimestamp, primaryKey, updatedAt } from "./MetaTypes";
+import { foreignKey, monotonicTimestamp, updatedAt } from "./MetaTypes";
 import type {
   BindingKeys,
   FieldBinding,
@@ -36,7 +36,7 @@ import type {
   ValueOfTable,
 } from "./QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL, type ToSql } from "./Statement";
-import type { SchemaDrift, SchemaTableInfo, Table, TableIndex } from "./Table";
+import { getPrimaryKey, type SchemaDrift, type SchemaTableInfo, type Table, type TableIndex } from "./Table";
 import { isZodRequired, isZodTypeExtends } from "./ZodUtils";
 
 export * from "./index.common";
@@ -186,6 +186,13 @@ const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): Data
   } as unknown as DatabaseAdaptor;
 };
 
+/** An upsert's conflict target as its fields in order. */
+const upsertKeyFields = <TField extends SingleFieldBinding>(key: TField | readonly TField[]): readonly TField[] => {
+  const fields = Array.isArray(key) ? (key as readonly TField[]) : [key as TField];
+  if (!fields.length) throw new Error("[zodbase] An upsert needs at least one key field");
+  return fields;
+};
+
 interface BaseFieldModification<M> {
   type: M;
 }
@@ -224,6 +231,11 @@ export interface FieldDiff {
 
 export interface TableDiff {
   fields: FieldDiff[];
+  /**
+   * The primary key's columns in order, when the table's key must change to them: a key of more
+   * than one column, or a different key. Adaptors apply it after adding columns.
+   */
+  primaryKey?: string[];
 }
 
 export interface MutationResult<TResult extends SqlResult> extends Promise<SqlResult<void, 0>> {
@@ -658,16 +670,21 @@ export class Database {
     ) satisfies MutationResult<SqlDefiniteResult<ValueOfTable<TTable>, number>>;
   }
 
+  /**
+   * Inserts `values`, or updates the row it conflicts with on `key`: one field, or a key of more than
+   * one column (such as a composite primary key) as its fields in order.
+   */
   upsert<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     values: InputOfTable<TTable>,
-    field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
+    key: SingleFieldBinding<ValueOfTable<TTable>, TKey> | readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
   ) {
     const parsedValues: any = (table.schema as zod.ZodObject<any>).parse(values);
     const adaptor = this.options.adaptor;
+    const fields = upsertKeyFields(key);
     return toLazyPromise(
       async () => {
-        await adaptor.executeUpsert(table, parsedValues, field);
+        await adaptor.executeUpsert(table, parsedValues, fields);
         return {
           results: [],
           first: undefined,
@@ -677,7 +694,7 @@ export class Database {
         async selectMutated<TKey extends BindingKeys<TTable>>(
           ...keys: TKey[]
         ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
-          const result = await adaptor.executeUpsert(table, parsedValues, field);
+          const result = await adaptor.executeUpsert(table, parsedValues, fields);
           if (result.results.length > 0) {
             return result as any;
           }
@@ -685,7 +702,9 @@ export class Database {
           return adaptor.executeSelect({
             table,
             fields: getFieldBindingsByKeys(table, keys.length === 0 ? ["*"] : keys),
-            where: field.equals(parsedValues[field.key]),
+            where: fields
+              .map((field) => field.equals(parsedValues[field.key]) as SelectCondition<ValueOfTable<TTable>>)
+              .reduce((all, condition) => all.and(condition)),
             orderBy: [],
             limit: 1,
             offset: undefined,
@@ -696,18 +715,18 @@ export class Database {
   }
 
   /**
-   * Upserts each row by `field`, as `upsert` does one, in as few statements as the database allows:
+   * Upserts each row by `key`, as `upsert` does one, in as few statements as the database allows:
    * one for rows setting the same columns on PostgreSQL, CockroachDB and SQLite. A key given more
    * than once keeps its last row.
    */
   async upsertMany<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     values: InputOfTable<TTable>[],
-    field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
+    key: SingleFieldBinding<ValueOfTable<TTable>, TKey> | readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
   ): Promise<SqlResult<void, 0>> {
     if (!values.length) return { results: [], first: undefined };
     const parsedValues: any[] = values.map((value) => (table.schema as zod.ZodObject<any>).parse(value));
-    return this.options.adaptor.executeUpsertMany(table, parsedValues, field);
+    return this.options.adaptor.executeUpsertMany(table, parsedValues, upsertKeyFields(key));
   }
 
   updateMany<
@@ -831,7 +850,7 @@ export class Database {
 
     const diff = await this.diffTable(table);
 
-    if (diff.fields.length > 0) {
+    if (diff.fields.length > 0 || diff.primaryKey) {
       await this.adaptor.processDiff(table, diff);
     }
 
@@ -899,6 +918,16 @@ export class Database {
       }
     }
 
+    // A one-column key keeps its own field's change; any other key change is the table's.
+    const expectedPrimaryKey = getPrimaryKey(table);
+    const remotePrimaryKey = tableRemoteSchema.results
+      .filter((column) => column.primaryKey)
+      .map((column) => column.name);
+    const samePrimaryKey =
+      remotePrimaryKey.length === expectedPrimaryKey.length &&
+      expectedPrimaryKey.every((key) => remotePrimaryKey.includes(key));
+    if (expectedPrimaryKey.length > 1 && !samePrimaryKey) diff.primaryKey = expectedPrimaryKey;
+
     for (const [key, value] of Object.entries(table.fields)) {
       const field = value as SingleFieldBinding;
       const column = tableRemoteSchema.results.find((column) => column.name === key);
@@ -934,7 +963,7 @@ export class Database {
           });
         }
         const foreignKeyMeta = getMetaItem(field.schema, foreignKey);
-        if (getMetaItem(field.schema, primaryKey) && !column.primaryKey) {
+        if (expectedPrimaryKey.length === 1 && expectedPrimaryKey[0] === key && !column.primaryKey) {
           if (tableRemoteSchema.results.some((existingColumn) => existingColumn.primaryKey)) {
             throw new Error(
               `[zodbase] Cannot add primary key '${key}' to '${String(table.id)}': another primary key already exists`,

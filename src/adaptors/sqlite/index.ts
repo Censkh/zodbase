@@ -147,6 +147,8 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
       }
     }
 
+    // A primary key can't change in place either: the rebuilt table declares the new one.
+    if (diff.primaryKey) remake = true;
     if (remake) {
       // sqlite does not support modifying columns, so we need to create a new table
       const tempTableId = `${table.id}_temp_${crypto.randomUUID().split("-")[0]}`;
@@ -306,7 +308,8 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
         name: row.name,
         type: {} as any,
         notNull: row.notnull === 1,
-        primaryKey: row.pk === 1,
+        // pk is the column's position in the primary key, from 1; 0 for other columns.
+        primaryKey: row.pk > 0,
         ...(foreignKey ? { foreignKey } : {}),
       };
     });
@@ -327,22 +330,26 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
   async executeUpsert<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>,
-    field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
+    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
   ): Promise<SqlResult<void, 0>> {
-    const sql = this.buildUpsertSql(table, values as any, field);
+    const sql = this.buildUpsertSql(table, values as any, fields);
     return (await this.execute(sql)) as any;
   }
 
   override async executeUpsertMany<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>[],
-    field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
+    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
   ): Promise<SqlResult<void, 0>> {
-    for (const rows of groupUpsertRows(values as Record<string, unknown>[], String(field.key))) {
+    const target = raw(fields.map((field) => quoteIdentifier(String(field.key))).join(", "));
+    for (const rows of groupUpsertRows(
+      values as Record<string, unknown>[],
+      fields.map((field) => String(field.key)),
+    )) {
       const keys = Object.keys(rows[0]!);
       await this.execute(sql`INSERT INTO ${table.id} (${raw(keys.map(quoteIdentifier))})
                  VALUES ${raw(rows.map((row) => sql`${keys.map((key) => row[key])}`))}
-                 ON CONFLICT (${raw(quoteIdentifier(String(field.key)))})
+                 ON CONFLICT (${target})
                  DO UPDATE SET ${raw(keys.map((key) => raw(`${quoteIdentifier(key)} = excluded.${quoteIdentifier(key)}`)))}`);
     }
     return { results: [], first: undefined };
@@ -402,11 +409,12 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
   protected buildUpsertSql<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     values: Partial<ValueOfTable<TTable>>,
-    field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
+    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
   ): Statement {
+    const target = raw(fields.map((field) => quoteIdentifier(String(field.key))).join(", "));
     return sql`INSERT INTO ${table.id} (${raw(Object.keys(values).map(quoteIdentifier))})
                  VALUES ${Object.values(values)}
-                 ON CONFLICT (${raw(quoteIdentifier(String(field.key)))})
+                 ON CONFLICT (${target})
                  DO UPDATE SET ${raw(
                    Object.entries(values).map(
                      ([key, value]) => sql`${raw(quoteIdentifier(key))} = ${raw(valueToSql(value, true))}`,

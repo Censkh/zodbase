@@ -14,7 +14,6 @@ import {
   join,
   mapSqlResult,
   normalizeForeignKeyAction,
-  primaryKey,
   raw,
   sql,
   type Table,
@@ -268,7 +267,7 @@ export default class MysqlAdaptor<
   async executeUpsert<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>,
-    _field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
+    _fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
   ): Promise<SqlResult<void, 0>> {
     const keys = Object.keys(values);
     const statement = sql`INSERT INTO ${raw(this.quoteIdentifier(String(table.id)))} (${raw(
@@ -395,7 +394,7 @@ export default class MysqlAdaptor<
             sql`ALTER TABLE ${tableSql} MODIFY COLUMN ${columnSql} ${raw(this.typeToSql(schema))} NOT NULL`,
           );
         }
-        if (getMetaItem(schema, primaryKey)) {
+        if (this.isInlinePrimaryKey(table, fieldDiff)) {
           await this.execute(sql`ALTER TABLE ${tableSql} ADD PRIMARY KEY (${columnSql})`);
         }
         const foreignKeyMeta = getMetaItem(schema, foreignKey);
@@ -459,6 +458,18 @@ export default class MysqlAdaptor<
         }
       }
     }
+    if (diff.primaryKey) {
+      const tableSql = raw(this.quoteIdentifier(String(table.id)));
+      const columns = raw(diff.primaryKey.map((key) => this.quoteIdentifier(key)).join(", "));
+      const { results } = await this.execute(sql`
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE table_schema = DATABASE() AND table_name = ${String(table.id)} AND constraint_type = 'PRIMARY KEY'`);
+      await this.execute(
+        results.length
+          ? sql`ALTER TABLE ${tableSql} DROP PRIMARY KEY, ADD PRIMARY KEY (${columns})`
+          : sql`ALTER TABLE ${tableSql} ADD PRIMARY KEY (${columns})`,
+      );
+    }
   }
 
   async syncTableIndexes(table: Table): Promise<void> {
@@ -493,26 +504,28 @@ export default class MysqlAdaptor<
   }
 
   override createTableStatement(table: Table, name?: string): Statement {
+    const constraint = this.primaryKeyConstraintSql(table);
     return sql`CREATE TABLE IF NOT EXISTS ${raw(this.quoteIdentifier(name ?? String(table.id)))} (
       ${join(
-        Object.values(table.fields).map((field) => {
-          const primaryKeyMeta = getMetaItem(field.schema, primaryKey);
-          const foreignKeyMeta = getMetaItem(field.schema, foreignKey);
-          const typeSql = this.typeToSql(field.schema);
-          return raw(
-            [
-              this.quoteIdentifier(String(field.key)),
-              typeSql,
-              primaryKeyMeta ? "PRIMARY KEY" : "",
-              isZodRequired(field.schema) ? "NOT NULL" : "",
-              foreignKeyMeta
-                ? `REFERENCES ${this.quoteIdentifier(String(foreignKeyMeta.data.field.table.id))} (${this.quoteIdentifier(String(foreignKeyMeta.data.field.key))}) ON DELETE ${(foreignKeyMeta.data.onDelete ?? "no action").toUpperCase()}`
-                : "",
-            ]
-              .filter(Boolean)
-              .join(" "),
-          );
-        }),
+        Object.values(table.fields)
+          .map((field) => {
+            const foreignKeyMeta = getMetaItem(field.schema, foreignKey);
+            const typeSql = this.typeToSql(field.schema);
+            return raw(
+              [
+                this.quoteIdentifier(String(field.key)),
+                typeSql,
+                this.isInlinePrimaryKey(table, field) ? "PRIMARY KEY" : "",
+                isZodRequired(field.schema) ? "NOT NULL" : "",
+                foreignKeyMeta
+                  ? `REFERENCES ${this.quoteIdentifier(String(foreignKeyMeta.data.field.table.id))} (${this.quoteIdentifier(String(foreignKeyMeta.data.field.key))}) ON DELETE ${(foreignKeyMeta.data.onDelete ?? "no action").toUpperCase()}`
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" "),
+            );
+          })
+          .concat(constraint ? [raw(constraint)] : []),
         ", ",
       )}
     )`;

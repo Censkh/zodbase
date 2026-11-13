@@ -57,6 +57,36 @@ describe("CockroachDB schema synchronization contract", () => {
     ).toContainEqual(expect.objectContaining({ constraint_type: "PRIMARY KEY" }));
   }, 30_000);
 
+  it("replaces a primary key with a composite one without keeping the old key as a unique index", async () => {
+    const single = createTable({
+      id: "cockroach_rekeyed",
+      schema: zod.object({ id: zod.string().meta(metaStore([primaryKey()])), region: zod.string() }),
+    });
+    await context.db.syncTable(single);
+    await context.db.insert(single, { id: "1", region: "eu" });
+    await context.db.syncTable(
+      createTable({ id: "cockroach_rekeyed", schema: single.schema, primaryKey: ["region", "id"] }),
+    );
+
+    const indexes = (await context.db.execute(sql`SHOW INDEXES FROM "cockroach_rekeyed"`)).results as {
+      index_name: string;
+      non_unique: boolean;
+      column_name: string;
+      implicit: boolean;
+      storing: boolean;
+    }[];
+    // ALTER PRIMARY KEY would have kept a unique index on "id", and with it a check on every insert.
+    expect(indexes.filter((index) => !index.non_unique).map((index) => index.index_name)).toEqual([
+      "cockroach_rekeyed_pkey",
+      "cockroach_rekeyed_pkey",
+    ]);
+    expect(
+      indexes
+        .filter((index) => index.index_name === "cockroach_rekeyed_pkey" && !index.storing)
+        .map((index) => index.column_name),
+    ).toEqual(["region", "id"]);
+  }, 30_000);
+
   it("applies backfilled nullability changes and partial indexes idempotently", async () => {
     const InitialTable = createTable({
       id: "cockroach_schema_people",
