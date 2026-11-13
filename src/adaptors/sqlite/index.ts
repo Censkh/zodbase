@@ -14,7 +14,7 @@ import {
   type TableDiff,
   valueToSql,
 } from "../..";
-import DatabaseAdaptor, { type PossiblySelectedResult } from "../../DatabaseAdaptor";
+import DatabaseAdaptor, { groupUpsertRows, type PossiblySelectedResult } from "../../DatabaseAdaptor";
 import { quoteIdentifier } from "../../Escaping";
 import {
   buildConditionSql,
@@ -331,6 +331,21 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
   ): Promise<SqlResult<void, 0>> {
     const sql = this.buildUpsertSql(table, values as any, field);
     return (await this.execute(sql)) as any;
+  }
+
+  override async executeUpsertMany<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
+    table: TTable,
+    values: Partial<InputOfTable<TTable>>[],
+    field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
+  ): Promise<SqlResult<void, 0>> {
+    for (const rows of groupUpsertRows(values as Record<string, unknown>[], String(field.key))) {
+      const keys = Object.keys(rows[0]!);
+      await this.execute(sql`INSERT INTO ${table.id} (${raw(keys.map(quoteIdentifier))})
+                 VALUES ${raw(rows.map((row) => sql`${keys.map((key) => row[key])}`))}
+                 ON CONFLICT (${raw(quoteIdentifier(String(field.key)))})
+                 DO UPDATE SET ${raw(keys.map((key) => raw(`${quoteIdentifier(key)} = excluded.${quoteIdentifier(key)}`)))}`);
+    }
+    return { results: [], first: undefined };
   }
 
   executeCount<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(

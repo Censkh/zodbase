@@ -1,3 +1,4 @@
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as zod from "zod";
 import { createTable, Database, foreignKey, metaStore, primaryKey } from "../src";
 import type DatabaseAdaptor from "../src/DatabaseAdaptor";
@@ -34,7 +35,7 @@ const people = [
 const withMetadata = <TSchema extends zod.ZodType>(schema: TSchema, ...metadata: Parameters<TSchema["meta"]>[0][]) =>
   schema.meta(metaStore(metadata));
 
-describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) => {
+describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, create }) => {
   let context: TestDatabaseContext;
   let db: Database;
   let PeopleTable: ReturnType<typeof createPeopleTable>;
@@ -238,6 +239,36 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ create }) 
       { id: "1", name: "Ada", age: 37 },
       { id: "2", name: "Grace", age: 46 },
       { id: "4", name: "Margaret Hamilton", age: 46 },
+    ]);
+  });
+
+  it("upsertMany inserts and updates rows by key, keeping a repeated key's last row", async () => {
+    await db.insertMany(PeopleTable, people.slice(0, 2));
+    const adaptor = (db as unknown as { options: { adaptor: DatabaseAdaptor } }).options.adaptor;
+    const execute = spyOn(adaptor, "execute");
+    try {
+      await db.upsertMany(
+        PeopleTable,
+        [
+          { id: "2", name: "Grace Hopper", age: 46, nickname: null },
+          { id: "5", name: "Barbara", age: 30, nickname: "Babs" },
+          { id: "5", name: "Barbara Liskov", age: 31, nickname: null },
+        ],
+        PeopleTable.$id,
+      );
+      // PostgreSQL, CockroachDB and SQLite write rows that set the same columns in one statement.
+      if (["bun-sqlite", "turso-local", "postgres", "cockroach"].includes(name))
+        expect(execute).toHaveBeenCalledTimes(1);
+    } finally {
+      execute.mockRestore();
+    }
+    expect(await db.upsertMany(PeopleTable, [], PeopleTable.$id)).toEqual({ results: [], first: undefined });
+
+    const result = await db.select(PeopleTable).orderBy(PeopleTable.$id, "ASC");
+    expect(result.results).toEqual([
+      people[0],
+      { id: "2", name: "Grace Hopper", age: 46, nickname: null },
+      { id: "5", name: "Barbara Liskov", age: 31, nickname: null },
     ]);
   });
 

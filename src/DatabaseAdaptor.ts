@@ -44,6 +44,24 @@ export interface PossiblySelectedResult<TValue = any, TLimit extends number = nu
   selected: boolean;
 }
 
+/**
+ * Rows to upsert, grouped by the columns they set so each group can share one statement. A key
+ * given more than once keeps its last row, as upserting them in turn would.
+ */
+export const groupUpsertRows = <TRow extends Record<string, unknown>>(rows: readonly TRow[], key: string) => {
+  const latest = new Map<unknown, TRow>();
+  for (const row of rows) {
+    latest.delete(row[key]);
+    latest.set(row[key], row);
+  }
+  const groups = new Map<string, TRow[]>();
+  for (const row of latest.values()) {
+    const columns = JSON.stringify(Object.keys(row).sort());
+    groups.set(columns, [...(groups.get(columns) ?? []), row]);
+  }
+  return [...groups.values()];
+};
+
 export default abstract class DatabaseAdaptor<TDriver = any> {
   private transactionQueue: Promise<void> = Promise.resolve();
 
@@ -275,6 +293,19 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     values: Partial<InputOfTable<TTable>>,
     field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
   ): Promise<SqlResult<void, 0>>;
+  /**
+   * Upserts each row by `field`, as `executeUpsert` would. Adaptors that can write the rows in one
+   * statement override this; the default writes them one at a time.
+   */
+  async executeUpsertMany<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
+    table: TTable,
+    values: Partial<InputOfTable<TTable>>[],
+    field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
+  ): Promise<SqlResult<void, 0>> {
+    for (const rows of groupUpsertRows(values, String(field.key)))
+      for (const row of rows) await this.executeUpsert(table, row, field);
+    return { results: [], first: undefined };
+  }
   abstract executeUpdateMany<
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,

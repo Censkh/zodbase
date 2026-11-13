@@ -1,6 +1,10 @@
 import type * as zod from "zod";
 import { getMetaItem, type ZodMetaItem } from "zod-meta";
-import DatabaseAdaptor, { type DatabaseAdaptorOptions, type PossiblySelectedResult } from "../../DatabaseAdaptor";
+import DatabaseAdaptor, {
+  type DatabaseAdaptorOptions,
+  groupUpsertRows,
+  type PossiblySelectedResult,
+} from "../../DatabaseAdaptor";
 import { quoteIdentifier } from "../../Escaping";
 import {
   type BackfillOptions,
@@ -343,6 +347,21 @@ export default class PostgresAdaptor<
   ): Promise<SqlResult<void, 0>> {
     const sql = this.buildUpsertSql(table, values as any, field);
     return this.decodeResult(table, await this.execute(sql)) as any;
+  }
+
+  override async executeUpsertMany<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
+    table: TTable,
+    values: Partial<InputOfTable<TTable>>[],
+    field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
+  ): Promise<SqlResult<void, 0>> {
+    for (const rows of groupUpsertRows(values as Record<string, unknown>[], String(field.key))) {
+      const keys = Object.keys(rows[0]!);
+      await this.execute(sql`INSERT INTO ${table.id} (${raw(keys.map(quoteIdentifier))})
+                             VALUES ${raw(rows.map((row) => sql`(${raw(keys.map((key) => valueToSql(row[key], true)))})`))}
+                             ON CONFLICT (${raw(quoteIdentifier(String(field.key)))})
+                             DO UPDATE SET ${raw(keys.map((key) => raw(`${quoteIdentifier(key)} = excluded.${quoteIdentifier(key)}`)))}`);
+    }
+    return { results: [], first: undefined };
   }
 
   async executeCount<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(

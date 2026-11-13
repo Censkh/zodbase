@@ -173,6 +173,7 @@ const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): Data
     executeInsertMany: call("executeInsertMany"),
     executeUpdate: call("executeUpdate"),
     executeUpsert: call("executeUpsert"),
+    executeUpsertMany: call("executeUpsertMany"),
     executeUpdateMany: call("executeUpdateMany"),
     executeCount: call("executeCount"),
     executeDelete: call("executeDelete"),
@@ -692,6 +693,21 @@ export class Database {
         },
       },
     ) satisfies MutationResult<SqlDefiniteResult<ValueOfTable<TTable>, 1>>;
+  }
+
+  /**
+   * Upserts each row by `field`, as `upsert` does one, in as few statements as the database allows:
+   * one for rows setting the same columns on PostgreSQL, CockroachDB and SQLite. A key given more
+   * than once keeps its last row.
+   */
+  async upsertMany<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
+    table: TTable,
+    values: InputOfTable<TTable>[],
+    field: SingleFieldBinding<ValueOfTable<TTable>, TKey>,
+  ): Promise<SqlResult<void, 0>> {
+    if (!values.length) return { results: [], first: undefined };
+    const parsedValues: any[] = values.map((value) => (table.schema as zod.ZodObject<any>).parse(value));
+    return this.options.adaptor.executeUpsertMany(table, parsedValues, field);
   }
 
   updateMany<
