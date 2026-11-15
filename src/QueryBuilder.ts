@@ -377,6 +377,11 @@ export type SelectQueryBuilder<
       index: string,
     ): SelectQueryBuilder<TTable, TResultValue, TResultLimit, TNullable, TProjection, TIncludes>;
     count(): Promise<SqlResult<Record<StringKeys<ValueOfTable<TTable>>, number>, 1>>;
+    /**
+     * Counts the matching rows, reading at most `max` of them, so counting a large table stays
+     * cheap; `max` means "at least `max`". Ignores the query's ordering, limit and offset.
+     */
+    countUpTo(max: number): Promise<number>;
   };
 
 /**

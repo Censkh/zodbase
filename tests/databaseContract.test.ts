@@ -217,6 +217,17 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
     ).toEqual({ id: 2 });
   });
 
+  it("counts matching rows up to a limit", async () => {
+    await db.insertMany(PeopleTable, people);
+
+    const all = db.select(PeopleTable).orderBy(PeopleTable.$id, "DESC").limit(1).offset(3);
+    expect(await all.countUpTo(10)).toBe(4);
+    expect(await all.countUpTo(3)).toBe(3);
+    expect(await all.countUpTo(0)).toBe(0);
+    expect(await db.select(PeopleTable).where(PeopleTable.$age.equals(45)).countUpTo(10)).toBe(2);
+    expect(await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$id.in([])).countUpTo(10)).toBe(0);
+  });
+
   it("supports insert, update, updateMany, upsert, and delete", async () => {
     await db.insert(PeopleTable, people[0]);
     await db.insertMany(PeopleTable, people.slice(1));

@@ -168,6 +168,7 @@ const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): Data
     compileStatement: call("compileStatement"),
     executeSelect: call("executeSelect"),
     executeQueryCount: call("executeQueryCount"),
+    executeCappedCount: call("executeCappedCount"),
     executeInsert: call("executeInsert"),
     executeInsertSubqueries: call("executeInsertSubqueries"),
     executeInsertMany: call("executeInsertMany"),
@@ -403,6 +404,9 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
       if (isRelationalQuery(query)) return adaptor.executeQueryCount(query);
       // @ts-expect-error
       return adaptor.executeCount(query.table, query.fields, query.where);
+    },
+    countUpTo(max: number) {
+      return adaptor.executeCappedCount(query, max);
     },
   };
 

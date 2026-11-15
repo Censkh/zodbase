@@ -194,6 +194,27 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     );
   }
 
+  /**
+   * Counts the query's rows, reading at most `max` of them: `COUNT(*)` over the query limited to
+   * `max`, without its ordering, offset or includes. A result of `max` means "at least `max`".
+   */
+  async executeCappedCount(query: SelectQuery, max: number): Promise<number> {
+    if (!Number.isSafeInteger(max) || max < 0) throw new Error("Invalid count limit");
+    const compiled = this.relationalSelect({
+      ...query,
+      includes: undefined,
+      projection: { _row: new SqlExpression(() => "1", zod.number()) },
+      orderBy: [],
+      limit: max,
+      offset: undefined,
+    });
+    const count = this.quoteIdentifier("_count");
+    const result = await this.execute(
+      raw(`SELECT COUNT(*) AS ${count} FROM (${compiled.sql}) AS ${this.quoteIdentifier("_zodbase_count")}`),
+    );
+    return Number((result.first as Record<string, unknown> | undefined)?._count ?? 0);
+  }
+
   //typeToSql: (type: zod.ZodType<any>) => string;
   //valuesSql: <T extends zod.ZodSchema>(values: zod.infer<T>, schema: T) => string;
   abstract executeSelect<TTable extends Table, TLimit extends number>(
