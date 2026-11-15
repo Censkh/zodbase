@@ -258,6 +258,8 @@ export interface SelectQuery<TTable extends Table = Table, TLimit extends number
   }>;
   limit: TLimit | undefined;
   offset: number | undefined;
+  /** One of the table's indexes that databases with index hints read the rows through. */
+  index?: string;
 }
 
 export interface Selection {
@@ -364,6 +366,16 @@ export type SelectQueryBuilder<
       field: SingleFieldBinding,
       direction: OrderDirection,
     ): SelectQueryBuilder<TTable, TResultValue, TResultLimit, TNullable, TProjection, TIncludes>;
+    /**
+     * Looks the rows up through `index`, one of the table's own (`addIndex`), and never by scanning a
+     * whole index, where the database takes index hints (CockroachDB); elsewhere the planner still
+     * chooses. A CockroachDB query the index can't constrain then fails. For lookups the planner
+     * misjudges, such as many keys it gives the average share of rows, which add up to the table.
+     * Only for a query without joins, includes or a projection.
+     */
+    forceIndex(
+      index: string,
+    ): SelectQueryBuilder<TTable, TResultValue, TResultLimit, TNullable, TProjection, TIncludes>;
     count(): Promise<SqlResult<Record<StringKeys<ValueOfTable<TTable>>, number>, 1>>;
   };
 
@@ -381,6 +393,12 @@ export const assertSelectArguments = (query: SelectQuery) => {
   }
   for (const { direction } of query.orderBy) {
     if (direction !== "ASC" && direction !== "DESC") throw new Error("Invalid order direction");
+  }
+  // The name is spliced into SQL text, so only the table's declared indexes are accepted.
+  if (query.index !== undefined) {
+    if (!query.table.indexes.some(({ id }) => id === query.index)) throw new Error("Invalid index");
+    if (query.joins?.length || query.includes || query.projection || query.table.sourceTable)
+      throw new Error("An index hint applies to a single-table select");
   }
 };
 

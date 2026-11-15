@@ -124,6 +124,18 @@ console.log(names.first.name);
 
 Counting a field counts its non-null values. A select builder's `.count()` uses its selected fields and condition, without applying its order, limit, or offset. Prefer `db.count(table)` for a total row count.
 
+## Force an index
+
+```ts
+Posts.addIndex("posts_author", [Posts.$authorId]);
+
+const { results } = await db.select(Posts)
+  .where(Posts.$authorId.in(authorIds))
+  .forceIndex("posts_author");
+```
+
+The planner estimates each key it has no detailed statistics for as holding an average share of the table's rows, so a list of many such keys can look like most of the table and be answered by scanning it. On CockroachDB, `.forceIndex(name)` reads through the index's spans only (`FORCE_INDEX` with `NO_FULL_SCAN`): a query the index can't constrain fails instead of reading the whole index. Other databases ignore the hint and plan as usual. The name must be one of the table's own `addIndex` indexes, and the select can't have joins, includes or a projection.
+
 ## Reuse a base query
 
 ```ts

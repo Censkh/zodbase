@@ -139,10 +139,15 @@ export default class PostgresAdaptor<
 
   protected override selectDialect = "postgres" as const;
 
+  /** The table a select reads; PostgreSQL takes no index hints. */
+  protected selectSource(select: SelectQuery): Statement {
+    return sql`${select.table}`;
+  }
+
   override buildSelectSql(select: SelectQuery, scalar = false, named = false): Statement {
     if (isRelationalQuery(select)) return this.buildRelationalSelectSql(select, scalar, named);
     return sql`SELECT ${raw(scalar ? select.fields.map((field) => this.quoteIdentifier(String(field.key))).join(", ") : this.selectFields(select.table, select.fields))}
-               FROM ${select.table} ${
+               FROM ${this.selectSource(select)} ${
                  select.where
                    ? sql` WHERE
                ${buildConditionSql(this, select.where, true)}`

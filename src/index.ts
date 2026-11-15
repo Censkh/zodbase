@@ -370,6 +370,10 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
       });
       return this;
     },
+    forceIndex(index: string) {
+      query.index = index;
+      return this;
+    },
     leftJoin(table: Table, on: SelectCondition) {
       (query.joins ??= []).push({ type: "LEFT", table, on });
       return this;

@@ -3,7 +3,7 @@ import { getMetaItem } from "zod-meta";
 import type DatabaseAdaptor from "../../DatabaseAdaptor";
 import { quoteIdentifier } from "../../Escaping";
 import { mapSqlResult, normalizeForeignKeyAction, raw, sql, type Table, type TableColumnInfo } from "../../index";
-import type { SqlResult } from "../../QueryBuilder";
+import type { SelectQuery, SqlResult } from "../../QueryBuilder";
 import type { Statement } from "../../Statement";
 import PostgresAdaptor from "../postgres";
 import { cockroachLocality, cockroachRegion } from "./metadata";
@@ -22,6 +22,14 @@ export default class CockroachAdaptor extends PostgresAdaptor {
 
   override subtractSql(left: string, right: string): string {
     return `(CAST(${left} AS FLOAT8) - CAST(${right} AS FLOAT8))`;
+  }
+
+  // FORCE_INDEX alone still scans the whole index when the estimate covers the table, so the hint
+  // also rules full scans out: a query the index can't constrain fails rather than reading it all.
+  protected override selectSource(select: SelectQuery): Statement {
+    return select.index === undefined
+      ? super.selectSource(select)
+      : sql`${select.table}@{FORCE_INDEX=${raw(quoteIdentifier(select.index))},NO_FULL_SCAN}`;
   }
 
   override typeToSql(schema: zod.ZodType): string {

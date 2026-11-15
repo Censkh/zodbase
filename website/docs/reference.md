@@ -24,6 +24,7 @@ This reference summarizes the current API. Zodbase is under active development; 
 | `.limit(n)`, `.offset(n)` | Sets pagination bounds. |
 | `.one()` | Sets a limit of one; read the result's `first` field. |
 | `.clone()` | Copies a select builder for independent changes. |
+| `.forceIndex(name)` | Looks rows up through one of the table's indexes, never by scanning a whole index, on CockroachDB; ignored elsewhere. |
 | `db.count(table).where(condition)` | Counts matching rows; `first._count` holds the count. |
 
 ## Writes
