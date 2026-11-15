@@ -101,9 +101,14 @@ export const getPrimaryKey = (table: Pick<Table, "primaryKey" | "fields">): stri
         .filter((field) => getMetaItem(field.schema, primaryKeyMeta))
         .map((field) => String(field.key));
 
+/** The object a `lazyTable` definition's `createTable` fills, and the proxy that stands for it. */
+let lazyTableTarget: { target: object; self: object } | undefined;
+
 export const createTable = <TValue extends zod.infer<TSchema>, TName extends string, TSchema extends BaseSchema>(
   options: TableOptions<TValue, TName, TSchema>,
 ): Table<TValue, TName, TSchema> => {
+  const lazy = lazyTableTarget;
+  lazyTableTarget = undefined;
   const fields = getZodTypeFields(options.schema);
   for (const field of fields) {
     const fieldSchema = field.schema;
@@ -139,10 +144,10 @@ export const createTable = <TValue extends zod.infer<TSchema>, TName extends str
     );
   }
 
-  const table = {
+  const table = Object.assign(lazy?.target ?? {}, {
     ...options,
     fields: {},
-    indexes: [],
+    indexes: [] as TableIndex[],
     id: Object.assign(options.id, {
       [TO_SQL_SYMBOL]: () => quoteIdentifier(options.id),
     }),
@@ -155,13 +160,71 @@ export const createTable = <TValue extends zod.infer<TSchema>, TName extends str
       });
       return this;
     },
-  } as any as Table<TValue, TName, TSchema>;
-  table.fields = createTableBinding(table) as any;
+  }) as any as Table<TValue, TName, TSchema>;
+  // A lazy table's fields belong to the proxy its importers hold, so they compare equal to it.
+  const self = (lazy?.self ?? table) as Table<TValue, TName, TSchema>;
+  table.fields = createTableBinding(self) as any;
   for (const [key, field] of Object.entries(table.fields)) {
     // @ts-expect-error
     table[`$${key}`] = field;
   }
-  return table;
+  return self;
+};
+
+/**
+ * A table built on first use: `define` (which calls `createTable` and may add indexes to the
+ * table it returns) runs the first time anything reads the table, rather than when the module
+ * defining it loads. Building a table builds its schema, so a module of many tables otherwise
+ * costs every importer all of their schemas at startup. The returned proxy is the table: its
+ * fields, indexes and aliases refer to it.
+ */
+export const lazyTable = <TTable extends Table>(define: () => TTable): TTable => {
+  const target = {} as TTable;
+  let state: "pending" | "building" | "built" = "pending";
+  const build = () => {
+    if (state !== "pending") return;
+    state = "building";
+    // Saved and restored, so a table this definition reads (and builds) doesn't take its target.
+    const previous = lazyTableTarget;
+    lazyTableTarget = { target, self: proxy };
+    try {
+      if (define() !== proxy)
+        throw new Error("[zodbase] A lazyTable definition must return the table its createTable made");
+      state = "built";
+    } catch (error) {
+      state = "pending";
+      throw error;
+    } finally {
+      lazyTableTarget = previous;
+    }
+  };
+  const proxy: TTable = new Proxy(target, {
+    get(object, key) {
+      build();
+      return Reflect.get(object, key, proxy);
+    },
+    set(object, key, value) {
+      build();
+      return Reflect.set(object, key, value, proxy);
+    },
+    has(object, key) {
+      build();
+      return Reflect.has(object, key);
+    },
+    ownKeys(object) {
+      build();
+      return Reflect.ownKeys(object);
+    },
+    getOwnPropertyDescriptor(object, key) {
+      build();
+      return Reflect.getOwnPropertyDescriptor(object, key);
+    },
+    defineProperty(object, key, descriptor) {
+      build();
+      return Reflect.defineProperty(object, key, descriptor);
+    },
+  });
+  return proxy;
 };
 
 /** A distinct SQL scope for self joins and correlated subqueries. */
