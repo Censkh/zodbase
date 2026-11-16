@@ -12,7 +12,7 @@ export const query = <T extends object>(table: Table<T>) => QueryBuilder<T> => {
 }
 */
 import { join, type OrderDirection, raw, sql, type Table } from "./index";
-import { type Compilable, QueryStatement } from "./QueryStatement";
+import { type Compilable, isCompilable, toQueryStatement } from "./QueryStatement";
 import { SqlExpression } from "./SqlExpression";
 import { type Statement, TO_SQL_SYMBOL, type ToSql } from "./Statement";
 
@@ -121,7 +121,7 @@ export interface BaseSelectCondition<TValue> {
 }
 
 export interface SelectExistsCondition<TValue> extends BaseSelectCondition<TValue> {
-  exists: QueryStatement;
+  exists: Compilable;
 }
 
 export interface SelectCompoundCondition<TValue> extends BaseSelectCondition<TValue> {
@@ -153,7 +153,7 @@ export const validateSelectCondition = (condition: unknown, context = "select co
     throw new Error(`Invalid ${context}: expected a zodbase condition, got ${String(condition)}`);
   }
 
-  if ("exists" in condition && condition.exists instanceof QueryStatement) return condition as SelectCondition;
+  if ("exists" in condition && isCompilable(condition.exists)) return condition as SelectCondition;
 
   if ("conditions" in condition) {
     const compound = condition as { conditions: unknown; type?: unknown };
@@ -199,7 +199,7 @@ const buildValidatedConditionSql = (
     )})`;
   }
 
-  if ("exists" in condition) return sql`EXISTS (${condition.exists.compile(adaptor)})`;
+  if ("exists" in condition) return sql`EXISTS (${toQueryStatement(condition.exists).compile(adaptor)})`;
 
   const fieldSql = `${includeTable ? `${adaptor.quoteIdentifier(String(condition.field.table.id))}.` : ""}${adaptor.quoteIdentifier(String(condition.field.key))}`;
 
@@ -228,8 +228,8 @@ const buildValidatedConditionSql = (
     return sql`${raw(condition.operator === "IN" ? "1 = 0" : "1 = 1")}`;
   }
 
-  if ((condition.operator === "IN" || condition.operator === "NOT IN") && condition.value instanceof QueryStatement) {
-    return sql`${raw(fieldSql)} ${raw(condition.operator)} (${condition.value.compile(adaptor)})`;
+  if ((condition.operator === "IN" || condition.operator === "NOT IN") && isCompilable(condition.value)) {
+    return sql`${raw(fieldSql)} ${raw(condition.operator)} (${toQueryStatement(condition.value).compile(adaptor)})`;
   }
 
   let check = sql`${raw(condition.operator)}
