@@ -193,7 +193,6 @@ let cockroachSuiteLeases = 0;
 
 export const acquirePostgresTestContainer = async (): Promise<void> => {
   if (sharedDatabases) return;
-  process.env.TESTCONTAINERS_RYUK_DISABLED ??= "true";
   postgresSuiteLeases += 1;
   postgresContainerPromise ??= new PostgreSqlContainer("postgres:17-alpine").withStartupTimeout(120_000).start();
   postgresContainer = await postgresContainerPromise;
@@ -211,7 +210,6 @@ export const releasePostgresTestContainer = async (): Promise<void> => {
 
 export const acquireMysqlTestContainers = async (): Promise<void> => {
   if (sharedDatabases) return;
-  process.env.TESTCONTAINERS_RYUK_DISABLED ??= "true";
   mysqlSuiteLeases += 1;
   mysqlContainerPromise ??= new MySqlContainer("mysql:8.4")
     .withDatabase("test")
@@ -252,7 +250,6 @@ export const releaseMysqlTestContainers = async (): Promise<void> => {
 
 export const acquireCockroachTestContainer = async (): Promise<void> => {
   if (sharedDatabases) return;
-  process.env.TESTCONTAINERS_RYUK_DISABLED ??= "true";
   cockroachSuiteLeases += 1;
   cockroachContainerPromise ??= new CockroachDbContainer("cockroachdb/cockroach:v26.2.2")
     .withCommand([
