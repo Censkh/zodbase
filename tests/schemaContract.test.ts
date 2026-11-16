@@ -112,7 +112,7 @@ describe("schema synchronization contract", () => {
       schema: zod.object({ id: zod.string(), name: zod.string(), role: zod.string() }),
     });
 
-    expect(db.syncTable(InvalidTable)).rejects.toThrow("Backfill value is required");
+    await expect(db.syncTable(InvalidTable)).rejects.toThrow("Backfill value is required");
     expect(driver.query("PRAGMA table_info(schema_people)").all()).not.toContainEqual(
       expect.objectContaining({ name: "role" }),
     );
