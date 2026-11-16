@@ -2,7 +2,15 @@ import type * as zod from "zod";
 import { getMetaItem } from "zod-meta";
 import type DatabaseAdaptor from "../../DatabaseAdaptor";
 import { quoteIdentifier } from "../../Escaping";
-import { mapSqlResult, normalizeForeignKeyAction, raw, sql, type Table, type TableColumnInfo } from "../../index";
+import {
+  computed,
+  mapSqlResult,
+  normalizeForeignKeyAction,
+  raw,
+  sql,
+  type Table,
+  type TableColumnInfo,
+} from "../../index";
 import type { SelectQuery, SqlResult } from "../../QueryBuilder";
 import type { Statement } from "../../Statement";
 import PostgresAdaptor from "../postgres";
@@ -30,6 +38,13 @@ export default class CockroachAdaptor extends PostgresAdaptor {
     return select.index === undefined
       ? super.selectSource(select)
       : sql`${select.table}@{FORCE_INDEX=${raw(quoteIdentifier(select.index))},NO_FULL_SCAN}`;
+  }
+
+  // A computed region column is the region type, which its text expression must be cast to.
+  protected override computedColumnSql(table: Table, field: { key: unknown; schema: zod.ZodType }): string {
+    const options = getMetaItem(field.schema, computed)?.data;
+    if (!options || !getMetaItem(field.schema, cockroachRegion)) return super.computedColumnSql(table, field);
+    return `AS ((${options.sql((key) => quoteIdentifier(key))})::${this.typeToSql(field.schema)}) STORED`;
   }
 
   override typeToSql(schema: zod.ZodType): string {
@@ -172,6 +187,7 @@ export default class CockroachAdaptor extends PostgresAdaptor {
         hasDefault: row.column_default !== null,
         isIdentity: undefined,
         primaryKey: primaryKeyColumns.has(row.column_name),
+        generated: Boolean(row.generation_expression),
         ...(foreignKey ? { foreignKey } : {}),
       };
     });

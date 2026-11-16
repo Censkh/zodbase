@@ -1,6 +1,6 @@
 import * as z from "zod";
 import { cockroachLocality, cockroachRegion } from "zodbase/adaptors/cockroach";
-import { createTable, foreignKey, metaStore, primaryKey, raw, sql } from "../src";
+import { computed, createTable, foreignKey, metaStore, primaryKey, raw, sql } from "../src";
 import {
   acquireCockroachTestContainer,
   releaseCockroachTestContainer,
@@ -72,6 +72,44 @@ test("preserves Cockroach's implicit region column when syncing", async () => {
   await context.db.insert(table, { id: "one" });
   await context.db.syncTable(table);
   expect((await context.db.select(table)).first).toEqual({ id: "one" });
+}, 60_000);
+
+test("places each row in the region its computed region column names, and resyncs unchanged", async () => {
+  const table = createTable({
+    id: "computed_region",
+    schema: z
+      .object({
+        id: z.string().meta(metaStore([primaryKey()])),
+        name: z.string(),
+        // The region is the ID's: `a…` IDs live in aws-ap-southeast-1.
+        homeRegion: z.string().meta(
+          metaStore([
+            cockroachRegion(),
+            computed({
+              sql: (column) => `CASE substr(${column("id")}, 1, 1) WHEN 'a' THEN 'aws-ap-southeast-1' END`,
+              value: (row) => (String(row.id).startsWith("a") ? "aws-ap-southeast-1" : undefined),
+            }),
+          ]),
+        ),
+      })
+      .meta(metaStore([cockroachLocality({ type: "regional-by-row", regionColumn: "homeRegion" })])),
+  });
+  await context.db.syncTable(table);
+  const inserted = await context.db.insert(table, { id: "a1", name: "first", homeRegion: "ignored" }).returning();
+  expect(inserted.first).toEqual({ id: "a1", name: "first", homeRegion: "aws-ap-southeast-1" });
+  // An ID naming no region has none, which the column refuses.
+  await expect(
+    Promise.resolve(context.db.insert(table, { id: "z1", name: "nowhere", homeRegion: "" })),
+  ).rejects.toThrow(/null/i);
+  await context.db.syncTable(table);
+  // As the database stored it, not as the insert computed it: the column partitions the row.
+  const { first } = await context.db.execute(
+    sql`SELECT "homeRegion"::STRING AS region FROM computed_region WHERE id = 'a1'`,
+  );
+  expect(first?.region).toBe("aws-ap-southeast-1");
+  expect((await context.db.execute(sql`SHOW CREATE TABLE computed_region`)).first?.create_statement).toContain(
+    'LOCALITY REGIONAL BY ROW AS "homeRegion"',
+  );
 }, 60_000);
 
 test("regional scalar inserts retain point lookups and the auto-commit fast path", async () => {

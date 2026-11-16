@@ -32,6 +32,8 @@ Use `tx` for database work inside the callback. Send emails, publish messages, a
 
 The adaptor recognizes `cockroachLocality` metadata on the table's object schema and `cockroachRegion` metadata on a region field. Supported locality kinds are `global`, `regional-by-table`, and `regional-by-row`. A custom regional-by-row column must exist and carry region metadata. Configure the database's regions before synchronizing table locality.
 
+A regional-by-row column can be `computed` from the primary key, such as a region encoded in each ID: give it `cockroachRegion` metadata too, and the adaptor casts the expression to the region type. Because a key then always lives in one region, inserts skip the uniqueness check CockroachDB otherwise makes in every region, and a read by key goes to that key's region only.
+
 Primary-key synchronization uses `ALTER PRIMARY KEY` and can replace CockroachDB's implicit primary key. Replacing a different explicit primary key is outside automatic synchronization's contract.
 
 For shared driver options and diagnostics, see [PostgreSQL](/adaptors/postgres/); for callback semantics, see [transactions](/transactions/).

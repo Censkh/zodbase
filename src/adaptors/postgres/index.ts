@@ -9,6 +9,7 @@ import { quoteIdentifier } from "../../Escaping";
 import {
   type BackfillOptions,
   backfill,
+  computed,
   type ExecuteStatementEvent,
   type FieldDiffType,
   foreignKey,
@@ -37,7 +38,7 @@ import {
 } from "../../QueryBuilder";
 import { isRelationalQuery } from "../../RelationalQuery";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
-import type { SchemaTableInfo, TableIndex } from "../../Table";
+import { type SchemaTableInfo, type TableIndex, writableFieldKeys } from "../../Table";
 
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
 
@@ -215,7 +216,7 @@ export default class PostgresAdaptor<
     rows: readonly Record<string, unknown>[],
     options: { returning: boolean; conflict?: { fields: readonly SingleFieldBinding[]; action: "nothing" | "update" } },
   ): Statement {
-    const columns = Object.keys(table.fields);
+    const columns = writableFieldKeys(table);
     const { conflict } = options;
     const target = conflict?.fields.map((field) => quoteIdentifier(String(field.key))).join(", ");
     const onConflict = !conflict
@@ -330,6 +331,7 @@ export default class PostgresAdaptor<
         c.is_nullable,
         c.column_default,
         c.is_identity,
+        c.is_generated,
         CASE WHEN pk.constraint_type = 'PRIMARY KEY' THEN true ELSE false END as is_primary_key,
         fk.constraint_name AS foreign_key_constraint_name,
         fk.foreign_table_name,
@@ -380,6 +382,7 @@ export default class PostgresAdaptor<
         hasDefault: row.column_default !== null,
         isIdentity: row.is_identity === "YES",
         primaryKey: row.is_primary_key,
+        generated: row.is_generated === "ALWAYS",
         ...(row.foreign_table_name
           ? {
               foreignKey: {
@@ -508,7 +511,9 @@ export default class PostgresAdaptor<
     let tableHasRows: boolean | undefined;
     for (const fieldDiff of diff.fields) {
       const schema = fieldDiff.field?.schema;
-      const addsRequiredField = fieldDiff.type === "added" && schema && isZodRequired(schema);
+      // The database fills a computed column in itself.
+      const addsRequiredField =
+        fieldDiff.type === "added" && schema && isZodRequired(schema) && !getMetaItem(schema, computed);
       const addsRequiredConstraint =
         fieldDiff.type === "modified" &&
         fieldDiff.modifications?.some(
@@ -546,6 +551,13 @@ export default class PostgresAdaptor<
           continue;
         }
         const primaryKeyMeta = this.isInlinePrimaryKey(table, fieldDiff);
+        const computedSql = this.computedColumnSql(table, fieldDiff.field!);
+        if (computedSql) {
+          await this.execute(sql`
+            ALTER TABLE ${table.id}
+              ADD COLUMN ${raw(quoteIdentifier(String(fieldDiff.key)))} ${raw(this.typeToSql(schema))} ${raw(computedSql)}${raw(isZodRequired(schema) ? " NOT NULL" : "")}`);
+          continue;
+        }
 
         const statement = sql`
           ALTER TABLE ${table.id}
@@ -727,6 +739,7 @@ export default class PostgresAdaptor<
                                     [
                                       quoteIdentifier(String(field.key)),
                                       this.typeToSql(schema),
+                                      this.computedColumnSql(table, field),
                                       this.isInlinePrimaryKey(table, field) ? "PRIMARY KEY" : "",
                                       isZodRequired(schema) ? "NOT NULL" : "",
                                       foreignKeyMeta

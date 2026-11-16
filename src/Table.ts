@@ -2,7 +2,7 @@ import type * as zod from "zod";
 import { getMetaItem, getMetaStores, getZodTypeFields } from "zod-meta";
 import { createTableBinding } from "./Bindings";
 import { quoteIdentifier } from "./Escaping";
-import { primaryKey as primaryKeyMeta } from "./MetaTypes";
+import { computed, primaryKey as primaryKeyMeta } from "./MetaTypes";
 import type { SelectCondition, SingleFieldBinding, StringKeys } from "./QueryBuilder";
 import { TO_SQL_SYMBOL, type ToSql } from "./Statement";
 import type { BaseSchema } from "./Types";
@@ -15,6 +15,8 @@ export interface TableColumnInfo {
   notNull: boolean;
   primaryKey: boolean;
   foreignKey?: TableForeignKeyInfo;
+  /** Whether the database computes the column (a generated column), where the adaptor reads it. */
+  generated?: boolean;
 }
 
 /**
@@ -244,4 +246,47 @@ export const alias = <T extends Table, N extends string>(
   const aliased = createTable({ id: name, schema: table.schema });
   aliased.sourceTable = table.sourceTable ?? table;
   return aliased as Table<zod.infer<T["schema"]>, N, T["schema"]>;
+};
+
+/** The computed columns of a table (`computed`), by key. */
+export const computedFields = (table: Table) => {
+  const fields: { key: string; options: import("./MetaTypes").ComputedOptions }[] = [];
+  for (const [key, field] of Object.entries(table.fields)) {
+    const meta = getMetaItem((field as { schema: zod.ZodType }).schema, computed);
+    if (meta) fields.push({ key, options: meta.data });
+  }
+  return fields;
+};
+
+/** The columns a write sets: every column but the computed ones. */
+export const writableFieldKeys = (table: Table): string[] => {
+  const computedKeys = new Set(computedFields(table).map((field) => field.key));
+  return Object.keys(table.fields).filter((key) => !computedKeys.has(key));
+};
+
+/** `row` with its computed columns left out, as a write sends it. */
+export const withoutComputed = <TRow extends Record<string, unknown>>(table: Table, row: TRow): TRow => {
+  const fields = computedFields(table);
+  if (!fields.length) return row;
+  const stored = { ...row };
+  for (const { key } of fields) delete stored[key];
+  return stored;
+};
+
+/**
+ * `row` with its computed columns' values from their JavaScript rule: every one for a row being
+ * written (what it says for them is ignored, as the database ignores it), or only those it lacks
+ * for a row read back (`missingOnly`).
+ */
+export const withComputed = <TRow extends Record<string, unknown>>(
+  table: Table,
+  row: TRow,
+  missingOnly = false,
+): TRow => {
+  const fields = computedFields(table);
+  if (!fields.length) return row;
+  const complete: Record<string, unknown> = { ...row };
+  for (const { key, options } of fields)
+    if (!missingOnly || complete[key] === undefined) complete[key] = options.value(complete);
+  return complete as TRow;
 };

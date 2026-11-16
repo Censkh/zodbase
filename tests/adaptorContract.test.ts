@@ -318,6 +318,7 @@ describe("adaptor execution contract", () => {
       type: {},
       notNull: true,
       primaryKey: true,
+      generated: false,
     });
     expect((await adaptor.execute(sql`UPDATE example SET id = '2' RETURNING *`)).first).toEqual({ id: "1" });
     await adaptor.execute(sql`DELETE FROM example`);
@@ -353,8 +354,24 @@ describe("adaptor execution contract", () => {
     const Table = createTable({ id: "example", schema: zod.object({ id: zod.string(), name: zod.string() }) });
 
     expect((await adaptor.fetchTableColumns(Table)).results).toEqual([
-      { name: "id", type: {}, notNull: true, hasDefault: false, isIdentity: undefined, primaryKey: true },
-      { name: "name", type: {}, notNull: false, hasDefault: false, isIdentity: undefined, primaryKey: false },
+      {
+        name: "id",
+        type: {},
+        notNull: true,
+        hasDefault: false,
+        isIdentity: undefined,
+        primaryKey: true,
+        generated: false,
+      },
+      {
+        name: "name",
+        type: {},
+        notNull: false,
+        hasDefault: false,
+        isIdentity: undefined,
+        primaryKey: false,
+        generated: false,
+      },
     ]);
   });
 

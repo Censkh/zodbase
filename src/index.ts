@@ -27,7 +27,7 @@ import { getMetaItem } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
 import { escapeSqlValue } from "./Escaping";
 import { toLazyPromise } from "./LazyPromise";
-import { foreignKey } from "./MetaTypes";
+import { computed, foreignKey } from "./MetaTypes";
 import type {
   BindingKeys,
   FieldBinding,
@@ -664,6 +664,15 @@ export class Database {
           type: "added",
         });
       } else {
+        // A column can't become computed or stop being so in place: that is a migration's.
+        const isComputed = Boolean(getMetaItem(field.schema, computed));
+        if (column.generated !== undefined && column.generated !== isComputed) {
+          throw new Error(
+            `[zodbase] Column '${key}' of '${String(table.id)}' is ${column.generated ? "" : "not "}computed in the database but ${isComputed ? "is" : "isn't"} in its definition: migrate it first`,
+          );
+        }
+        // Its expression decides its value, and with it whether it can be null.
+        if (isComputed) continue;
         const isRequired = isZodRequired(field.schema);
         const modifications: FieldModification[] = [];
         // Only widen legacy 32-bit floats; never infer destructive type conversions. Integer fields

@@ -103,7 +103,7 @@ describe("syncTables on SQLite", () => {
   it("only reads an up-to-date schema, changing nothing", async () => {
     const statements = await resyncStatements([OwnerTable, NextWidgetTable, GadgetTable]);
 
-    const reads = /^(SELECT\b|PRAGMA (table_info|foreign_key_list|index_list)\()/i;
+    const reads = /^(SELECT\b|PRAGMA (table_xinfo|foreign_key_list|index_list)\()/i;
     expect(statements.filter((statement) => !reads.test(statement))).toEqual([]);
   });
 });

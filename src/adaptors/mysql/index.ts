@@ -6,6 +6,7 @@ import { quoteMysqlIdentifier } from "../../Escaping";
 import {
   type BackfillOptions,
   backfill,
+  computed,
   type ExecuteStatementEvent,
   type FieldDiffType,
   foreignKey,
@@ -34,7 +35,7 @@ import {
 } from "../../QueryBuilder";
 import { isRelationalQuery, type SelectDialect } from "../../RelationalQuery";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
-import type { TableIndex } from "../../Table";
+import { type TableIndex, writableFieldKeys } from "../../Table";
 
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
 
@@ -190,7 +191,7 @@ export default class MysqlAdaptor<
     values: InputOfTable<TTable>[],
     shouldReturn = false,
   ): Promise<SqlResult<ValueOfTable<TTable>, number>> {
-    const fieldKeys = Object.keys(table.fields);
+    const fieldKeys = writableFieldKeys(table);
     const statement = sql`INSERT INTO ${raw(this.quoteIdentifier(String(table.id)))} (${raw(
       fieldKeys.map((key) => this.quoteIdentifier(key)),
     )}) VALUES ${raw(
@@ -239,6 +240,7 @@ export default class MysqlAdaptor<
       hasDefault: row.column_default !== null,
       isIdentity: String(row.extra).includes("auto_increment"),
       primaryKey: Boolean(row.is_primary_key),
+      generated: /\bGENERATED\b/i.test(String(row.extra)),
       ...(row.foreign_table_name
         ? {
             foreignKey: {
@@ -338,6 +340,11 @@ export default class MysqlAdaptor<
   }
 
   async processDiff(table: Table, diff: TableDiff): Promise<void> {
+    for (const change of diff.fields)
+      if (change.type === "added" && change.field && getMetaItem(change.field.schema, computed))
+        throw new Error(
+          `[zodbase] This database can't add the computed column '${String(change.key)}' to an existing table`,
+        );
     let tableHasRows: boolean | undefined;
     for (const fieldDiff of diff.fields) {
       const schema = fieldDiff.field?.schema;
@@ -515,8 +522,10 @@ export default class MysqlAdaptor<
               [
                 this.quoteIdentifier(String(field.key)),
                 typeSql,
+                this.computedColumnSql(table, field),
                 this.isInlinePrimaryKey(table, field) ? "PRIMARY KEY" : "",
-                isZodRequired(field.schema) ? "NOT NULL" : "",
+                // MariaDB refuses NOT NULL on a generated column; its expression decides.
+                isZodRequired(field.schema) && !getMetaItem(field.schema, computed) ? "NOT NULL" : "",
                 foreignKeyMeta
                   ? `REFERENCES ${this.quoteIdentifier(String(foreignKeyMeta.data.field.table.id))} (${this.quoteIdentifier(String(foreignKeyMeta.data.field.key))}) ON DELETE ${(foreignKeyMeta.data.onDelete ?? "no action").toUpperCase()}`
                   : "",

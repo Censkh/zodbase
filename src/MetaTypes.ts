@@ -81,3 +81,21 @@ export interface BackfillOptions {
 export const backfill = createMetaType<BackfillOptions>({
   id: "backfill",
 });
+
+export interface ComputedOptions {
+  /**
+   * The SQL expression the database computes the column from, given each column's quoted name
+   * (`column("id")`). It must be portable to every database the table runs on.
+   */
+  sql: (column: (key: string) => string) => string;
+  /** The same rule in JavaScript, so a row has the value before the database returns it. */
+  value: (row: Record<string, unknown>) => unknown;
+}
+
+/**
+ * A column the database computes from others and stores (a generated column): writes never set it,
+ * and a row being inserted gets its value from `value`.
+ */
+export const computed = createMetaType<ComputedOptions>({
+  id: "computed",
+});

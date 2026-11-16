@@ -45,6 +45,25 @@ const role = z.string().meta(metaStore([backfill({ value: "user" })]));
 
 Nullable columns also require a backfill before becoming required when null values exist. Review schema changes against your adaptor and existing data before applying them.
 
+## Computed columns
+
+A `computed` column is one the database computes from the row's other columns and stores (a generated column). Give the rule twice: as SQL for the database, and in JavaScript so a row has the value before the database returns it.
+
+```ts
+import { computed, metaStore } from "zodbase";
+
+const shelf = z.string().meta(
+  metaStore([
+    computed({
+      sql: (column) => `CASE SUBSTR(${column("id")}, 1, 1) WHEN 'a' THEN 'attic' WHEN 'c' THEN 'cellar' END`,
+      value: (row) => ({ a: "attic", c: "cellar" })[String(row.id).charAt(0)],
+    }),
+  ]),
+);
+```
+
+Writes never set a computed column: inserts and upserts leave it out, whatever value they are given, and updates skip it. Rows an insert returns carry its value. Synchronization creates the column with the table, and adds it to an existing table on PostgreSQL, CockroachDB and SQLite (SQLite rebuilds the table); MySQL, MariaDB and SQL Server create it only with a new table. Synchronization never turns a plain column into a computed one, or back: it stops with an error, and that change is a migration. Write the SQL so every database the table runs on accepts it.
+
 ## Input and output types
 
 ```ts

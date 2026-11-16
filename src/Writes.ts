@@ -19,7 +19,7 @@ import { COMPILE, type Compilable, toQueryStatement } from "./QueryStatement";
 import { SqlExpression } from "./SqlExpression";
 import type { Statement } from "./Statement";
 import { hasSubqueries, isSubquery, snapshotCondition, snapshotQuery } from "./Subquery";
-import type { Table } from "./Table";
+import { computedFields, type Table, withComputed, withoutComputed } from "./Table";
 
 /**
  * A write as `Database.batch` and writable CTEs take it: how to run it on its own, and the one
@@ -73,7 +73,10 @@ const write = <TResult extends SqlResult, TExtra extends object>(
 export const parseUpdateValues = (table: Table, values: Record<string, unknown>) => {
   const schema = table.schema as zod.ZodObject<any>;
   const parsed: Record<string, unknown> = {};
+  // The database computes these; an update can't set them.
+  const computedKeys = new Set(computedFields(table).map((field) => field.key));
   for (const key of Object.keys(values)) {
+    if (computedKeys.has(key)) continue;
     // biome-ignore lint/suspicious/noPrototypeBuiltins: Consumers may target Object APIs older than ES2022.
     if (!Object.prototype.hasOwnProperty.call(schema.shape, key)) continue;
     const value = values[key];
@@ -145,7 +148,7 @@ export const createInsert = <TTable extends Table, TOne extends boolean>(
   if (subqueries && conflict) throw new Error("[zodbase] An insert of subquery values can't handle conflicts");
   const schema = table.schema as zod.ZodObject<any>;
   const rows = input.map((row) => {
-    if (!subqueries) return schema.parse(row) as Record<string, unknown>;
+    if (!subqueries) return withComputed(table, schema.parse(row) as Record<string, unknown>);
     const expressions: Record<string, unknown> = {};
     const literals: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(row as object)) {
@@ -163,19 +166,27 @@ export const createInsert = <TTable extends Table, TOne extends boolean>(
     const mask = Object.fromEntries(Object.keys(expressions).map((key) => [key, true as const]));
     return { ...schema.omit(mask).parse(literals), ...expressions };
   });
+  // What the database is sent: computed columns are its own.
+  const stored = rows.map((row) => withoutComputed(table, row));
 
   const plan = (keys: readonly string[] | undefined): WritePlan => {
     const returning = keys !== undefined;
-    const read = (result: SqlResult) => pickKeys(result, keys ?? []);
+    // Adaptors that return the rows they were given don't have the computed columns.
+    const complete = (result: SqlResult): SqlResult => {
+      if (!computedFields(table).length || !result.results.length) return result;
+      const results = result.results.map((row: Record<string, unknown>) => withComputed(table, row, true));
+      return { ...result, results, first: results[0] };
+    };
+    const read = (result: SqlResult) => pickKeys(complete(result), keys ?? []);
     return {
       async run(target) {
         if (!rows.length) return EMPTY;
-        if (subqueries) return read(await target.executeInsertSubqueries(table, rows as any, returning));
+        if (subqueries) return read(await target.executeInsertSubqueries(table, stored as any, returning));
         if (conflict?.action === "nothing")
-          return read(await target.executeInsertIgnoring(table, rows as any, conflict.fields, returning));
+          return read(await target.executeInsertIgnoring(table, stored as any, conflict.fields, returning));
         if (conflict?.action === "update") {
           if (rows.length === 1) {
-            const result = await target.executeUpsert(table, rows[0] as any, conflict.fields as any);
+            const result = await target.executeUpsert(table, stored[0] as any, conflict.fields as any);
             if (!returning) return EMPTY;
             if (result.results.length) return read(result);
             // Adaptors that can't return an upsert's row read it back by its key.
@@ -194,7 +205,7 @@ export const createInsert = <TTable extends Table, TOne extends boolean>(
               }),
             );
           }
-          await target.executeUpsertMany(table, rows as any, conflict.fields as any);
+          await target.executeUpsertMany(table, stored as any, conflict.fields as any);
           if (!returning) return EMPTY;
           if (conflict.fields.length !== 1)
             throw new Error("[zodbase] Returning the rows of a multi-row upsert needs a single-field key");
@@ -212,13 +223,13 @@ export const createInsert = <TTable extends Table, TOne extends boolean>(
         }
         const result =
           one && rows.length === 1
-            ? await target.executeInsert(table, rows[0] as any, returning)
-            : await target.executeInsertMany(table, rows as any, returning);
+            ? await target.executeInsert(table, stored[0] as any, returning)
+            : await target.executeInsertMany(table, stored as any, returning);
         return returning ? read(result) : EMPTY;
       },
       build(target) {
         if (subqueries || !rows.length) return undefined;
-        const statement = target.buildInsertStatement(table, rows, { returning, conflict });
+        const statement = target.buildInsertStatement(table, stored, { returning, conflict });
         if (!statement) return undefined;
         return { statement, read: (result) => (returning ? read(target.decode(table, result)) : noRows(result)) };
       },

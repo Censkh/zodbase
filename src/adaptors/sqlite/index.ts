@@ -3,6 +3,7 @@ import { getMetaItem, type ZodMetaItem } from "zod-meta";
 import {
   type BackfillOptions,
   backfill,
+  computed,
   type FieldDiffType,
   isZodRequired,
   mapSqlResult,
@@ -29,7 +30,7 @@ import {
 } from "../../QueryBuilder";
 import { isRelationalQuery } from "../../RelationalQuery";
 import type { Statement } from "../../Statement";
-import type { LiveTableSchema, SchemaTableInfo, TableIndex } from "../../Table";
+import { type LiveTableSchema, type SchemaTableInfo, type TableIndex, writableFieldKeys } from "../../Table";
 
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
 
@@ -62,6 +63,11 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
 
     for (const fieldDiff of diff.fields) {
       const schema = fieldDiff.field?.schema;
+      // SQLite can't add a stored generated column: the table is made again with it, filled in.
+      if (fieldDiff.type === "added" && schema && getMetaItem(schema, computed)) {
+        remake = true;
+        continue;
+      }
       const addsRequiredField = fieldDiff.type === "added" && schema && isZodRequired(schema);
       const addsRequiredConstraint =
         fieldDiff.type === "modified" &&
@@ -96,7 +102,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
       const field = fieldDiff.field;
       if (fieldDiff.type === "added") {
         const schema = field?.schema;
-        if (!schema) {
+        if (!schema || getMetaItem(schema, computed)) {
           continue;
         }
         const statement = sql`
@@ -153,7 +159,8 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
       // sqlite does not support modifying columns, so we need to create a new table
       const tempTableId = `${table.id}_temp_${crypto.randomUUID().split("-")[0]}`;
       await this.createTable(table, tempTableId);
-      const columns = Object.keys(table.fields).map(quoteIdentifier).join(", ");
+      // Computed columns are the new table's own, and an existing table may not have them yet.
+      const columns = writableFieldKeys(table).map(quoteIdentifier).join(", ");
       await this.execute(
         sql`INSERT INTO ${raw(quoteIdentifier(tempTableId))} (${raw(columns)})
             SELECT ${raw(columns)} FROM ${table}`,
@@ -254,7 +261,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     table: TTable,
     values: InputOfTable<TTable>[],
   ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, number>> {
-    const fieldKeys = Object.keys(table.fields);
+    const fieldKeys = writableFieldKeys(table);
     const statement = sql`INSERT INTO ${table.id} (${raw(fieldKeys.map(quoteIdentifier))})
                  VALUES ${raw(values.map((value: any) => sql`${fieldKeys.map((key) => value[key])}`))}`;
     await this.execute(statement);
@@ -284,7 +291,8 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
   override async fetchLiveSchema(): Promise<Map<string, LiveTableSchema>> {
     const { results } = await this.execute(raw("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"));
     const names = (results as { name: string }[]).map(({ name }) => name).filter((name) => !this.isInternalTable(name));
-    const pragmas = ["table_info", "foreign_key_list", "index_list"];
+    // table_xinfo, unlike table_info, lists generated columns (hidden 2 or 3).
+    const pragmas = ["table_xinfo", "foreign_key_list", "index_list"];
     const reads = await this.executeReads(
       names.flatMap((name) => pragmas.map((pragma) => raw(`PRAGMA ${pragma}(${quoteIdentifier(name)})`))),
     );
@@ -299,17 +307,20 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
         ]),
       );
       schema.set(name, {
-        columns: rows(name, "table_info").map((row) => {
-          const foreignKey = foreignKeys.get(row.name) as TableColumnInfo["foreignKey"];
-          return {
-            name: String(row.name),
-            type: {} as any,
-            notNull: Number(row.notnull) === 1,
-            // pk is the column's position in the primary key, from 1; 0 for other columns.
-            primaryKey: Number(row.pk) > 0,
-            ...(foreignKey ? { foreignKey } : {}),
-          };
-        }),
+        columns: rows(name, "table_xinfo")
+          .filter((row) => Number(row.hidden) !== 1)
+          .map((row) => {
+            const foreignKey = foreignKeys.get(row.name) as TableColumnInfo["foreignKey"];
+            return {
+              name: String(row.name),
+              type: {} as any,
+              notNull: Number(row.notnull) === 1,
+              // pk is the column's position in the primary key, from 1; 0 for other columns.
+              primaryKey: Number(row.pk) > 0,
+              generated: Number(row.hidden) >= 2,
+              ...(foreignKey ? { foreignKey } : {}),
+            };
+          }),
         // A primary key's autoindex belongs to the table; UNIQUE constraints ("u") and created
         // indexes ("c") are reported.
         indexes: rows(name, "index_list")
@@ -326,7 +337,8 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
   }
 
   async fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>> {
-    const result = await this.execute(sql`PRAGMA table_info(${raw(table.id)})`);
+    // table_xinfo, unlike table_info, lists generated columns (hidden 2 or 3).
+    const result = await this.execute(sql`PRAGMA table_xinfo(${raw(table.id)})`);
     const foreignKeyResult = await this.execute(sql`PRAGMA foreign_key_list(${raw(table.id)})`);
     const foreignKeys = new Map(
       foreignKeyResult.results.map((row: any) => [
@@ -339,6 +351,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
       ]),
     );
     return mapSqlResult<any, TableColumnInfo, number>(result, (row) => {
+      if (Number(row.hidden) === 1) return;
       const foreignKey = foreignKeys.get(row.name) as TableColumnInfo["foreignKey"];
       return {
         name: row.name,
@@ -346,6 +359,7 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
         notNull: row.notnull === 1,
         // pk is the column's position in the primary key, from 1; 0 for other columns.
         primaryKey: row.pk > 0,
+        generated: Number(row.hidden) >= 2,
         ...(foreignKey ? { foreignKey } : {}),
       };
     });

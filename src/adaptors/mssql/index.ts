@@ -3,6 +3,7 @@ import { getMetaItem } from "zod-meta";
 import DatabaseAdaptor, { type PossiblySelectedResult } from "../../DatabaseAdaptor";
 import {
   backfill,
+  computed,
   foreignKey,
   isZodRequired,
   isZodTypeExtends,
@@ -264,12 +265,21 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
     return raw(`EXISTS (SELECT 1 FROM OPENJSON(${fieldSql}) WHERE [type] = ${type} AND ${comparison})`);
   }
 
+  protected override computedColumnSql(_table: Table, field: { key: unknown; schema: z.ZodType }): string {
+    const options = getMetaItem(field.schema, computed)?.data;
+    return options ? `AS (${options.sql((key) => this.quoteIdentifier(key))}) PERSISTED` : "";
+  }
+
   override createTableStatement(table: Table, name?: string): Statement {
     const tableName = this.quoteIdentifier(name ?? String(table.id));
     const columns = Object.values(table.fields).map((field) => {
       const schema = field.schema;
       const fk = getMetaItem(schema, foreignKey)?.data;
       const action = fk?.onDelete === "restrict" ? "no action" : (fk?.onDelete ?? "no action");
+      const computedSql = this.computedColumnSql(table, field);
+      // A computed column takes its type from its expression.
+      if (computedSql)
+        return `${this.quoteIdentifier(String(field.key))} ${computedSql}${isZodRequired(schema) ? " NOT NULL" : ""}`;
       return `${this.quoteIdentifier(String(field.key))} ${this.typeToSql(schema)} ${isZodRequired(schema) ? "NOT NULL" : "NULL"}${this.isInlinePrimaryKey(table, field) ? " PRIMARY KEY" : ""}${fk ? ` REFERENCES ${this.quoteIdentifier(String(fk.field.table.id))} (${this.quoteIdentifier(String(fk.field.key))}) ON DELETE ${action.toUpperCase()}` : ""}`;
     });
     const constraint = this.primaryKeyConstraintSql(table);
@@ -336,6 +346,11 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
   }
 
   async processDiff(table: Table, diff: TableDiff): Promise<void> {
+    for (const change of diff.fields)
+      if (change.type === "added" && change.field && getMetaItem(change.field.schema, computed))
+        throw new Error(
+          `[zodbase] This database can't add the computed column '${String(change.key)}' to an existing table`,
+        );
     // SQL Server DDL is transactional: failed validation/backfill must leave no partial migration.
     await this.transaction(async (base) => {
       const adaptor = base as MssqlAdaptor;

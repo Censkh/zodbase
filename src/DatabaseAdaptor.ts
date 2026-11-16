@@ -2,6 +2,7 @@ import * as zod from "zod";
 import { getMetaItem } from "zod-meta";
 import { quoteIdentifier } from "./Escaping";
 import {
+  computed,
   type DatabaseEvents,
   foreignKey,
   isZodRequired,
@@ -30,7 +31,7 @@ import { compileRelationalQuery, type SelectDialect } from "./RelationalQuery";
 import { divideSql, SqlExpression } from "./SqlExpression";
 import { type Statement, TO_SQL_SYMBOL } from "./Statement";
 import { canShareSubquery, isSubquery } from "./Subquery";
-import { getPrimaryKey, type LiveTableSchema, type SchemaTableInfo, type TableIndex } from "./Table";
+import { getPrimaryKey, type LiveTableSchema, type SchemaTableInfo, type TableIndex, writableFieldKeys } from "./Table";
 
 export interface DatabaseAdaptorOptions<TDriver = any> {
   driver: TDriver;
@@ -366,7 +367,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     shouldReturn = false,
   ): Promise<SqlResult<ValueOfTable<TTable>>> {
     if (!rows.length) return { results: [], first: undefined };
-    const columns = Object.keys(table.fields);
+    const columns = writableFieldKeys(table);
     const quote = (name: string) => this.quoteIdentifier(name);
     const into = `${quote(String(table.id))} (${columns.map(quote).join(", ")})`;
     const values = this.valueTuples(rows as Record<string, unknown>[], columns);
@@ -553,6 +554,15 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     return this.execute(this.createTableStatement(table, name));
   }
 
+  /**
+   * How a computed column (`computed`) declares its expression, after its type: a stored generated
+   * column. Empty for any other column.
+   */
+  protected computedColumnSql(_table: Table, field: { key: unknown; schema: zod.ZodType }): string {
+    const options = getMetaItem(field.schema, computed)?.data;
+    return options ? `GENERATED ALWAYS AS (${options.sql((key) => this.quoteIdentifier(key))}) STORED` : "";
+  }
+
   /** Whether `field` declares the table's primary key itself: the key is that one column. */
   protected isInlinePrimaryKey(table: Table, field: { key: unknown }): boolean {
     const keys = getPrimaryKey(table);
@@ -580,6 +590,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
                 [
                   quoteIdentifier(String(field.key)),
                   this.typeToSql(schema),
+                  this.computedColumnSql(table, field),
                   this.isInlinePrimaryKey(table, field) ? "PRIMARY KEY" : "",
                   isZodRequired(schema) ? " NOT NULL" : "",
                   foreignKeyMeta
