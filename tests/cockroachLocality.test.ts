@@ -97,9 +97,10 @@ test("places each row in the region its computed region column names, and resync
   await context.db.syncTable(table);
   const inserted = await context.db.insert(table, { id: "a1", name: "first", homeRegion: "ignored" }).returning();
   expect(inserted.first).toEqual({ id: "a1", name: "first", homeRegion: "aws-ap-southeast-1" });
-  // An ID naming no region has none, which the column refuses.
+  // An ID naming no region has none: the row fails its schema, and the database refuses it too.
+  expect(() => context.db.insert(table, { id: "z1", name: "nowhere", homeRegion: "" })).toThrow(z.ZodError);
   await expect(
-    Promise.resolve(context.db.insert(table, { id: "z1", name: "nowhere", homeRegion: "" })),
+    Promise.resolve(context.db.execute(sql`INSERT INTO computed_region (id, name) VALUES ('z1', 'nowhere')`)),
   ).rejects.toThrow(/null/i);
   await context.db.syncTable(table);
   // As the database stored it, not as the insert computed it: the column partitions the row.
