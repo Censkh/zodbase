@@ -1,23 +1,33 @@
 import { assertSelectArguments, type InsertValues, isFieldReference, SELECT_QUERY } from "./QueryBuilder";
-import { QueryStatement, selectStatement } from "./QueryStatement";
+import { COMPILE, type Compilable, isCompilable, QueryStatement, toQueryStatement } from "./QueryStatement";
 import { isRelationalQuery } from "./RelationalQuery";
-import { SqlExpression } from "./SqlExpression";
+import { snapshotQuery } from "./Subquery";
 import {
-  hasSubqueries,
-  insertSubqueries,
-  type SubqueryInsertResult,
-  snapshotCondition,
-  snapshotQuery,
-} from "./Subquery";
+  createDelete,
+  createInsert,
+  createInsertSelect,
+  createUpdate,
+  createUpdateEach,
+  type DeleteWrite,
+  type InsertSelectWrite,
+  type InsertWrite,
+  isWrite,
+  runBatch,
+  type SubqueryInsertWrite,
+  type UpdateEachWrite,
+  type UpdateWrite,
+  type Write,
+  type WriteResult,
+} from "./Writes";
 
 export type { InsertValues, ScalarSubquery } from "./QueryBuilder";
 
 import * as zod from "zod";
-import { findFieldMetaItems, getMetaItem } from "zod-meta";
+import { getMetaItem } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
 import { escapeSqlValue } from "./Escaping";
 import { toLazyPromise } from "./LazyPromise";
-import { foreignKey, monotonicTimestamp, updatedAt } from "./MetaTypes";
+import { foreignKey } from "./MetaTypes";
 import type {
   BindingKeys,
   FieldBinding,
@@ -28,10 +38,8 @@ import type {
   SelectQuery,
   SelectQueryBuilder,
   SingleFieldBinding,
-  SqlDefiniteResult,
   SqlResult,
   SqlResultTimings,
-  StringKeys,
   UpdateValues,
   ValueOfTable,
 } from "./QueryBuilder";
@@ -139,6 +147,9 @@ interface ResolvedDatabaseOptions extends Omit<DatabaseOptions, "adaptor"> {
   adaptor: DatabaseAdaptor;
 }
 
+/** On a lazily initialized adaptor, resolves to the adaptor it initializes. */
+const RESOLVE_ADAPTOR = Symbol("zodbase.resolveAdaptor");
+
 const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): DatabaseAdaptor => {
   let adaptorPromise: Promise<DatabaseAdaptor> | undefined;
   let resolved: DatabaseAdaptor | undefined;
@@ -178,6 +189,9 @@ const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): Data
     executeUpdateMany: call("executeUpdateMany"),
     executeCount: call("executeCount"),
     executeDelete: call("executeDelete"),
+    executeInsertIgnoring: call("executeInsertIgnoring"),
+    executeTogether: call("executeTogether"),
+    [RESOLVE_ADAPTOR]: getAdaptor,
     createTable: call("createTable"),
     fetchTableColumns: call("fetchTableColumns"),
     syncTableIndexes: call("syncTableIndexes"),
@@ -185,13 +199,6 @@ const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): Data
     processDiff: call("processDiff"),
     transaction: call("transaction"),
   } as unknown as DatabaseAdaptor;
-};
-
-/** An upsert's conflict target as its fields in order. */
-const upsertKeyFields = <TField extends SingleFieldBinding>(key: TField | readonly TField[]): readonly TField[] => {
-  const fields = Array.isArray(key) ? (key as readonly TField[]) : [key as TField];
-  if (!fields.length) throw new Error("[zodbase] An upsert needs at least one key field");
-  return fields;
 };
 
 interface BaseFieldModification<M> {
@@ -239,15 +246,6 @@ export interface TableDiff {
   primaryKey?: string[];
 }
 
-export interface MutationResult<TResult extends SqlResult> extends Promise<SqlResult<void, 0>> {
-  selectMutated(): Promise<TResult>;
-}
-
-export interface InsertMutationResult<TResult extends SqlResult> extends Promise<SqlResult<void, 0>> {
-  selectParsed(): Promise<TResult>;
-  selectMutated(): Promise<TResult>;
-}
-
 const getFieldBindingsByKeys = <TTable extends Table>(
   table: TTable,
   keys: BindingKeys<ValueOfTable<TTable>>[],
@@ -261,14 +259,6 @@ const getFieldBindingsByKeys = <TTable extends Table>(
     }
     return table.fields[key as string];
   });
-};
-
-type CountBuilder<TTable extends Table, TResultValue> = Promise<SqlDefiniteResult<TResultValue, 1>> & {
-  where(condition: SelectCondition<ValueOfTable<TTable>>): CountBuilder<TTable, TResultValue>;
-};
-
-type DeleteBuilder<TTable extends Table> = Promise<SqlResult<void, 0>> & {
-  where(condition: SelectCondition<ValueOfTable<TTable>>): DeleteBuilder<TTable>;
 };
 
 export const join = (items: ToSql[], separator: string): ToSql => {
@@ -313,21 +303,6 @@ export function raw(value: string | string[] | Statement | Statement[]): Stateme
     },
   };
 }
-
-const selectResultFields = <TResult extends SqlResult>(result: TResult, keys: BindingKeys<any>[]): TResult => {
-  if (keys.length === 0 || keys.includes("*")) {
-    return result;
-  }
-
-  const selectedRows = result.results.map((row: any) =>
-    Object.fromEntries(keys.map((key) => [key, row[key as string]])),
-  );
-  return {
-    ...result,
-    results: selectedRows,
-    first: selectedRows[0],
-  } as TResult;
-};
 
 const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys<ValueOfTable<TTable>>>(
   query: SelectQuery<TTable>,
@@ -400,13 +375,18 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
       assertSelectArguments(query);
       return adaptor.executeSelect(query);
     },
-    async count() {
-      if (isRelationalQuery(query)) return adaptor.executeQueryCount(query);
-      // @ts-expect-error
-      return adaptor.executeCount(query.table, query.fields, query.where);
-    },
-    countUpTo(max: number) {
-      return adaptor.executeCappedCount(query, max);
+    /**
+     * The number of rows the query matches, ignoring its ordering, limit and offset. With `upTo`, it
+     * reads at most that many, so counting a large match stays cheap: a result of `upTo` means "at
+     * least `upTo`".
+     */
+    async count(options: { upTo?: number } = {}): Promise<number> {
+      if (options.upTo !== undefined) return adaptor.executeCappedCount(query, options.upTo);
+      const all = [{ table: query.table, key: "*" }] as any;
+      const result = isRelationalQuery(query)
+        ? await adaptor.executeQueryCount({ ...query, fields: all })
+        : await adaptor.executeCount(query.table, all, query.where);
+      return Number((result.first as { _count?: unknown } | undefined)?._count ?? 0);
     },
   };
 
@@ -414,17 +394,6 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
     assertSelectArguments(query);
     return adaptor.executeSelect(query);
   }, builder) as any;
-};
-
-const parseUpdateValues = (schema: zod.ZodObject<any>, values: Record<string, unknown>) => {
-  const parsedValues: Record<string, unknown> = {};
-  for (const key of Object.keys(values)) {
-    // biome-ignore lint/suspicious/noPrototypeBuiltins: Consumers may target Object APIs older than ES2022.
-    if (!Object.prototype.hasOwnProperty.call(schema.shape, key)) continue;
-    const value = values[key];
-    parsedValues[key] = value instanceof SqlExpression ? value : schema.shape[key].parse(value);
-  }
-  return parsedValues;
 };
 
 export class Database {
@@ -440,53 +409,39 @@ export class Database {
     };
   }
 
-  compile(statement: QueryStatement): Promise<Statement> {
-    return this.options.adaptor.compileStatement(statement);
-  }
-
-  /** A single UPDATE ... RETURNING usable inside a writable CTE. Only supported by compatible adaptors. */
-  updateReturningStatement<TTable extends Table>(
-    table: TTable,
-    values: UpdateValues<TTable>,
-    where: SelectCondition<ValueOfTable<TTable>>,
-  ): QueryStatement {
-    const parsed = parseUpdateValues(table.schema as zod.ZodObject<any>, values);
-    if (!Object.values(parsed).some((value) => value !== undefined)) throw new Error("No values to update");
-    const condition = snapshotCondition(where);
-    return new QueryStatement((adaptor) => adaptor.buildUpdateReturningSql(table, parsed, condition));
-  }
-
-  /** Uses the projection's keys as the destination columns in the same order. */
-  insertFromStatement<TTable extends Table, P extends Selection>(
-    table: TTable,
-    source: Table,
-    projection: P & Record<Exclude<keyof P, keyof InputOfTable<TTable>>, never>,
-    returning?: StringKeys<ValueOfTable<TTable>>,
-  ): QueryStatement {
-    const columns = Object.keys(projection);
-    // biome-ignore lint/suspicious/noPrototypeBuiltins: The library targets ES2015.
-    if (!columns.length || columns.some((key) => !Object.prototype.hasOwnProperty.call(table.fields, key))) {
-      throw new Error("Invalid insert projection");
+  /** The SQL any builder or statement compiles to for this database. */
+  compile(statement: Compilable): Promise<Statement> {
+    if (isWrite(statement)) {
+      const write = statement;
+      return Promise.resolve(
+        this.options.adaptor.compileStatement(new QueryStatement((adaptor) => write[COMPILE](adaptor))),
+      );
     }
-    // biome-ignore lint/suspicious/noPrototypeBuiltins: The library targets ES2015.
-    if (returning && !Object.prototype.hasOwnProperty.call(table.fields, returning)) {
-      throw new Error("Invalid returning column");
-    }
-    const select = selectStatement(this.select(source, projection));
-    return new QueryStatement((adaptor) => {
-      const identifiers = columns.map((key) => adaptor.quoteIdentifier(key)).join(", ");
-      const suffix = returning ? ` RETURNING ${adaptor.quoteIdentifier(returning)}` : "";
-      return sql`INSERT INTO ${table} (${raw(identifiers)}) ${select.compile(adaptor)}${raw(suffix)}`;
-    });
+    return this.options.adaptor.compileStatement(toQueryStatement(statement));
   }
 
-  async execute(statement: Statement | QueryStatement) {
+  async execute(statement: Statement | Compilable) {
     const adaptor = this.options.adaptor;
-    const result = await adaptor.execute(
-      statement instanceof QueryStatement ? await this.compile(statement) : statement,
-    );
+    return adaptor.execute(isCompilable(statement) ? await this.compile(statement) : statement);
+  }
 
-    return result;
+  /**
+   * Runs the writes atomically, in the fewest round trips the database allows: one on PostgreSQL
+   * and CockroachDB (a query of every statement, which they run as one transaction), else a
+   * transaction. Each result is what awaiting that write alone gives. No write may depend on
+   * another's rows: every statement sees the database as it was before the batch.
+   */
+  async batch<const TWrites extends readonly Write<any>[]>(
+    writes: TWrites,
+  ): Promise<{ -readonly [K in keyof TWrites]: WriteResult<TWrites[K]> }> {
+    for (const write of writes) if (!isWrite(write)) throw new Error("[zodbase] A batch takes only write builders");
+    return (await runBatch(await this.resolvedAdaptor(), writes)) as any;
+  }
+
+  /** The adaptor, initialized: a lazy one (`DatabaseOptions.adaptor` as a function) first resolves. */
+  private async resolvedAdaptor(): Promise<DatabaseAdaptor> {
+    const adaptor = this.options.adaptor as DatabaseAdaptor & { [RESOLVE_ADAPTOR]?: () => Promise<DatabaseAdaptor> };
+    return adaptor[RESOLVE_ADAPTOR] ? adaptor[RESOLVE_ADAPTOR]() : adaptor;
   }
 
   transaction<TResult>(callback: (transaction: Database) => Promise<TResult>): Promise<TResult> {
@@ -535,307 +490,46 @@ export class Database {
     return createSelectQueryBuilder(query, this.options.adaptor) as any;
   }
 
-  count<TTable extends Table>(table: TTable): CountBuilder<TTable, { _count: number }>;
-  count<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
-    table: TTable,
-    ...fields: TKey[]
-  ): CountBuilder<TTable, Record<TKey, number>>;
-  count<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(table: TTable, ...fields: TKey[]) {
-    let where: SelectCondition<ValueOfTable<TTable>> | undefined;
-    const adapator = this.options.adaptor;
-    const countBuilder = {
-      where(condition: SelectCondition<ValueOfTable<TTable>>) {
-        where = condition;
-        return countBuilder;
-      },
-    } as CountBuilder<TTable, { _count: number } | Record<TKey, number>>;
-    let fieldBindings: any = getFieldBindingsByKeys(table, fields);
-    if (fieldBindings.length === 0) {
-      fieldBindings = [
-        {
-          table: table,
-          key: "*",
-          schema: zod.number(),
-        },
-      ];
-    }
-    return toLazyPromise(() => adapator.executeCount(table, fieldBindings, where), countBuilder) as CountBuilder<
-      TTable,
-      { _count: number } | Record<TKey, number>
-    >;
-  }
-
-  delete<TTable extends Table>(table: TTable) {
-    let where: SelectCondition<ValueOfTable<TTable>> | undefined;
-    const adapator = this.options.adaptor;
-    const deleteBuilder = {
-      where(condition: SelectCondition<ValueOfTable<TTable>>) {
-        where = condition;
-        return deleteBuilder;
-      },
-    } as DeleteBuilder<TTable>;
-    return toLazyPromise(() => {
-      if (!where) {
-        throw new Error("Delete without where condition is not allowed");
-      }
-
-      return adapator.executeDelete(table, where);
-    }, deleteBuilder);
-  }
-
-  insert<TTable extends Table>(
-    table: TTable,
-    values: InputOfTable<TTable>,
-  ): InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, 1>>;
-  insert<TTable extends Table>(table: TTable, values: InsertValues<TTable>): SubqueryInsertResult<ValueOfTable<TTable>>;
-  insert<TTable extends Table>(
-    table: TTable,
-    values: InsertValues<TTable>,
-  ): InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, 1>> | SubqueryInsertResult<ValueOfTable<TTable>> {
-    if (hasSubqueries([values as object])) return insertSubqueries(this.options.adaptor, table, [values]);
-    const parsedValues = table.schema.parse(values);
-    const adaptor = this.options.adaptor;
-    return toLazyPromise(
-      async (): Promise<SqlResult<void, 0>> => {
-        await adaptor.executeInsert(table, parsedValues as any, false);
-        return {
-          results: [],
-          first: undefined,
-        };
-      },
-      {
-        async selectParsed() {
-          await adaptor.executeInsert(table, parsedValues as any, false);
-          return {
-            results: [parsedValues as ValueOfTable<TTable>],
-            first: parsedValues as ValueOfTable<TTable>,
-          };
-        },
-        selectMutated() {
-          return adaptor.executeInsert(table, parsedValues as any, true) as Promise<
-            SqlDefiniteResult<ValueOfTable<TTable>, 1>
-          >;
-        },
-      },
-    ) satisfies InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, 1>>;
-  }
-
-  update<TTable extends Table>(
-    table: TTable,
-    values: UpdateValues<TTable>,
-    where: SelectCondition<ValueOfTable<TTable>>,
-  ) {
-    if (Object.keys(values).length === 0) {
-      throw new Error("No values to update");
-    }
-
-    const parsedValues: any = parseUpdateValues(table.schema as zod.ZodObject<any>, values);
-
-    const updatedAtFields = findFieldMetaItems(table.schema, updatedAt);
-    for (const field of updatedAtFields) {
-      parsedValues[field.key] = Date.now();
-    }
-
-    for (const field of findFieldMetaItems(table.schema, monotonicTimestamp)) {
-      const now = Date.now();
-      parsedValues[field.key] = {
-        [TO_SQL_SYMBOL]: () => {
-          const column = this.options.adaptor.quoteIdentifier(String(field.key));
-          return `CASE WHEN ${column} >= ${now} THEN ${column} + 1 ELSE ${now} END`;
-        },
-      };
-    }
-
-    const adapator = this.options.adaptor;
-    return toLazyPromise(
-      async (): Promise<SqlResult<void, 0>> => {
-        await adapator.executeUpdate(table, parsedValues, where, false);
-        return {
-          results: [],
-          first: undefined,
-        };
-      },
-      {
-        async selectMutated<TKey extends BindingKeys<TTable>>(
-          ...keys: TKey[]
-        ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, number>> {
-          const result = await adapator.executeUpdate(table, parsedValues, where, true);
-          if (result.selected) {
-            return selectResultFields(result, keys) as any;
-          }
-
-          const selectResult = (await adapator.executeSelect({
-            table,
-            fields: getFieldBindingsByKeys(table, keys.length === 0 ? ["*"] : keys),
-            where,
-            orderBy: [],
-            limit: undefined,
-            offset: undefined,
-          })) as any;
-          return selectResult;
-        },
-      },
-    ) satisfies MutationResult<SqlDefiniteResult<ValueOfTable<TTable>, number>>;
+  /** Deletes the rows `.where(…)` matches; running it without a condition throws. */
+  delete<TTable extends Table>(table: TTable): DeleteWrite<TTable> {
+    return createDelete(() => this.options.adaptor, table);
   }
 
   /**
-   * Inserts `values`, or updates the row it conflicts with on `key`: one field, or a key of more than
-   * one column (such as a composite primary key) as its fields in order.
+   * Inserts a row, or several. Await it, or chain `.returning(…)` for the rows it wrote and
+   * `.onConflict(key).doNothing()` / `.doUpdate()` for rows that conflict with existing ones. With
+   * only a table, `.fromSelect(select)` inserts what the select gives.
    */
-  upsert<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
+  insert<TTable extends Table>(
     table: TTable,
-    values: InputOfTable<TTable>,
-    key: SingleFieldBinding<ValueOfTable<TTable>, TKey> | readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
-  ) {
-    const parsedValues: any = (table.schema as zod.ZodObject<any>).parse(values);
-    const adaptor = this.options.adaptor;
-    const fields = upsertKeyFields(key);
-    return toLazyPromise(
-      async () => {
-        await adaptor.executeUpsert(table, parsedValues, fields);
-        return {
-          results: [],
-          first: undefined,
-        };
-      },
-      {
-        async selectMutated<TKey extends BindingKeys<TTable>>(
-          ...keys: TKey[]
-        ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, 1>> {
-          const result = await adaptor.executeUpsert(table, parsedValues, fields);
-          if (result.results.length > 0) {
-            return result as any;
-          }
-
-          return adaptor.executeSelect({
-            table,
-            fields: getFieldBindingsByKeys(table, keys.length === 0 ? ["*"] : keys),
-            where: fields
-              .map((field) => field.equals(parsedValues[field.key]) as SelectCondition<ValueOfTable<TTable>>)
-              .reduce((all, condition) => all.and(condition)),
-            orderBy: [],
-            limit: 1,
-            offset: undefined,
-          }) as any;
-        },
-      },
-    ) satisfies MutationResult<SqlDefiniteResult<ValueOfTable<TTable>, 1>>;
+  ): {
+    /** `INSERT INTO table (columns) <select>`: the select's projection names the columns. */
+    fromSelect(select: SelectQueryBuilder<any, any, any, any, any>): InsertSelectWrite<TTable>;
+  };
+  insert<TTable extends Table>(table: TTable, values: InputOfTable<TTable>): InsertWrite<TTable, true>;
+  insert<TTable extends Table>(table: TTable, values: InputOfTable<TTable>[]): InsertWrite<TTable, false>;
+  insert<TTable extends Table>(table: TTable, values: InsertValues<TTable>[]): SubqueryInsertWrite<TTable, false>;
+  insert<TTable extends Table>(table: TTable, values: InsertValues<TTable>): SubqueryInsertWrite<TTable, true>;
+  insert<TTable extends Table>(table: TTable, values?: InsertValues<TTable> | InsertValues<TTable>[]): unknown {
+    const adaptor = () => this.options.adaptor;
+    if (values === undefined) return { fromSelect: (select: any) => createInsertSelect(adaptor, table, select) };
+    return Array.isArray(values)
+      ? createInsert(adaptor, table, values, false)
+      : createInsert(adaptor, table, [values], true);
   }
 
-  /**
-   * Upserts each row by `key`, as `upsert` does one, in as few statements as the database allows:
-   * one for rows setting the same columns on PostgreSQL, CockroachDB and SQLite. A key given more
-   * than once keeps its last row.
-   */
-  async upsertMany<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
-    table: TTable,
-    values: InputOfTable<TTable>[],
-    key: SingleFieldBinding<ValueOfTable<TTable>, TKey> | readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
-  ): Promise<SqlResult<void, 0>> {
-    if (!values.length) return { results: [], first: undefined };
-    const parsedValues: any[] = values.map((value) => (table.schema as zod.ZodObject<any>).parse(value));
-    return this.options.adaptor.executeUpsertMany(table, parsedValues, upsertKeyFields(key));
+  /** Updates the rows `.where(…)` matches to `values`; running it without a condition throws. */
+  update<TTable extends Table>(table: TTable, values: UpdateValues<TTable>): UpdateWrite<TTable> {
+    return createUpdate(() => this.options.adaptor, table, values);
   }
 
-  updateMany<
-    TTable extends Table,
-    TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
-    TFieldKey extends StringKeys<ValueOfTable<TTable>>,
-  >(table: TTable, values: TValue[], field: SingleFieldBinding<TValue, TFieldKey>) {
-    const parsedValues: any = values.map((value) => parseUpdateValues(table.schema as zod.ZodObject<any>, value));
-    const adapator = this.options.adaptor;
-    return toLazyPromise(
-      async (): Promise<SqlResult<void, 0>> => {
-        if (parsedValues.length === 0) {
-          return {
-            results: [],
-            first: undefined,
-            timings: {
-              wallTimeMs: 0,
-            },
-          };
-        }
-        await adapator.executeUpdateMany(table, parsedValues, field);
-        return {
-          results: [],
-          first: undefined,
-        };
-      },
-      {
-        async selectMutated<TKey extends BindingKeys<TTable>>(
-          ...keys: TKey[]
-        ): Promise<SqlDefiniteResult<ValueOfTable<TTable>, number>> {
-          if (parsedValues.length === 0) {
-            return {
-              results: [],
-              first: undefined,
-            } as any;
-          }
-          const result = await adapator.executeUpdateMany(table, parsedValues, field);
-          if (result.results.length > 0) {
-            return selectResultFields(result, keys) as any;
-          }
-
-          return adapator.executeSelect({
-            table,
-            fields: getFieldBindingsByKeys(table, keys.length === 0 ? ["*"] : keys),
-            where: field.in(parsedValues.map((value: any) => value[field.key])),
-            orderBy: [],
-            limit: undefined,
-            offset: undefined,
-          }) as any;
-        },
-      },
-    ) satisfies MutationResult<SqlDefiniteResult<ValueOfTable<TTable>, number>>;
-  }
-
-  insertMany<TTable extends Table>(
+  /** Updates each row whose `by` field matches one of `rows` to that row's other values. */
+  updateEach<TTable extends Table>(
     table: TTable,
-    values: InputOfTable<TTable>[],
-  ): InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, number>>;
-  insertMany<TTable extends Table>(
-    table: TTable,
-    values: InsertValues<TTable>[],
-  ): SubqueryInsertResult<ValueOfTable<TTable>>;
-  insertMany<TTable extends Table>(
-    table: TTable,
-    values: InsertValues<TTable>[],
-  ):
-    | InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, number>>
-    | SubqueryInsertResult<ValueOfTable<TTable>> {
-    if (hasSubqueries(values as object[])) return insertSubqueries(this.options.adaptor, table, values);
-    if (values.length === 0) {
-      return Promise.resolve({
-        results: [],
-        first: undefined,
-      } as any) as InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, number>>;
-    }
-
-    const parsedValues = values.map((v) => table.schema.parse(v));
-    const adaptor = this.options.adaptor;
-    return toLazyPromise(
-      async (): Promise<SqlResult<void, 0>> => {
-        await adaptor.executeInsertMany(table, parsedValues as any, false);
-        return {
-          results: [],
-          first: undefined,
-        };
-      },
-      {
-        async selectParsed() {
-          await adaptor.executeInsertMany(table, parsedValues as any, false);
-          return {
-            results: parsedValues as ValueOfTable<TTable>[],
-            first: parsedValues[0] as ValueOfTable<TTable>,
-          };
-        },
-        selectMutated() {
-          return adaptor.executeInsertMany(table, parsedValues as any, true) as Promise<
-            SqlDefiniteResult<ValueOfTable<TTable>, number>
-          >;
-        },
-      },
-    ) satisfies InsertMutationResult<SqlDefiniteResult<ValueOfTable<TTable>, number>>;
+    rows: Partial<InputOfTable<TTable>>[],
+    { by }: { by: SingleFieldBinding<ValueOfTable<TTable>> },
+  ): UpdateEachWrite<TTable> {
+    return createUpdateEach(() => this.options.adaptor, table, rows, by);
   }
 
   /**
@@ -1033,5 +727,14 @@ export { exists } from "./Bindings";
 export type { default as DatabaseAdaptor } from "./DatabaseAdaptor";
 export * from "./MetaTypes";
 export type { SelectCondition, SelectQueryBuilder } from "./QueryBuilder";
-export { selectStatement, union, withCtes } from "./QueryStatement";
-export { coalesce, divide, expression, scalar, subtract, sum } from "./SqlExpression";
+export { type Compilable, union, withCtes } from "./QueryStatement";
+export { add, coalesce, divide, expression, scalar, subtract, sum } from "./SqlExpression";
+export type {
+  DeleteWrite,
+  InsertSelectWrite,
+  InsertWrite,
+  UpdateEachWrite,
+  UpdateWrite,
+  Write,
+  WriteResult,
+} from "./Writes";

@@ -3,6 +3,7 @@ import type DatabaseAdaptor from "./DatabaseAdaptor";
 import { quoteIdentifier } from "./Escaping";
 import { sql, valueToSql } from "./index";
 import type { FieldReference } from "./QueryBuilder";
+import { type Compilable, isCompilable, toQueryStatement } from "./QueryStatement";
 import { type Statement, TO_SQL_SYMBOL, type ToSql } from "./Statement";
 
 export class SqlExpression<T extends zod.ZodType = zod.ZodType> implements ToSql {
@@ -50,9 +51,15 @@ export const coalesce = <T extends zod.ZodType>(
   }, schema);
 };
 
-/** Embed a compiled single-column SELECT as a scalar value. */
-export const scalar = <T extends zod.ZodType>(statement: Statement, schema: T) =>
-  expression(sql`(${statement})`, schema);
+/** Embed a single-column SELECT (a builder, or compiled SQL) as a scalar value. */
+export const scalar = <T extends zod.ZodType>(query: Compilable | Statement, schema: T) => {
+  if (!isCompilable(query)) return expression(sql`(${query})`, schema);
+  const statement = toQueryStatement(query);
+  return new SqlExpression((adaptor) => {
+    if (!adaptor) throw new Error("[zodbase] A scalar subquery compiles only for a database");
+    return `(${statement.compile(adaptor)[TO_SQL_SYMBOL]()})`;
+  }, schema);
+};
 
 type NumericOperand = number | SqlExpression<zod.ZodType<number>> | (FieldReference<number> & ToSql);
 
@@ -80,6 +87,13 @@ export const divide = (dividend: NumericOperand, divisor: NumericOperand) => {
     const denominator = right(adaptor);
     return adaptor ? adaptor.divideSql(numerator, denominator) : divideSql(numerator, denominator);
   }, zod.number());
+};
+
+/** `left + right`, such as a counter's next value: `add(Table.$count, 1)`. */
+export const add = (left: NumericOperand, right: NumericOperand) => {
+  const augend = numericOperand(left);
+  const addend = numericOperand(right);
+  return new SqlExpression((adaptor) => `(${augend(adaptor)} + ${addend(adaptor)})`, zod.number());
 };
 
 export const subtract = (left: NumericOperand, right: NumericOperand) => {

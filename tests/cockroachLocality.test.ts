@@ -98,7 +98,7 @@ test("regional scalar inserts retain point lookups and the auto-commit fast path
   const { db } = context;
   await db.syncTable(parent);
   await db.syncTable(child);
-  await db.insertMany(
+  await db.insert(
     parent,
     Array.from({ length: 128 }, (_, i) => ({ id: `parent-${i}`, homeRegion: "aws-ap-southeast-1" })),
   );
@@ -112,7 +112,7 @@ test("regional scalar inserts retain point lookups and the auto-commit fast path
     return execute(value);
   };
   const homeRegion = db.select(parent, { homeRegion: parent.$homeRegion }).where(parent.$id.equals("parent-64"));
-  await db.insertMany(child, [
+  await db.insert(child, [
     { id: "one", homeRegion },
     { id: "two", homeRegion },
   ]);

@@ -29,7 +29,7 @@ const capture = () => {
 test("shares equivalent point queries without shadowing real table names", async () => {
   const { db, statements } = capture();
   const point = () => db.select(parent, { region: parent.$region }).where(parent.$id.equals("owner"));
-  await db.insertMany(child, [
+  await db.insert(child, [
     { id: "one", region: point() },
     { id: "two", region: point() },
   ]);
@@ -50,7 +50,7 @@ test("keeps different keys, arbitrary expressions, ordered searches and self-rea
     Array(2).fill(db.select(child, { region: child.$region }).where(child.$id.equals("a"))),
   ];
   for (const regions of cases) {
-    await db.insertMany(
+    await db.insert(
       child,
       regions.map((region, i) => ({ id: String(i), region })),
     );

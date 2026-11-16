@@ -47,7 +47,7 @@ describe.each(factories)("joins and includes: $name", ({ create }) => {
     try {
       await db.syncTable(parents);
       await db.syncTable(children);
-      await db.insertMany(parents, [
+      await db.insert(parents, [
         { id: "a", owner: "user", region: "London", label: null },
         { id: "b", owner: "user", region: "Singapore", label: "empty" },
         { id: "c", owner: "other", region: "London", label: "private" },
@@ -105,9 +105,7 @@ describe.each(factories)("joins and includes: $name", ({ create }) => {
         (await db.select(parents, { id: parents.$id }).innerJoin(children, on).where(parents.$owner.equals("user")))
           .results,
       ).toHaveLength(2);
-      expect(
-        (await db.select(parents).leftJoin(children, on).where(parents.$owner.equals("user")).count()).first?._count,
-      ).toBe(3);
+      expect(await db.select(parents).leftJoin(children, on).where(parents.$owner.equals("user")).count()).toBe(3);
       const childQuery = db.select(children).where(on).orderBy(children.$position, "ASC");
       const query = db
         .select(parents, { id: parents.$id, region: parents.$region })

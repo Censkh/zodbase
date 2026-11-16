@@ -10,12 +10,14 @@ Use the `Database` instance passed into the callback for every operation that be
 ```ts
 const userId = await db.transaction(async (tx) => {
   await tx.insert(Users, { id: "lin", name: "Lin", active: true });
-  await tx.update(Users, { name: "Lin Chen" }, Users.$id.equals("lin"));
+  await tx.update(Users, { name: "Lin Chen" }).where(Users.$id.equals("lin"));
   return "lin";
 });
 ```
 
 The callback's resolved value becomes the transaction result. Await all operations before returning. Calling the outer `db` inside the callback does not route an operation through the transaction instance.
+
+For writes that don't read each other's results, `db.batch([...])` is simpler and, on PostgreSQL and CockroachDB, takes one round trip instead of one per statement. See [run several writes atomically](/mutations/#run-several-writes-atomically).
 
 ## Roll back on failure
 

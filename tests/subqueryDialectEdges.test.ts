@@ -34,12 +34,12 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar edge contracts: $name", ({ name, 
     try {
       await db.syncTable(parent);
       await db.syncTable(child);
-      await db.insertMany(parent, [
+      await db.insert(parent, [
         { id: "a", value: "東京 🦄", owner: "alice", rank: 1 },
         { id: "b", value: null, owner: "bob", rank: 2 },
       ]);
       const source = () => db.select(parent, { value: parent.$value }).where(parent.$id.equals("a"));
-      await db.insertMany(child, [
+      await db.insert(child, [
         { value: source(), id: "aligned-first" },
         { extra: "present", label: "custom", id: "aligned-second", value: "literal" },
         { id: "missing", value: db.select(parent, { value: parent.$value }).where(parent.$id.equals("absent")) },
@@ -64,7 +64,7 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar edge contracts: $name", ({ name, 
       if (!["bun-sqlite", "turso-local"].includes(name)) {
         await expect(
           Promise.resolve(
-            db.insertMany(child, [
+            db.insert(child, [
               { id: "atomic-good", value: source() },
               { id: "atomic-bad", value: db.select(parent, { value: parent.$value }) },
             ]),

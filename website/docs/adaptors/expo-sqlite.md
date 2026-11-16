@@ -25,7 +25,7 @@ Initialize the connection once in your application's database setup, rather than
 
 ## Execution and transactions
 
-Reads and row-returning statements use `getAllAsync()`. Other statements use `runAsync()`. `updateMany` runs updates sequentially.
+Reads and row-returning statements use `getAllAsync()`. Other statements use `runAsync()`. `updateEach` runs updates sequentially.
 
 The adaptor inherits explicit SQL transaction handling; it does not wrap Expo's `withTransactionAsync` or `withExclusiveTransactionAsync`. Use `db.transaction()` and its `tx` instance, and avoid unrelated work on the same connection during the callback. Nested transactions are rejected.
 

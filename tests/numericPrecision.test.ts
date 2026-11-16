@@ -59,8 +59,9 @@ for (const factory of TEST_DATABASE_FACTORIES.filter(({ name }) => ["postgres", 
           await context.db.insert(table, { id: "pending", updatedAt: future });
           for (let delta = 1; delta <= 3; delta++) {
             const result = await context.db
-              .update(table, { updatedAt: revision }, table.$id.equals("pending"))
-              .selectMutated();
+              .update(table, { updatedAt: revision })
+              .where(table.$id.equals("pending"))
+              .returning();
             expect(result.first.updatedAt).toBe(future + delta);
           }
           if (legacy) {

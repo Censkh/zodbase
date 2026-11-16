@@ -146,7 +146,7 @@ describe("schema synchronization contract", () => {
     });
     InitialTable.addIndex("schema_people_email_index", [InitialTable.$email]);
     await db.syncTable(InitialTable);
-    await db.insertMany(InitialTable, [
+    await db.insert(InitialTable, [
       { id: "1", email: null },
       { id: "2", email: "grace@example.com" },
     ]);

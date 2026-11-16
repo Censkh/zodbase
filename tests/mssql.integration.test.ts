@@ -53,7 +53,7 @@ describe.skipIf(!process.env.MSSQL_TEST_URL)("SQL Server integration", () => {
     await seedArithmeticContract(db);
     await db.syncTable(parent);
     await db.syncTable(child);
-    await db.insertMany(parent, [
+    await db.insert(parent, [
       { id: "a'\\", value: "東京 🦄", rank: 1 },
       { id: "b", value: "second", rank: 2 },
       { id: "null", value: null, rank: 3 },
@@ -95,7 +95,7 @@ describe.skipIf(!process.env.MSSQL_TEST_URL)("SQL Server integration", () => {
   it("creates schemas idempotently and returns Unicode, dates, booleans, bigints and JSON losslessly", async () => {
     await db.syncTable(parent);
     await db.syncTable(child);
-    const result = await db.insert(child, { id: "typed", value: source(), ...values }).selectMutated();
+    const result = await db.insert(child, { id: "typed", value: source(), ...values }).returning();
     expect(result.first).toEqual({ id: "typed", value: "東京 🦄", ...values });
     expect((await db.select(child).where(child.$id.equals("typed"))).first).toEqual(result.first);
   });
@@ -118,15 +118,15 @@ describe.skipIf(!process.env.MSSQL_TEST_URL)("SQL Server integration", () => {
   });
   it("handles ordered pagination and NULL scalar results", async () => {
     const value = db.select(parent, { value: parent.$value }).orderBy(parent.$rank, "ASC").offset(1).limit(1);
-    expect((await db.insert(child, { id: "offset", value, ...values }).selectMutated()).first?.value).toBe("second");
+    expect((await db.insert(child, { id: "offset", value, ...values }).returning()).first?.value).toBe("second");
     for (const id of ["missing", "null"])
-      expect((await db.insert(child, { id, value: source(id), ...values }).selectMutated()).first?.value).toBeNull();
+      expect((await db.insert(child, { id, value: source(id), ...values }).returning()).first?.value).toBeNull();
     expect((await db.select(parent, { id: parent.$id }).offset(1).limit(0)).results).toEqual([]);
   });
   it("rejects multi-row scalar results and atomically rolls back a bulk insert", async () => {
     await expect(
       Promise.resolve(
-        db.insertMany(child, [
+        db.insert(child, [
           { id: "atomic-first", value: source(), ...values },
           { id: "atomic-bad", value: db.select(parent, { value: parent.$value }), ...values },
         ]),
@@ -139,17 +139,20 @@ describe.skipIf(!process.env.MSSQL_TEST_URL)("SQL Server integration", () => {
   it("supports updates, upserts, counts, JSON membership and deletes", async () => {
     await db.insert(child, { id: "crud", value: "before", ...values });
     expect(
-      (await db.update(child, { value: "after", active: false }, child.$id.equals("crud")).selectMutated()).first
+      (await db.update(child, { value: "after", active: false }).where(child.$id.equals("crud")).returning()).first
         ?.active,
     ).toBe(false);
-    await db.upsert(child, { id: "crud", value: "upsert", ...values }, child.$id);
+    await db
+      .insert(child, { id: "crud", value: "upsert", ...values })
+      .onConflict(child.$id)
+      .doUpdate();
     expect((await db.select(child, { value: child.$value }).where(child.$id.equals("crud"))).first?.value).toBe(
       "upsert",
     );
     expect(
       (await db.select(child, { id: child.$id }).where(child.$json.contains("東京"))).results.length,
     ).toBeGreaterThan(0);
-    expect((await db.count(child)).first?._count).toBeGreaterThan(0);
+    expect(await db.select(child).count()).toBeGreaterThan(0);
     await db.delete(child).where(child.$id.equals("crud"));
     expect((await db.select(child, { id: child.$id }).where(child.$id.equals("crud"))).results).toEqual([]);
   });
@@ -159,7 +162,7 @@ describe.skipIf(!process.env.MSSQL_TEST_URL)("SQL Server integration", () => {
       db.transaction(async (tx) => {
         await tx.insert(parent, { id: "tx-parent", value: "uncommitted", rank: 4 });
         expect(
-          (await tx.insert(child, { id: "tx-child", value: projection, ...values }).selectMutated()).first?.value,
+          (await tx.insert(child, { id: "tx-child", value: projection, ...values }).returning()).first?.value,
         ).toBe("uncommitted");
         throw new Error("abort transaction");
       }),

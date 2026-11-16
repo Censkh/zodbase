@@ -30,7 +30,7 @@ test("real Neon HTTP driver overrides array mode and decodes the wire response",
         big: db.select(table, { big: table.$big }).one(),
         date: new Date("2026-09-16T01:02:03.456Z"),
       })
-      .selectMutated();
+      .returning();
     expect(result.first).toEqual({ id: "new", big: 9223372036854775807n, date: new Date("2026-09-16T01:02:03.456Z") });
     expect(queries).toHaveLength(1);
     expect(queries[0]?.query).toContain("INSERT INTO");

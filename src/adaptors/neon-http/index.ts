@@ -15,6 +15,11 @@ export default class NeonHttpAdaptor extends PostgresAdaptor {
     });
   }
 
+  /** Neon's HTTP endpoint takes one statement a request: a batch runs in a transaction instead. */
+  override async executeTogether(): Promise<undefined> {
+    return undefined;
+  }
+
   override async transaction<TResult>(_callback: (adaptor: DatabaseAdaptor) => Promise<TResult>): Promise<TResult> {
     throw new Error(
       "Neon HTTP does not support interactive transactions; use PostgresAdaptor with Neon's Pool or Client",

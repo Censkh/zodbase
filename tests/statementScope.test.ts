@@ -13,7 +13,7 @@ test("filters and paginates membership in a recursive SQL scope", async () => {
   });
   try {
     await db.syncTable(table);
-    await db.insertMany(table, [
+    await db.insert(table, [
       { id: "root", parentId: null },
       { id: "child", parentId: "root" },
       { id: "grandchild", parentId: "child" },

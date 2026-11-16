@@ -15,7 +15,7 @@ console.log(result.first);   // First record, or undefined
 
 ## Validation happens on writes
 
-`insert`, `insertMany`, and `upsert` parse complete records through the Zod table schema. `update` and `updateMany` validate the supplied fields while preserving omitted fields. Put both construction and awaiting of an operation inside your error-handling block when you need to catch validation and driver failures.
+`insert` (with or without `onConflict`) parses complete records through the Zod table schema. `update` and `updateEach` validate the supplied fields while preserving omitted fields. Put both construction and awaiting of an operation inside your error-handling block when you need to catch validation and driver failures.
 
 ```ts
 try {
@@ -32,9 +32,9 @@ Defaults and transforms can make the accepted input different from the stored va
 | Execution path | Returned data |
 | --- | --- |
 | `await db.insert(...)` | No rows: empty `results`, undefined `first`. |
-| `await db.insert(...).selectParsed()` | The Zod-parsed input after insertion. |
-| `await db.insert(...).selectMutated()` | Rows read back from the database. |
-| `await db.update(...).selectMutated("id")` | Selected fields from the updated records. |
+| `db.insert(...).rows` | The Zod-parsed input, without a round trip. |
+| `await db.insert(...).returning()` | Rows read back from the database. |
+| `await db.update(...).where(...).returning("id")` | Selected fields from the updated records. |
 
 Parsed input cannot include database-generated changes that Zod did not produce. Returned rows may use native `RETURNING` or an adaptor-specific follow-up query. If a fallback must reselect by the original condition, changing a field in that condition can affect which rows are found. Prefer a stable primary-key condition when requesting updated rows.
 

@@ -65,7 +65,7 @@ describe("delete many", () => {
 
     const start = Date.now();
 
-    await db.insertMany(BoardTable, [
+    await db.insert(BoardTable, [
       {
         id: crypto.randomUUID(),
         ownerId: null,

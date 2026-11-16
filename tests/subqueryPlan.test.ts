@@ -25,7 +25,7 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar insert plan: $name", ({ name, cre
     try {
       await db.syncTable(parent);
       await db.syncTable(child);
-      await db.insertMany(
+      await db.insert(
         parent,
         Array.from({ length: 512 }, (_, i) => ({ id: `parent-${i}`, region: "London", owner: "owner" })),
       );
@@ -63,7 +63,7 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar insert plan: $name", ({ name, cre
         expect(plan).not.toMatch(/SCAN plan_parent/);
       }
       statements.length = 0;
-      await db.insertMany(child, [
+      await db.insert(child, [
         { id: "batch-1", region },
         { id: "batch-2", region },
       ]);
@@ -83,7 +83,7 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar insert plan: $name", ({ name, cre
       const missing = db.select(parent, { region: parent.$region }).where(parent.$id.equals("absent"));
       await expect(
         Promise.resolve(
-          db.insertMany(child, [
+          db.insert(child, [
             { id: "bad-1", region: missing },
             { id: "bad-2", region: missing },
           ]),

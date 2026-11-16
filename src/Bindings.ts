@@ -1,7 +1,7 @@
 import { getZodTypeFields } from "zod-meta";
 import { quoteIdentifier } from "./Escaping";
 import type { Falsy, SelectCondition, SingleFieldBinding, ValueOfTable } from "./QueryBuilder";
-import type { QueryStatement } from "./QueryStatement";
+import { type Compilable, isCompilable, toQueryStatement } from "./QueryStatement";
 import { TO_SQL_SYMBOL } from "./Statement";
 import type { Bindings, Table } from "./Table";
 
@@ -91,7 +91,7 @@ export const createTableBinding = <TTable extends Table>(table: TTable): Binding
         return createSelectCondition({
           field: fieldBinding,
           operator: "IN",
-          value: values,
+          value: isCompilable(values) ? toQueryStatement(values) : values,
         }) as any;
       },
 
@@ -99,7 +99,7 @@ export const createTableBinding = <TTable extends Table>(table: TTable): Binding
         return createSelectCondition({
           field: fieldBinding,
           operator: "NOT IN",
-          value: values,
+          value: isCompilable(values) ? toQueryStatement(values) : values,
         }) as any;
       },
 
@@ -126,7 +126,8 @@ export const createTableBinding = <TTable extends Table>(table: TTable): Binding
   return binding as Bindings<ValueOfTable<TTable>>;
 };
 
-export const exists = (query: QueryStatement): SelectCondition => createSelectCondition({ exists: query });
+export const exists = (query: Compilable): SelectCondition =>
+  createSelectCondition({ exists: toQueryStatement(query) });
 
 const createSelectCondition = (options: Omit<SelectCondition, "and" | "or">): SelectCondition => {
   return {

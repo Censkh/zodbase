@@ -57,7 +57,7 @@ test("looks rows up through a forced index where the planner would scan the tabl
   // Statistics without histograms (stale ones, or a column CockroachDB keeps none for): the planner
   // gives each parent the average share of rows, so many parents look like most of the table.
   const payload = "x".repeat(200);
-  await context.db.insertMany(
+  await context.db.insert(
     items,
     Array.from({ length: 400 }, (_, i) => ({ id: `item-${i}`, groupId: "g", parentId: `old-${i % 4}`, payload })),
   );
@@ -72,7 +72,7 @@ test("looks rows up through a forced index where the planner would scan the tabl
   await context.db.execute(
     sql`ALTER TABLE ${items} INJECT STATISTICS ${raw(`'${JSON.stringify(statistics).replaceAll("'", "''")}'`)}`,
   );
-  await context.db.insertMany(items, [
+  await context.db.insert(items, [
     { id: "new-child-1", groupId: "g", parentId: "new-parent", payload },
     { id: "new-child-2", groupId: "g", parentId: "new-parent", payload },
   ]);

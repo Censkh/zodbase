@@ -20,7 +20,9 @@ test("concurrent writes advance versions even when the stored clock is ahead", a
     const future = Date.now() + 100_000;
     await db.insert(table, { id: "one", name: "initial", updatedAt: future });
     const results = await Promise.all(
-      ["a", "b", "c"].map((name) => db.update(table, { name, updatedAt: 1 }, table.$id.equals("one")).selectMutated()),
+      ["a", "b", "c"].map((name) =>
+        db.update(table, { name, updatedAt: 1 }).where(table.$id.equals("one")).returning(),
+      ),
     );
     expect(results.map((result) => result.first.updatedAt)).toEqual([future + 1, future + 2, future + 3]);
     expect((await db.select(table)).first?.name).toBe("c");

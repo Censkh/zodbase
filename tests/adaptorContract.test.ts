@@ -170,7 +170,7 @@ describe("adaptor execution contract", () => {
       db.transaction(async (transaction) => {
         await transaction
           .insert(Table, { id: "rejected", name: transaction.select(Table, { name: Table.$name }).one() })
-          .selectMutated();
+          .returning();
       }),
     ).rejects.toThrow("write operations only");
     expect(batches).toHaveLength(1);

@@ -197,13 +197,9 @@ export default class PostgresAdaptor<
     values: InputOfTable<TTable>[],
     shouldReturn = false,
   ): Promise<SqlResult<ValueOfTable<TTable>, number>> {
-    const fieldKeys = Object.keys(table.fields);
-    const statement = sql`INSERT INTO ${table.id} (${raw(fieldKeys.map(quoteIdentifier))})
-                          VALUES ${raw(
-                            values.map(
-                              (value: any) => sql`(${raw(fieldKeys.map((key) => valueToSql(value[key], true)))})`,
-                            ),
-                          )}${raw(shouldReturn ? ` RETURNING ${this.selectFields(table)}` : "")}`;
+    const statement = this.buildInsertStatement(table, values as Record<string, unknown>[], {
+      returning: shouldReturn,
+    });
     if (shouldReturn) {
       return this.decodeResult(table, await this.execute(statement)) as any;
     }
@@ -212,6 +208,72 @@ export default class PostgresAdaptor<
       first: undefined,
       results: [],
     };
+  }
+
+  override buildInsertStatement(
+    table: Table,
+    rows: readonly Record<string, unknown>[],
+    options: { returning: boolean; conflict?: { fields: readonly SingleFieldBinding[]; action: "nothing" | "update" } },
+  ): Statement {
+    const columns = Object.keys(table.fields);
+    const { conflict } = options;
+    const target = conflict?.fields.map((field) => quoteIdentifier(String(field.key))).join(", ");
+    const onConflict = !conflict
+      ? ""
+      : conflict.action === "nothing"
+        ? ` ON CONFLICT (${target}) DO NOTHING`
+        : ` ON CONFLICT (${target}) DO UPDATE SET ${columns
+            .map((key) => `${quoteIdentifier(key)} = excluded.${quoteIdentifier(key)}`)
+            .join(", ")}`;
+    return sql`INSERT INTO ${table.id} (${raw(columns.map(quoteIdentifier))})
+                          VALUES ${raw(this.valueTuples(rows, columns))}${raw(onConflict)}${raw(
+                            options.returning ? ` RETURNING ${this.selectFields(table)}` : "",
+                          )}`;
+  }
+
+  override buildUpdateStatement(
+    table: Table,
+    values: Record<string, unknown>,
+    where: SelectCondition,
+    returning: boolean,
+  ): Statement {
+    return this.buildUpdateSql(table, values as any, where as any, returning);
+  }
+
+  override buildDeleteStatement(table: Table, where: SelectCondition): Statement {
+    return sql`DELETE
+                          FROM ${table}
+                          WHERE ${buildConditionSql(this, where, true)}`;
+  }
+
+  /**
+   * One simple-protocol query of every statement: PostgreSQL and CockroachDB run a query of several
+   * statements as one implicit transaction, and answer with each statement's rows.
+   */
+  override async executeTogether(statements: readonly Statement[]): Promise<SqlResult[] | undefined> {
+    if (statements.length === 1) return [await this.execute(statements[0]!)];
+    const startTimestamp = Date.now();
+    const rawSql = statements.map((statement) => statement[TO_SQL_SYMBOL]()).join(";\n");
+    let success = false;
+    let timings: SqlResultTimings | undefined;
+    try {
+      const response = await this.driver.query(rawSql);
+      success = true;
+      timings = { wallTimeMs: Date.now() - startTimestamp };
+      const responses = (Array.isArray(response) ? response : [response]) as { rows?: any[] }[];
+      if (responses.length !== statements.length)
+        throw new Error("[zodbase] The database answered a batch with a different number of results");
+      return responses.map((result) => {
+        const rows = result.rows ?? [];
+        return this.mapResult({ results: rows, first: rows[0], timings });
+      });
+    } finally {
+      this.options.events?.onExecuteStatement?.({
+        sql: rawSql,
+        timings: timings ?? { wallTimeMs: Date.now() - startTimestamp },
+        success,
+      });
+    }
   }
 
   override async describeSchema(): Promise<SchemaTableInfo[]> {
@@ -402,14 +464,7 @@ export default class PostgresAdaptor<
     table: TTable,
     where: SelectCondition<ValueOfTable<TTable>>,
   ): Promise<SqlResult<void, 0>> {
-    const statement = sql`DELETE
-                          FROM ${table}
-                          WHERE ${buildConditionSql(this, where, true)}`;
-    return this.execute(statement) as any;
-  }
-
-  override buildUpdateReturningSql(table: Table, values: Record<string, unknown>, where: SelectCondition): Statement {
-    return this.buildUpdateSql(table, values, where, true);
+    return this.execute(this.buildDeleteStatement(table, where)) as any;
   }
 
   protected buildUpdateSql<TTable extends Table>(

@@ -115,14 +115,13 @@ const { first } = await db.select(Users)
 ## Count records
 
 ```ts
-const total = await db.count(Users).where(Users.$active.equals(true));
-console.log(total.first._count);
+const active = await db.select(Users).where(Users.$active.equals(true)).count(); // a number
 
-const names = await db.count(Users, "name");
-console.log(names.first.name);
+// Reads at most 1,000 rows: a result of 1,000 means "at least 1,000".
+const many = await db.select(Users).count({ upTo: 1000 });
 ```
 
-Counting a field counts its non-null values. A select builder's `.count()` uses its selected fields and condition, without applying its order, limit, or offset. Prefer `db.count(table)` for a total row count.
+`.count()` counts the rows the query matches, without applying its order, limit, or offset. To count a field's non-null values, add `.where(field.notEquals(null))`.
 
 ## Force an index
 

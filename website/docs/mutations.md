@@ -1,59 +1,81 @@
 ---
 title: Insert, update, and delete
-description: Write records with Zodbase, apply partial updates, perform bulk operations and upserts, and request returned rows.
+description: Write records with Zodbase, apply partial updates, handle conflicts, return written rows, and run several writes atomically.
 ---
 
-These examples use `db` and `Users` from [getting started](/). Write operations validate against the table schema. Await the operation to execute it.
+These examples use `db` and `Users` from [getting started](/). Every write is a builder: chain what it needs, then await it to run it. Write operations validate against the table schema.
 
-## Insert one record
+## Insert one record or several
 
 ```ts
 await db.insert(Users, { id: "ada", name: "Ada", active: true });
-```
 
-The input passes through `schema.parse`: declared defaults and transforms are applied. Validation errors can be thrown when constructing the operation, before a query reaches the driver.
-
-## Insert many records
-
-```ts
-await db.insertMany(Users, [
+await db.insert(Users, [
   { id: "grace", name: "Grace", active: true },
   { id: "margaret", name: "Margaret", active: false },
 ]);
 ```
 
-Each row is parsed before execution. Awaiting `insertMany(Users, [])` is a no-op. Do not call its returning helpers for an empty list: the current empty-list path returns an ordinary resolved promise.
+Each row passes through `schema.parse`: declared defaults and transforms are applied. Validation errors are thrown when constructing the insert, before a query reaches the driver. Inserting an empty list is a no-op.
+
+An insert's parsed rows are available without a round trip, as `.rows`:
+
+```ts
+const insert = db.insert(Users, { id: "ada", name: "Ada" });
+await insert;
+insert.rows[0]; // { id: "ada", name: "Ada", active: true }, with the schema's defaults
+```
+
+## Handle conflicting rows
+
+```ts
+// Skip rows whose key is already taken.
+await db.insert(Users, rows).onConflict(Users.$id).doNothing();
+
+// Update the existing row to the inserted values (an upsert).
+await db.insert(Users, { id: "ada", name: "Ada Lovelace", active: true }).onConflict(Users.$id).doUpdate();
+```
+
+The conflict target is a field backed by a primary key or unique constraint, or the fields of a composite key in order (`onConflict([Users.$region, Users.$id])`). `doUpdate` sets every column to the inserted row's value. MySQL and MariaDB skip conflicts with `INSERT IGNORE`; SQL Server can't skip them.
+
+## Insert what a select gives
+
+```ts
+await db.insert(Archive).fromSelect(
+  db.select(Users, { id: Users.$id, name: Users.$name }).where(Users.$active.equals(false)),
+);
+```
+
+The select's projection names the destination columns, in order. The rows never reach JavaScript.
 
 ## Update selected fields
 
 ```ts
-await db.update(Users, { name: "Ada Lovelace" }, Users.$id.equals("ada"));
+await db.update(Users, { name: "Ada Lovelace" }).where(Users.$id.equals("ada"));
 ```
 
-The third argument is the condition. Omitted fields stay unchanged, including defaults and generated IDs. A supplied `undefined` can invoke that field's declared default; an explicit `null` is preserved if the schema permits it. An empty update object is rejected.
+Omitted fields stay unchanged, including defaults and generated IDs. An explicit `null` is preserved if the schema permits it. An empty update object is rejected. Repeated `.where(...)` calls must all hold, as on a select. Running an update without a condition is rejected.
+
+Values can be expressions of the row's own columns, such as a counter's next value:
+
+```ts
+await db.update(Projects, { assetCount: add(Projects.$assetCount, 1) }).where(Projects.$id.equals(id));
+```
 
 ## Update several records by a key
 
 ```ts
-await db.updateMany(Users, [
-  { id: "ada", active: false },
-  { id: "grace", name: "Grace Hopper" },
-], Users.$id);
+await db.updateEach(
+  Users,
+  [
+    { id: "ada", active: false },
+    { id: "grace", name: "Grace Hopper" },
+  ],
+  { by: Users.$id },
+);
 ```
 
-Include the matching key in every item. Each item updates only its supplied fields. Bulk updates are not a substitute for an explicit [transaction](/transactions/) when multiple writes must succeed together; adaptor implementations differ.
-
-## Upsert
-
-```ts
-await db.upsert(Users, {
-  id: "ada",
-  name: "Ada Lovelace",
-  active: true,
-}, Users.$id);
-```
-
-The last argument identifies the conflict field. Back it with a primary key or a unique constraint supported by the database. Upsert parses a complete row, unlike a partial update.
+Include the key in every item. Each item updates only its supplied fields.
 
 ## Delete with a condition
 
@@ -61,34 +83,62 @@ The last argument identifies the conflict field. Back it with a primary key or a
 await db.delete(Users).where(Users.$id.equals("margaret"));
 ```
 
-Deleting without a `where` condition is rejected when executed. Combine multiple conditions with `.and(...)` or `.or(...)` before passing them to the delete builder. Unlike select queries, repeated delete `.where(...)` calls replace the previous condition.
+Deleting without a `where` condition is rejected when executed. Repeated `.where(...)` calls must all hold.
 
 ## Return the written rows
 
 ```ts
-const inserted = await db.insert(Users, {
-  id: "katherine", name: "Katherine", active: true,
-}).selectMutated();
+const inserted = await db.insert(Users, { id: "katherine", name: "Katherine", active: true }).returning();
 
-const updated = await db.update(
-  Users, { active: false }, Users.$id.equals("katherine"),
-).selectMutated("id", "active");
+const updated = await db
+  .update(Users, { active: false })
+  .where(Users.$id.equals("katherine"))
+  .returning("id", "active");
 ```
 
-Ordinary awaited writes return `{ results: [], first: undefined }`. `.selectMutated()` asks for the stored rows; `.selectParsed()` on inserts returns the parsed input after writing it. Choose one execution path: do not await a mutation and then call a returning helper on the same object, because the helper executes the write again. See [results and validation](/results-and-validation/) for the distinction and adaptor limitations.
+An awaited write returns `{ results: [], first: undefined }`. `.returning()` gives the stored rows, or just the fields named. With `onConflict(…).doNothing()`, it gives only the rows inserted. See [results and validation](/results-and-validation/) for adaptor limitations.
+
+## Run several writes atomically
+
+```ts
+const [asset, events] = await db.batch([
+  db.insert(Assets, asset).returning(),
+  db.insert(Events, events),
+  db.update(Projects, { assetCount: add(Projects.$assetCount, 1) }).where(Projects.$id.equals(projectId)),
+]);
+```
+
+The writes are stored together or not at all. Each result is what awaiting that write alone gives. PostgreSQL and CockroachDB receive every statement in one round trip, which they run as one transaction; other databases run the writes in a [transaction](/transactions/). No write may depend on another's rows, because every statement sees the database as it was before the batch.
+
+## Compose writes into one statement
+
+Every builder (select, insert, update, delete) is a statement wherever one is taken: `withCtes`, `union`, `exists`, `in(...)`, `scalar` and `db.execute`. On PostgreSQL and CockroachDB, an update or insert with `.returning(...)` is a writable CTE:
+
+```ts
+const Updated = createTable({ id: "updated_user", schema: Users.schema });
+await db.execute(
+  withCtes(
+    [{ table: Updated, query: db.update(Users, { active: false }).where(Users.$id.equals("ada")).returning() }],
+    db.select(Updated),
+  ),
+);
+```
 
 ## Use a scalar subquery as an insert value
 
-Pass a single-column `select` builder directly as a value in `insert` or `insertMany`. Do **not** await the nested SELECT:
+Pass a single-column `select` builder directly as a value in `insert`. Do **not** await the nested SELECT:
 
 ```ts
-const result = await db.insert(ProjectLayers, {
-  id: layerId,
-  projectId,
-  userId,
-  homeRegion: db.select(Projects, { homeRegion: Projects.$homeRegion })
-    .where(Projects.$id.equals(projectId).and(Projects.$userId.equals(userId))),
-}).selectMutated();
+const result = await db
+  .insert(ProjectLayers, {
+    id: layerId,
+    projectId,
+    userId,
+    homeRegion: db
+      .select(Projects, { homeRegion: Projects.$homeRegion })
+      .where(Projects.$id.equals(projectId).and(Projects.$userId.equals(userId))),
+  })
+  .returning();
 ```
 
 This sends one `INSERT ... VALUES (..., (SELECT ...))` statement. The nested query runs on the insert's connection and within its transaction; it never fetches a parent row into JavaScript. Reuse a region already loaded for authorization when available. Include the appropriate ownership condition when the subquery also needs to enforce access.
@@ -97,7 +147,7 @@ Subqueries must select exactly one column with a compatible output type. Use a u
 
 Literal fields still receive Zod validation, defaults and transforms. Subquery fields bypass JavaScript validation/defaults/transforms and are checked by database constraints. Subquery inserts require an object schema without object-level refinements (those cannot be evaluated before the SQL result exists). The SELECT structure is captured when constructing the insert.
 
-Use `selectMutated()` for computed values; `selectParsed()` is unavailable on subquery inserts. PostgreSQL, CockroachDB and SQLite-family adaptors return values using the same statement's `RETURNING`. The MySQL adaptor (including MariaDB) supports awaiting subquery inserts but rejects `selectMutated()` before writing. D1 write-only transactions support plain subquery inserts in their atomic batch, but cannot return rows from inside the transaction.
+Use `.returning()` for computed values; an insert of subquery values has no parsed `.rows` and can't handle conflicts. PostgreSQL, CockroachDB and SQLite-family adaptors return values using the same statement's `RETURNING`. The MySQL adaptor (including MariaDB) supports awaiting subquery inserts but rejects `.returning()` before writing. D1 write-only transactions support plain subquery inserts in their atomic batch, but cannot return rows from inside the transaction.
 
 An async function must not return a SELECT builder directly: JavaScript awaits thenables automatically. Return `{ homeRegion: query }` if a helper needs to return an unevaluated subquery.
 

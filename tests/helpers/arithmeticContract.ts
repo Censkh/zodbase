@@ -1,18 +1,6 @@
 import { expect } from "bun:test";
 import * as z from "zod";
-import {
-  alias,
-  coalesce,
-  createTable,
-  type Database,
-  divide,
-  expression,
-  scalar,
-  selectStatement,
-  sql,
-  subtract,
-  sum,
-} from "../../src";
+import { alias, coalesce, createTable, type Database, divide, expression, scalar, sql, subtract, sum } from "../../src";
 
 const Charges = createTable({
   id: "arithmetic charges",
@@ -26,7 +14,7 @@ const Balances = createTable({
 export async function seedArithmeticContract(db: Database) {
   await db.syncTable(Charges);
   await db.syncTable(Balances);
-  await db.insertMany(Charges, [
+  await db.insert(Charges, [
     { account: "a", select: 3 },
     { account: "a", select: 2 },
     { account: "a", select: null },
@@ -38,7 +26,7 @@ export async function seedArithmeticContract(db: Database) {
     { account: "duplicate", select: 1.25 },
     { account: "duplicate", select: -0.5 },
   ]);
-  await db.insertMany(Balances, [
+  await db.insert(Balances, [
     { account: "a", amount: 9, units: 2 },
     { account: "b", amount: -3, units: 2 },
     { account: "c", amount: 4, units: -2 },
@@ -105,9 +93,7 @@ export async function checkAliasedAggregate(db: Database) {
 
 export async function checkScalarProjection(db: Database) {
   const account = (value: string) =>
-    db.compile(
-      selectStatement(db.select(Balances, { account: Balances.$account }).where(Balances.$account.equals(value))),
-    );
+    db.compile(db.select(Balances, { account: Balances.$account }).where(Balances.$account.equals(value)));
   const present = scalar(await account("c"), z.string().nullable());
   const missing = scalar(await account("missing"), z.string().nullable());
   const { results } = await db
@@ -129,15 +115,11 @@ export function divideByZero(db: Database) {
 
 export async function checkScalarUpdate(db: Database) {
   const total = await db.compile(
-    selectStatement(
-      db.select(Charges, { amount: divide(coalesce(sum(Charges.$select), 0), 2) }).where(Charges.$account.equals("a")),
-    ),
+    db.select(Charges, { amount: divide(coalesce(sum(Charges.$select), 0), 2) }).where(Charges.$account.equals("a")),
   );
-  await db.update(
-    Balances,
-    { amount: subtract(Balances.$amount, scalar(total, z.number())) },
-    Balances.$account.equals("a"),
-  );
+  await db
+    .update(Balances, { amount: subtract(Balances.$amount, scalar(total, z.number())) })
+    .where(Balances.$account.equals("a"));
   expect((await db.select(Balances).orderBy(Balances.$account, "ASC")).results).toEqual([
     { account: "a", amount: 6.5, units: 2 },
     { account: "b", amount: -3, units: 2 },

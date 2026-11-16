@@ -44,7 +44,7 @@ void selectedOne;
 PeopleTable.$age.greaterThan(18);
 PeopleTable.$nickname.notEquals(null);
 db.insert(PeopleTable, { id: "1", name: "Ada", age: 36 });
-db.update(PeopleTable, { nickname: "Countess" }, PeopleTable.$id.equals("1"));
+db.update(PeopleTable, { nickname: "Countess" }).where(PeopleTable.$id.equals("1"));
 
 // @ts-expect-error unknown fields cannot be selected
 db.select(PeopleTable, { missing: PeopleTable.$missing });
@@ -53,15 +53,15 @@ PeopleTable.$age.equals("old");
 // @ts-expect-error required insert fields cannot be omitted
 db.insert(PeopleTable, { id: "1", name: "Ada" });
 // @ts-expect-error update values must match the schema
-db.update(PeopleTable, { age: "old" }, PeopleTable.$id.equals("1"));
+db.update(PeopleTable, { age: "old" }).where(PeopleTable.$id.equals("1"));
 
 // Scalar SELECTs retain their selected value type through chaining.
 db.insert(PeopleTable, {
   id: "subquery",
   name: db.select(PeopleTable, { name: PeopleTable.$name }).where(PeopleTable.$id.equals("1")),
   age: 1,
-}).selectMutated();
-db.insertMany(PeopleTable, [{ id: "many", name: "Ada", age: db.select(PeopleTable, { age: PeopleTable.$age }).one() }]);
+}).returning();
+db.insert(PeopleTable, [{ id: "many", name: "Ada", age: db.select(PeopleTable, { age: PeopleTable.$age }).one() }]);
 // @ts-expect-error numeric projections cannot fill text columns
 db.insert(PeopleTable, { id: "wrong", name: db.select(PeopleTable, { age: PeopleTable.$age }), age: 1 });
 db.insert(PeopleTable, {
@@ -81,7 +81,7 @@ db.insert(PeopleTable, {
   name: db.select(PeopleTable, { name: PeopleTable.$name }),
   age: 1,
   // @ts-expect-error parsed inputs cannot expose a database-computed value
-}).selectParsed();
+}).rows;
 
 // Real provider driver types must work without casts or bundled runtime dependencies.
 import type { Client as NeonClient, Pool as NeonPool, neon } from "@neondatabase/serverless";
@@ -201,7 +201,7 @@ const arithmetic = db.select(numbers, {
 export type ArithmeticProjectionContract = Expect<
   Equal<Awaited<typeof arithmetic>["results"][number], { total: number | null; average: number; difference: number }>
 >;
-db.update(numbers, { amount: subtract(numbers.$amount, 2) }, numbers.$amount.equals(5));
+db.update(numbers, { amount: subtract(numbers.$amount, 2) }).where(numbers.$amount.equals(5));
 // @ts-expect-error SUM accepts numeric columns
 sum(PeopleTable.$name);
 // @ts-expect-error COALESCE's literal must fit the expression's non-null schema
@@ -211,4 +211,4 @@ divide(nullableSum, 2);
 // @ts-expect-error arithmetic requires numeric operands
 subtract(numbers.$amount, PeopleTable.$name);
 // @ts-expect-error a numeric expression cannot update a text field
-db.update(PeopleTable, { name: divide(1, 2) }, PeopleTable.$id.equals("1"));
+db.update(PeopleTable, { name: divide(1, 2) }).where(PeopleTable.$id.equals("1"));

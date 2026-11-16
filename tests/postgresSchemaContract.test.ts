@@ -104,7 +104,7 @@ describe("PostgreSQL schema synchronization contract", () => {
       schema: zod.object({ id: zod.string(), email: zod.string().nullable() }),
     });
     await context.db.syncTable(InitialTable);
-    await context.db.insertMany(InitialTable, [
+    await context.db.insert(InitialTable, [
       { id: "1", email: null },
       { id: "2", email: "grace@example.com" },
     ]);

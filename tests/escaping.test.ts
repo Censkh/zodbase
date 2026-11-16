@@ -60,8 +60,7 @@ describe.each(TEST_DATABASE_FACTORIES)("SQL Escaping for $name", ({ create }) =>
       const item = { id: "1", data: evilString };
       await db.insert(TestTable, item);
 
-      const result = await db.count(TestTable).where(TestTable.$data.equals(evilString));
-      expect(result.first?._count).toBe(1);
+      expect(await db.select(TestTable).where(TestTable.$data.equals(evilString)).count()).toBe(1);
 
       // Clean up for next iteration
       await db.delete(TestTable).where(TestTable.$id.equals("1"));
@@ -73,13 +72,13 @@ describe.each(TEST_DATABASE_FACTORIES)("SQL Escaping for $name", ({ create }) =>
       const item = { id: "1", data: "initial" };
       await db.insert(TestTable, item);
 
-      await db.update(TestTable, { data: evilString }, TestTable.$id.equals("1"));
+      await db.update(TestTable, { data: evilString }).where(TestTable.$id.equals("1"));
 
       const { first } = await db.select(TestTable).where(TestTable.$id.equals("1"));
       expect(first?.data).toBe(evilString);
 
       // also test where clause
-      await db.update(TestTable, { data: "updated" }, TestTable.$data.equals(evilString));
+      await db.update(TestTable, { data: "updated" }).where(TestTable.$data.equals(evilString));
 
       const { first: second } = await db.select(TestTable).where(TestTable.$id.equals("1"));
       expect(second?.data).toBe("updated");
@@ -94,13 +93,13 @@ describe.each(TEST_DATABASE_FACTORIES)("SQL Escaping for $name", ({ create }) =>
       {
         // Test insert part of upsert
         const item = { id: "1", data: evilString };
-        await db.upsert(TestTable, item, TestTable.$id);
+        await db.insert(TestTable, item).onConflict(TestTable.$id).doUpdate();
         const { first } = await db.select(TestTable).where(TestTable.$id.equals("1"));
         expect(first).toEqual(item);
 
         // Test update part of upsert
         const updatedItem = { id: "1", data: `updated ${evilString}` };
-        await db.upsert(TestTable, updatedItem, TestTable.$id);
+        await db.insert(TestTable, updatedItem).onConflict(TestTable.$id).doUpdate();
         const { first: second } = await db.select(TestTable).where(TestTable.$id.equals("1"));
         expect(second).toEqual(updatedItem);
 
@@ -119,13 +118,13 @@ describe.each(TEST_DATABASE_FACTORIES)("SQL Escaping for $name", ({ create }) =>
       { id: "1", data: "a" },
       { id: "2", data: "b" },
     ];
-    await db.insertMany(TestTable, items);
+    await db.insert(TestTable, items);
 
     const updatedItems = [
       { id: "1", data: evilStrings[0] },
       { id: "2", data: evilStrings[1] },
     ];
-    await db.updateMany(TestTable, updatedItems as any, TestTable.$id as any);
+    await db.updateEach(TestTable, updatedItems as any, { by: TestTable.$id as any });
 
     const { results } = await db.select(TestTable).where(TestTable.$id.in(["1", "2"]));
     // sort to ensure order
@@ -139,7 +138,7 @@ describe.each(TEST_DATABASE_FACTORIES)("SQL Escaping for $name", ({ create }) =>
     for (const evilString of evilStrings) {
       const item1 = { id: "1", data: evilString };
       const item2 = { id: "2", data: "safe" };
-      await db.insertMany(TestTable, [item1, item2]);
+      await db.insert(TestTable, [item1, item2]);
 
       await db.delete(TestTable).where(TestTable.$data.equals(evilString));
 
@@ -157,7 +156,7 @@ describe.each(TEST_DATABASE_FACTORIES)("SQL Escaping for $name", ({ create }) =>
       { id: "1", data: evilStrings[0] },
       { id: "2", data: evilStrings[1] },
     ];
-    await db.insertMany(TestTable, items);
+    await db.insert(TestTable, items);
 
     const { results } = await db.select(TestTable);
     expect(results).toHaveLength(2);
@@ -201,12 +200,12 @@ describe.each(TEST_DATABASE_FACTORIES)("SQL Escaping for $name", ({ create }) =>
 
       // Test update
       const newItem = { id: "1", data: { [otherEvilKey]: "new_value" } };
-      await db.update(TestTable, { data: newItem.data }, TestTable.$id.equals("1"));
+      await db.update(TestTable, { data: newItem.data }).where(TestTable.$id.equals("1"));
       const { first: updated } = await db.select(TestTable).where(TestTable.$id.equals("1"));
       expect(updated).toEqual(newItem);
 
       // Test update where
-      await db.update(TestTable, { data: { safe: "value" } }, TestTable.$data.equals(newItem.data));
+      await db.update(TestTable, { data: { safe: "value" } }).where(TestTable.$data.equals(newItem.data));
       const { first: updatedByData } = await db.select(TestTable).where(TestTable.$id.equals("1"));
       expect(updatedByData?.data).toEqual({ safe: "value" });
 
@@ -216,13 +215,13 @@ describe.each(TEST_DATABASE_FACTORIES)("SQL Escaping for $name", ({ create }) =>
       {
         // Test upsert
         const upsertItem = { id: "2", data: { [evilKey]: "upserted" } };
-        await db.upsert(TestTable, upsertItem, TestTable.$id);
+        await db.insert(TestTable, upsertItem).onConflict(TestTable.$id).doUpdate();
         const { first: upserted } = await db.select(TestTable).where(TestTable.$id.equals("2"));
         expect(upserted).toEqual(upsertItem);
 
         // Test upsert (update part)
         const upsertUpdatedItem = { id: "2", data: { [otherEvilKey]: "upserted_updated" } };
-        await db.upsert(TestTable, upsertUpdatedItem, TestTable.$id);
+        await db.insert(TestTable, upsertUpdatedItem).onConflict(TestTable.$id).doUpdate();
         const { first: upsertedUpdated } = await db.select(TestTable).where(TestTable.$id.equals("2"));
         expect(upsertedUpdated).toEqual(upsertUpdatedItem);
 
@@ -248,7 +247,7 @@ describe.each(TEST_DATABASE_FACTORIES)("SQL Escaping for $name", ({ create }) =>
 
       // Test that update strips the evil key
       const updatePayload = { data: "updated", [evilKey]: "evil_value" };
-      await db.update(TestTable, updatePayload as any, TestTable.$id.equals("1"));
+      await db.update(TestTable, updatePayload as any).where(TestTable.$id.equals("1"));
 
       const { first: firstUpdated } = await db.select(TestTable).where(TestTable.$id.equals("1"));
       expect(firstUpdated).toEqual({ id: "1", data: "updated" });
@@ -265,7 +264,7 @@ describe.each(TEST_DATABASE_FACTORIES)("SQL Escaping for $name", ({ create }) =>
     const safeItem2 = { id: "3", data: "safe2" };
     const evilItem2 = { id: "4", data: evilStrings[1] };
 
-    await db.insertMany(TestTable, [evilItem, safeItem1, safeItem2, evilItem2]);
+    await db.insert(TestTable, [evilItem, safeItem1, safeItem2, evilItem2]);
 
     // Test notEquals
     const { results: notEqualsResults } = await db.select(TestTable).where(TestTable.$data.notEquals(evilStrings[0]));

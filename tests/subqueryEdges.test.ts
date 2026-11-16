@@ -40,7 +40,7 @@ describe("scalar insert edge cases", () => {
     db = new Database({ adaptor });
     await db.syncTable(source);
     await db.syncTable(target);
-    await db.insertMany(source, [
+    await db.insert(source, [
       { id: "a'\\", value: "東京 🦄 ' \\ ; DROP TABLE nope; --", rank: 1 },
       { id: "b", value: "second", rank: 2 },
       { id: "null", value: null, rank: 3 },
@@ -72,18 +72,18 @@ describe("scalar insert edge cases", () => {
     for (const id of ["absent", "null"]) {
       const result = await db
         .insert(nullableDefault, { value: db.select(source, { value: source.$value }).where(source.$id.equals(id)) })
-        .selectMutated();
+        .returning();
       expect(result.first).toEqual({ value: null });
     }
   });
 
   it("aligns mixed bulk values by column name, including fields absent from the first row", async () => {
     const result = await db
-      .insertMany(target, [
+      .insert(target, [
         { value: projection(), id: "first" },
         { optional: "present", id: "second", label: " custom ", value: "literal" },
       ])
-      .selectMutated();
+      .returning();
     expect(result.results).toEqual([
       { id: "first", value: "東京 🦄 ' \\ ; DROP TABLE nope; --", label: "default", optional: null },
       { id: "second", value: "literal", label: "custom", optional: "present" },
@@ -92,17 +92,15 @@ describe("scalar insert edge cases", () => {
 
   it("honors ordered limit/offset and a zero limit", async () => {
     const query = db.select(source, { value: source.$value }).orderBy(source.$rank, "ASC").limit(1).offset(1);
-    expect((await db.insert(target, { id: "offset", value: query }).selectMutated()).first?.value).toBe("second");
-    expect(
-      (await db.insert(target, { id: "zero", value: projection().limit(0) }).selectMutated()).first?.value,
-    ).toBeNull();
+    expect((await db.insert(target, { id: "offset", value: query }).returning()).first?.value).toBe("second");
+    expect((await db.insert(target, { id: "zero", value: projection().limit(0) }).returning()).first?.value).toBeNull();
   });
 
   it("snapshots reusable query builders when constructing an insert", async () => {
     const query = db.select(source, { value: source.$value }).orderBy(source.$rank, "ASC").limit(1);
     const mutation = db.insert(target, { id: "snapshot", value: query });
     query.offset(1).where(source.$id.equals("b"));
-    expect((await mutation.selectMutated()).first?.value).toBe("東京 🦄 ' \\ ; DROP TABLE nope; --");
+    expect((await mutation.returning()).first?.value).toBe("東京 🦄 ' \\ ; DROP TABLE nope; --");
   });
 
   it("snapshots mutable IN values inside compound predicates", async () => {
@@ -110,7 +108,7 @@ describe("scalar insert edge cases", () => {
     const query = db.select(source, { value: source.$value }).where(source.$id.in(ids).and(source.$rank.equals(1)));
     const mutation = db.insert(target, { id: "predicate-snapshot", value: query });
     ids[0] = "b";
-    expect((await mutation.selectMutated()).first?.value).toBe("東京 🦄 ' \\ ; DROP TABLE nope; --");
+    expect((await mutation.returning()).first?.value).toBe("東京 🦄 ' \\ ; DROP TABLE nope; --");
   });
 
   it("rejects invalid literals, unknown expression fields and wide projections before any SQL", () => {
@@ -128,7 +126,7 @@ describe("scalar insert edge cases", () => {
   it("rolls back the entire bulk insert if a later row violates a constraint", async () => {
     await expect(
       Promise.resolve(
-        db.insertMany(target, [
+        db.insert(target, [
           { id: "duplicate", value: projection() },
           { id: "duplicate", value: "literal" },
         ]),
@@ -142,7 +140,7 @@ describe("scalar insert edge cases", () => {
     await expect(
       db.transaction(async (tx) => {
         await tx.insert(source, { id: "new", value: "uncommitted", rank: 4 });
-        expect((await tx.insert(target, { id: "tx", value: query }).selectMutated()).first?.value).toBe("uncommitted");
+        expect((await tx.insert(target, { id: "tx", value: query }).returning()).first?.value).toBe("uncommitted");
         throw new Error("abort");
       }),
     ).rejects.toThrow("abort");

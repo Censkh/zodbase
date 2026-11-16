@@ -46,7 +46,7 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar insert: $name", ({ name, create }
       const mysql = name === "mysql" || name === "mariadb";
       if (mysql) await mutation;
       else
-        expect((await mutation.selectMutated()).first).toEqual({
+        expect((await mutation.returning()).first).toEqual({
           id: "1",
           region: "London",
           timestamp,
@@ -56,14 +56,14 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar insert: $name", ({ name, create }
       expect(statements[0]).toMatch(/^INSERT /);
       expect(statements[0]).toContain("SELECT");
       expect((await db.select(child)).first).toEqual({ id: "1", region: "London", timestamp, label: "default" });
-      const bulk = db.insertMany(child, [
+      const bulk = db.insert(child, [
         { id: "2", region, timestamp: date },
         { id: "3", region: "Singapore", timestamp },
         { id: "4", region, timestamp: date },
       ]);
       if (mysql) await bulk;
       else {
-        const returned = await bulk.selectMutated();
+        const returned = await bulk.returning();
         expect(returned.results.map((row) => row.timestamp)).toEqual([timestamp, timestamp, timestamp]);
         expect(returned.results.map((row) => row.region)).toEqual(["London", "Singapore", "London"]);
       }
@@ -82,9 +82,9 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar insert: $name", ({ name, create }
       );
       if (mysql) {
         const before = statements.length;
-        await expect(db.insert(child, { id: "no-returning", region, timestamp }).selectMutated()).rejects.toThrow(
-          "RETURNING",
-        );
+        await expect(
+          Promise.resolve(db.insert(child, { id: "no-returning", region, timestamp }).returning()),
+        ).rejects.toThrow("RETURNING");
         expect(statements).toHaveLength(before);
       }
       // A lazy connection still compiles the subquery on the resolved adaptor.

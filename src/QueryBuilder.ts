@@ -12,7 +12,7 @@ export const query = <T extends object>(table: Table<T>) => QueryBuilder<T> => {
 }
 */
 import { join, type OrderDirection, raw, sql, type Table } from "./index";
-import { QueryStatement } from "./QueryStatement";
+import { type Compilable, QueryStatement } from "./QueryStatement";
 import { SqlExpression } from "./SqlExpression";
 import { type Statement, TO_SQL_SYMBOL, type ToSql } from "./Statement";
 
@@ -95,9 +95,9 @@ export interface SingleFieldBinding<
     value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined> | undefined | null,
   ): SelectFieldCondition<TValue, TKey>;
 
-  in(values: TValue[TKey][] | Statement | QueryStatement): SelectFieldCondition<TValue, TKey>;
+  in(values: TValue[TKey][] | Statement | Compilable): SelectFieldCondition<TValue, TKey>;
 
-  notIn(values: TValue[TKey][] | Statement | QueryStatement): SelectFieldCondition<TValue, TKey>;
+  notIn(values: TValue[TKey][] | Statement | Compilable): SelectFieldCondition<TValue, TKey>;
 
   contains(value: unknown): SelectFieldCondition<TValue, TKey>;
 
@@ -376,12 +376,12 @@ export type SelectQueryBuilder<
     forceIndex(
       index: string,
     ): SelectQueryBuilder<TTable, TResultValue, TResultLimit, TNullable, TProjection, TIncludes>;
-    count(): Promise<SqlResult<Record<StringKeys<ValueOfTable<TTable>>, number>, 1>>;
     /**
-     * Counts the matching rows, reading at most `max` of them, so counting a large table stays
-     * cheap; `max` means "at least `max`". Ignores the query's ordering, limit and offset.
+     * The number of rows the query matches, ignoring its ordering, limit and offset. With `upTo`, it
+     * reads at most that many, so counting a large match stays cheap: a result of `upTo` means "at
+     * least `upTo`".
      */
-    countUpTo(max: number): Promise<number>;
+    count(options?: { upTo?: number }): Promise<number>;
   };
 
 /**

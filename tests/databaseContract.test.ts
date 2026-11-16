@@ -52,7 +52,7 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
   });
 
   it("inserts and selects projected fields", async () => {
-    await db.insertMany(PeopleTable, people);
+    await db.insert(PeopleTable, people);
 
     const result = await db
       .select(PeopleTable, { id: PeopleTable.$id, name: PeopleTable.$name })
@@ -86,7 +86,7 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
   it("rejects adding a primary key to duplicate data without losing rows", async () => {
     const legacy = createTable({ id: "duplicate_parent", schema: zod.object({ id: zod.string() }) });
     await db.syncTable(legacy);
-    await db.insertMany(legacy, [{ id: "duplicate" }, { id: "duplicate" }]);
+    await db.insert(legacy, [{ id: "duplicate" }, { id: "duplicate" }]);
     const parent = createTable({
       id: "duplicate_parent",
       schema: zod.object({ id: zod.string().meta(metaStore([primaryKey()])) }),
@@ -96,7 +96,7 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
   });
 
   it("supports every comparison and compound condition", async () => {
-    await db.insertMany(PeopleTable, people);
+    await db.insert(PeopleTable, people);
 
     expect((await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$name.like("M%"))).results).toEqual(
       [{ id: "4" }],
@@ -136,7 +136,7 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
   });
 
   it("handles null comparisons", async () => {
-    await db.insertMany(PeopleTable, people);
+    await db.insert(PeopleTable, people);
 
     const nullRows = await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$nickname.equals(null));
     const nonNullRows = await db
@@ -148,7 +148,7 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
   });
 
   it("supports ordering, limit, offset, and one", async () => {
-    await db.insertMany(PeopleTable, people);
+    await db.insert(PeopleTable, people);
 
     const page = await db
       .select(PeopleTable, { id: PeopleTable.$id })
@@ -164,14 +164,14 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
   });
 
   it("treats limit zero and an empty IN list as empty results", async () => {
-    await db.insertMany(PeopleTable, people);
+    await db.insert(PeopleTable, people);
 
     expect((await db.select(PeopleTable, { id: PeopleTable.$id }).limit(0)).results).toEqual([]);
     expect((await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$id.in([]))).results).toEqual([]);
   });
 
   it("supports repeated where calls and ignores conditional falsy clauses", async () => {
-    await db.insertMany(PeopleTable, people);
+    await db.insert(PeopleTable, people);
 
     const query = db
       .select(PeopleTable, { id: PeopleTable.$id })
@@ -181,11 +181,11 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
     const result = await query.clone();
 
     expect(result.results).toEqual([{ id: "1" }, { id: "4" }]);
-    expect((await query.count()).first).toEqual({ id: 2 });
+    expect(await query.count()).toBe(2);
   });
 
   it("selects explicit projections independently", async () => {
-    await db.insertMany(PeopleTable, people);
+    await db.insert(PeopleTable, people);
 
     const ids = db.select(PeopleTable, { id: PeopleTable.$id });
     const names = db.select(PeopleTable, { name: PeopleTable.$name });
@@ -195,7 +195,7 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
   });
 
   it("keeps cloned builders independent", async () => {
-    await db.insertMany(PeopleTable, people);
+    await db.insert(PeopleTable, people);
 
     const base = db.select(PeopleTable, { id: PeopleTable.$id });
     const descending = base.clone().orderBy(PeopleTable.$id, "DESC").limit(1);
@@ -207,40 +207,43 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
   });
 
   it("counts all rows and selected fields with filters", async () => {
-    await db.insertMany(PeopleTable, people);
+    await db.insert(PeopleTable, people);
 
-    expect((await db.count(PeopleTable)).first).toEqual({ _count: 4 });
-    expect((await db.count(PeopleTable, "nickname")).first).toEqual({ nickname: 2 });
-    expect((await db.count(PeopleTable).where(PeopleTable.$age.equals(45))).first).toEqual({ _count: 2 });
-    expect(
-      (await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$age.equals(45)).count()).first,
-    ).toEqual({ id: 2 });
+    expect(await db.select(PeopleTable).count()).toBe(4);
+    expect(await db.select(PeopleTable).where(PeopleTable.$nickname.notEquals(null)).count()).toBe(2);
+    expect(await db.select(PeopleTable).where(PeopleTable.$age.equals(45)).count()).toBe(2);
+    expect(await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$age.equals(45)).count()).toBe(2);
   });
 
   it("counts matching rows up to a limit", async () => {
-    await db.insertMany(PeopleTable, people);
+    await db.insert(PeopleTable, people);
 
     const all = db.select(PeopleTable).orderBy(PeopleTable.$id, "DESC").limit(1).offset(3);
-    expect(await all.countUpTo(10)).toBe(4);
-    expect(await all.countUpTo(3)).toBe(3);
-    expect(await all.countUpTo(0)).toBe(0);
-    expect(await db.select(PeopleTable).where(PeopleTable.$age.equals(45)).countUpTo(10)).toBe(2);
-    expect(await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$id.in([])).countUpTo(10)).toBe(0);
+    expect(await all.count({ upTo: 10 })).toBe(4);
+    expect(await all.count({ upTo: 3 })).toBe(3);
+    expect(await all.count({ upTo: 0 })).toBe(0);
+    expect(await db.select(PeopleTable).where(PeopleTable.$age.equals(45)).count({ upTo: 10 })).toBe(2);
+    expect(
+      await db.select(PeopleTable, { id: PeopleTable.$id }).where(PeopleTable.$id.in([])).count({ upTo: 10 }),
+    ).toBe(0);
   });
 
   it("supports insert, update, updateMany, upsert, and delete", async () => {
     await db.insert(PeopleTable, people[0]);
-    await db.insertMany(PeopleTable, people.slice(1));
-    await db.update(PeopleTable, { age: 37 }, PeopleTable.$id.equals("1"));
-    await db.updateMany(
+    await db.insert(PeopleTable, people.slice(1));
+    await db.update(PeopleTable, { age: 37 }).where(PeopleTable.$id.equals("1"));
+    await db.updateEach(
       PeopleTable,
       [
         { id: "2", age: 46 },
         { id: "3", age: 29 },
       ],
-      PeopleTable.$id,
+      { by: PeopleTable.$id },
     );
-    await db.upsert(PeopleTable, { id: "4", name: "Margaret Hamilton", age: 46, nickname: "Maggie" }, PeopleTable.$id);
+    await db
+      .insert(PeopleTable, { id: "4", name: "Margaret Hamilton", age: 46, nickname: "Maggie" })
+      .onConflict(PeopleTable.$id)
+      .doUpdate();
     await db.delete(PeopleTable).where(PeopleTable.$id.equals("3"));
 
     const result = await db
@@ -254,26 +257,28 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
   });
 
   it("upsertMany inserts and updates rows by key, keeping a repeated key's last row", async () => {
-    await db.insertMany(PeopleTable, people.slice(0, 2));
+    await db.insert(PeopleTable, people.slice(0, 2));
     const adaptor = (db as unknown as { options: { adaptor: DatabaseAdaptor } }).options.adaptor;
     const execute = spyOn(adaptor, "execute");
     try {
-      await db.upsertMany(
-        PeopleTable,
-        [
+      await db
+        .insert(PeopleTable, [
           { id: "2", name: "Grace Hopper", age: 46, nickname: null },
           { id: "5", name: "Barbara", age: 30, nickname: "Babs" },
           { id: "5", name: "Barbara Liskov", age: 31, nickname: null },
-        ],
-        PeopleTable.$id,
-      );
+        ])
+        .onConflict(PeopleTable.$id)
+        .doUpdate();
       // PostgreSQL, CockroachDB and SQLite write rows that set the same columns in one statement.
       if (["bun-sqlite", "turso-local", "postgres", "cockroach"].includes(name))
         expect(execute).toHaveBeenCalledTimes(1);
     } finally {
       execute.mockRestore();
     }
-    expect(await db.upsertMany(PeopleTable, [], PeopleTable.$id)).toEqual({ results: [], first: undefined });
+    expect(await db.insert(PeopleTable, []).onConflict(PeopleTable.$id).doUpdate()).toEqual({
+      results: [],
+      first: undefined,
+    });
 
     const result = await db.select(PeopleTable).orderBy(PeopleTable.$id, "ASC");
     expect(result.results).toEqual([
@@ -297,18 +302,19 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
     await expect(Promise.resolve(db.insert(Regional, { id: "1", region: "eu", name: "Again" }))).rejects.toThrow();
 
     const updated = await db
-      .upsert(Regional, { id: "1", region: "eu", name: "Ada Lovelace" }, [Regional.$region, Regional.$id])
-      .selectMutated();
+      .insert(Regional, { id: "1", region: "eu", name: "Ada Lovelace" })
+      .onConflict([Regional.$region, Regional.$id])
+      .doUpdate()
+      .returning();
     expect(updated.first).toEqual({ id: "1", region: "eu", name: "Ada Lovelace" });
-    await db.upsertMany(
-      Regional,
-      [
+    await db
+      .insert(Regional, [
         { id: "1", region: "us", name: "Grace Hopper" },
         { id: "2", region: "eu", name: "Linus" },
         { id: "2", region: "eu", name: "Linus Torvalds" },
-      ],
-      [Regional.$region, Regional.$id],
-    );
+      ])
+      .onConflict([Regional.$region, Regional.$id])
+      .doUpdate();
 
     const rows = await db.select(Regional).orderBy(Regional.$region, "ASC").orderBy(Regional.$id, "ASC");
     expect(rows.results).toEqual([
@@ -345,9 +351,11 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
   });
 
   it("returns parsed and mutated rows", async () => {
-    const parsed = await db.insert(PeopleTable, people[0]).selectParsed();
-    const inserted = await db.insert(PeopleTable, people[1]).selectMutated();
-    const updated = await db.update(PeopleTable, { age: 37 }, PeopleTable.$id.equals("1")).selectMutated("id", "age");
+    const insert = db.insert(PeopleTable, people[0]);
+    await insert;
+    const parsed = { first: insert.rows[0] };
+    const inserted = await db.insert(PeopleTable, people[1]).returning();
+    const updated = await db.update(PeopleTable, { age: 37 }).where(PeopleTable.$id.equals("1")).returning("id", "age");
 
     expect(parsed.first).toEqual(people[0]);
     expect(inserted.first).toEqual(people[1]);
@@ -355,9 +363,12 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
   });
 
   it("treats empty bulk operations as no-ops", async () => {
-    expect(await db.insertMany(PeopleTable, [])).toEqual({ results: [], first: undefined });
-    expect(await db.updateMany(PeopleTable, [], PeopleTable.$id)).toMatchObject({ results: [], first: undefined });
-    expect(await db.updateMany(PeopleTable, [], PeopleTable.$id).selectMutated()).toEqual({
+    expect(await db.insert(PeopleTable, [])).toEqual({ results: [], first: undefined });
+    expect(await db.updateEach(PeopleTable, [], { by: PeopleTable.$id })).toMatchObject({
+      results: [],
+      first: undefined,
+    });
+    expect(await db.updateEach(PeopleTable, [], { by: PeopleTable.$id }).returning()).toEqual({
       results: [],
       first: undefined,
     });
@@ -374,7 +385,7 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
     });
     await db.syncTable(OptionalTable);
 
-    await db.insertMany(OptionalTable, [
+    await db.insert(OptionalTable, [
       { id: "1", name: "Ada" },
       { id: "2", name: "Grace", nickname: "Amazing Grace" },
       { id: "3", name: "Linus" },
@@ -391,7 +402,7 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
     await db.transaction(async (transaction) => {
       await transaction.insert(PeopleTable, people[0]);
       expect((await transaction.select(PeopleTable, { id: PeopleTable.$id })).results).toEqual([{ id: "1" }]);
-      await transaction.update(PeopleTable, { age: 37 }, PeopleTable.$id.equals("1"));
+      await transaction.update(PeopleTable, { age: 37 }).where(PeopleTable.$id.equals("1"));
     });
     expect((await db.select(PeopleTable, { age: PeopleTable.$age })).results).toEqual([{ age: 37 }]);
 
@@ -609,7 +620,7 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
   });
 
   it("rejects unsafe or invalid mutations", async () => {
-    expect(() => db.update(PeopleTable, {}, PeopleTable.$id.equals("1"))).toThrow("No values to update");
+    expect(() => db.update(PeopleTable, {}).where(PeopleTable.$id.equals("1"))).toThrow("No values to update");
     expect(() => db.insert(PeopleTable, { id: "1", name: "Ada", age: "old", nickname: null } as never)).toThrow();
     await expect(Promise.resolve(db.delete(PeopleTable))).rejects.toThrow(
       "Delete without where condition is not allowed",

@@ -43,11 +43,11 @@ driver.close();
 
 ## Composing statements
 
-Use `selectStatement(query)` to reuse a builder as a SQL statement. Its flat projection names become the SQL column names. Combine statements with `union` and `withCtes`, using `createTable` to define the names and schemas of the CTE bindings. Execute the statement with `db.execute()` or pass a single-column statement to `field.in()`. Use `exists(statement)` for existence predicates and `field.containsText(text)` for case-insensitive searches that treat wildcard characters literally.
+Any builder (select, insert, update or delete) is a SQL statement wherever one is taken. A select's flat projection names become the SQL column names. Combine statements with `union` and `withCtes`, using `createTable` to define the names and schemas of the CTE bindings. Execute the statement with `db.execute()` or pass a single-column statement to `field.in()`. Use `exists(statement)` for existence predicates and `field.containsText(text)` for case-insensitive searches that treat wildcard characters literally.
 
 Use `expression(statement, schema)` to assign a SQL expression to a column in `db.update()`. Plain values still go through the table schema. Use `db.compile()` when a composed statement needs to be interpolated into a SQL expression.
 
-On PostgreSQL and CockroachDB, `db.updateReturningStatement()` and `db.insertFromStatement()` can serve as writable CTEs in a single `db.execute()` call. The CTE update applies the supplied assignments. Add a timestamp assignment explicitly when needed.
+On PostgreSQL and CockroachDB, `db.update(…).where(…).returning()` and `db.insert(table).fromSelect(…)` serve as writable CTEs in a single `db.execute()` call. Use `db.batch([...])` to run independent writes atomically, in one round trip there.
 
 ## Keep going
 

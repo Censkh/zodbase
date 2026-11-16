@@ -42,7 +42,7 @@ describe.each(TEST_DATABASE_FACTORIES)("partial update defaults: $name", ({ crea
     defaultCalls = 0;
     table = makeTable();
     await database.syncTable(table);
-    await database.insertMany(table, [
+    await database.insert(table, [
       { id: "first", name: "First", credits: 25, note: "kept" },
       { id: "second", name: "Second", credits: 50, note: "also kept" },
     ]);
@@ -51,14 +51,14 @@ describe.each(TEST_DATABASE_FACTORIES)("partial update defaults: $name", ({ crea
   afterEach(async () => context.close());
 
   it("preserves omitted primary keys and defaults while validating supplied fields", async () => {
-    const result = await database.update(table, { name: "  Changed  " }, table.$id.equals("first")).selectMutated();
+    const result = await database.update(table, { name: "  Changed  " }).where(table.$id.equals("first")).returning();
     expect(result.first).toMatchObject({ id: "first", name: "Changed", credits: 25, note: "kept" });
     expect(result.first.changedAt).toBeGreaterThan(0);
     expect(defaultCalls).toBe(0);
   });
 
   it("does not replace omitted defaults in ordinary updates", async () => {
-    await database.update(table, { credits: 10 }, table.$id.equals("first"));
+    await database.update(table, { credits: 10 }).where(table.$id.equals("first"));
     expect((await database.select(table).where(table.$id.equals("first"))).first).toMatchObject({
       id: "first",
       credits: 10,
@@ -69,15 +69,15 @@ describe.each(TEST_DATABASE_FACTORIES)("partial update defaults: $name", ({ crea
 
   it("preserves omitted values separately for each bulk update", async () => {
     await database
-      .updateMany(
+      .updateEach(
         table,
         [
           { id: "first", name: "  Updated  " },
           { id: "second", credits: 40 },
         ],
-        table.$id,
+        { by: table.$id },
       )
-      .selectMutated();
+      .returning();
     expect((await database.select(table).orderBy(table.$id, "ASC")).results).toMatchObject([
       { id: "first", name: "Updated", credits: 25, note: "kept" },
       { id: "second", name: "Second", credits: 40, note: "also kept" },
@@ -85,7 +85,7 @@ describe.each(TEST_DATABASE_FACTORIES)("partial update defaults: $name", ({ crea
   });
 
   it("applies defaults only when explicitly requested and retains explicit nulls", async () => {
-    await database.update(table, { credits: undefined, note: null }, table.$id.equals("first"));
+    await database.update(table, { credits: undefined, note: null }).where(table.$id.equals("first"));
     expect((await database.select(table).where(table.$id.equals("first"))).first).toMatchObject({
       id: "first",
       credits: 100,
@@ -95,7 +95,7 @@ describe.each(TEST_DATABASE_FACTORIES)("partial update defaults: $name", ({ crea
   });
 
   it("rejects invalid supplied fields before writing", async () => {
-    expect(() => database.update(table, { credits: "bad" } as any, table.$id.equals("first"))).toThrow();
+    expect(() => database.update(table, { credits: "bad" } as any).where(table.$id.equals("first"))).toThrow();
     expect((await database.select(table).where(table.$id.equals("first"))).first?.credits).toBe(25);
   });
 });

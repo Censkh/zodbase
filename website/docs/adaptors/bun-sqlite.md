@@ -26,7 +26,7 @@ Use a file path such as `"app.sqlite"` instead of `":memory:"` to persist data. 
 
 `db.transaction(async (tx) => { ... })` uses SQL `BEGIN`, `COMMIT`, and `ROLLBACK` on the same driver. Use `tx` for every operation in the callback; avoid unrelated work on that connection until it finishes. Nested transactions are rejected.
 
-`updateMany` executes one update statement per row. Use an explicit transaction when those updates must succeed together.
+`updateEach` executes one update statement per row. Use an explicit transaction when those updates must succeed together.
 
 ## Schema changes and cleanup
 

@@ -48,7 +48,7 @@ describe("SQL Server dialect", () => {
         date: db.select(table, { date: table.$date }).limit(1),
         big: db.select(table, { big: table.$big }).limit(1),
       })
-      .selectMutated();
+      .returning();
     const text = statements[0]!;
     expect(text).toContain(
       "OUTPUT INSERTED.[id], INSERTED.[active], CONVERT(NVARCHAR(30), INSERTED.[date], 126) AS [date], CONVERT(NVARCHAR(30), INSERTED.[big]) AS [big] VALUES",
@@ -62,7 +62,7 @@ describe("SQL Server dialect", () => {
   it("uses BIT literals for predicates and updates", async () => {
     const { db, statements } = captureMssql();
     await db.select(table, { id: table.$id }).where(table.$active.equals(true));
-    await db.update(table, { active: false }, table.$active.equals(true)).selectMutated();
+    await db.update(table, { active: false }).where(table.$active.equals(true)).returning();
     expect(statements[0]).toMatch(/\[active\] =\s+1/);
     expect(statements[1]).toContain("SET [active] = 0 OUTPUT");
     expect(statements[1]).not.toContain("false");
@@ -159,9 +159,7 @@ describe("Neon HTTP", () => {
     };
     const db = new Database({ adaptor: new NeonHttpAdaptor({ driver }) });
     const simple = createTable({ id: "simple", schema: z.object({ id: z.string() }) });
-    expect(
-      (await db.insert(simple, { id: db.select(simple, { id: simple.$id }).one() }).selectMutated()).first,
-    ).toEqual({
+    expect((await db.insert(simple, { id: db.select(simple, { id: simple.$id }).one() }).returning()).first).toEqual({
       id: "new",
     });
     expect(calls).toHaveLength(1);
@@ -283,7 +281,7 @@ describe("PostgreSQL numeric result decoding", () => {
     });
     const expected = { id: "00123", updatedAt: 1793135838869, price: 12.5, optional: null, exact: 9007199254740993n };
     expect((await db.select(numericTable).one()).first).toEqual(expected);
-    expect((await db.insert(numericTable, expected).selectMutated()).first).toEqual(expected);
+    expect((await db.insert(numericTable, expected).returning()).first).toEqual(expected);
   });
 
   it("rejects invalid numbers and out-of-range integer timestamps instead of silently changing them", async () => {

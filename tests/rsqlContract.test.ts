@@ -63,7 +63,7 @@ describe.each(TEST_DATABASE_FACTORIES)("RSQL contract: $name", ({ create }) => {
     context = await create();
     AssetsTable = createAssetsTable();
     await context.db.syncTable(AssetsTable);
-    await context.db.insertMany(AssetsTable, assets);
+    await context.db.insert(AssetsTable, assets);
   });
 
   afterEach(async () => {
@@ -135,7 +135,7 @@ describe.each(TEST_DATABASE_FACTORIES)("RSQL contract: $name", ({ create }) => {
       }),
     });
     await context.db.syncTable(LabelsTable);
-    await context.db.insertMany(LabelsTable, [
+    await context.db.insert(LabelsTable, [
       { id: "1", tags: ["keep"] },
       { id: "2", tags: null },
     ]);
@@ -184,6 +184,6 @@ describe.each(TEST_DATABASE_FACTORIES)("RSQL contract: $name", ({ create }) => {
     });
 
     expect(await idsFor(`name=="${payload}"`)).toEqual(["4"]);
-    expect((await context.db.count(AssetsTable)).first?._count).toBe(4);
+    expect(await context.db.select(AssetsTable).count()).toBe(4);
   });
 });

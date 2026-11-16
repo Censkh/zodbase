@@ -53,13 +53,28 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
       await context.db.syncTable(table);
       for (const [index, value] of [...values, null].entries()) {
         const id = String(index);
-        expect((await context.db.insert(table, { id, value } as any).selectMutated()).first).toEqual({ id, value });
+        expect((await context.db.insert(table, { id, value } as any).returning()).first).toEqual({ id, value });
         expect((await context.db.select(table).where(table.$id.equals(id))).first).toEqual({ id, value });
-        expect((await context.db.update(table, { value } as any, table.$id.equals(id)).selectMutated()).first).toEqual({
+        expect(
+          (
+            await context.db
+              .update(table, { value } as any)
+              .where(table.$id.equals(id))
+              .returning()
+          ).first,
+        ).toEqual({
           id,
           value,
         });
-        expect((await context.db.upsert(table, { id, value } as any, table.$id).selectMutated()).first).toEqual({
+        expect(
+          (
+            await context.db
+              .insert(table, { id, value } as any)
+              .onConflict(table.$id)
+              .doUpdate()
+              .returning()
+          ).first,
+        ).toEqual({
           id,
           value,
         });
@@ -70,7 +85,7 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
   it("sorts bigints numerically even when the driver needs a text projection", async () => {
     const table = createTable({ id: "edge_bigint_order", schema: z.object({ value: z.bigint() }) });
     await context.db.syncTable(table);
-    await context.db.insertMany(
+    await context.db.insert(
       table,
       [10n, 2n, -10n, -2n, 9007199254740993n].map((value) => ({ value })),
     );
@@ -109,7 +124,7 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
     const revisions = await Promise.all(
       ["uploading", "success", "generating"].map((status) =>
         context.db.transaction(async (db) => {
-          await db.update(table, { status }, table.$id.equals("one"));
+          await db.update(table, { status }).where(table.$id.equals("one"));
           return (await db.select(table)).first!.updatedAt;
         }),
       ),
@@ -117,7 +132,7 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
     expect(revisions.sort((a, b) => a - b)).toEqual([future + 1, future + 2, future + 3]);
     await expect(
       context.db.transaction(async (db) => {
-        await db.update(table, { status: "failed" }, table.$id.equals("one"));
+        await db.update(table, { status: "failed" }).where(table.$id.equals("one"));
         throw new Error("abort");
       }),
     ).rejects.toThrow("abort");
@@ -153,7 +168,7 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
               await db.select(table);
               if (++reads === 2) release();
               await bothRead;
-              return (await db.update(table, { updatedAt: 0 }, table.$id.equals("one")).selectMutated()).first
+              return (await db.update(table, { updatedAt: 0 }).where(table.$id.equals("one")).returning()).first
                 .updatedAt;
             }),
           ),
@@ -179,7 +194,7 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
       await context.db.syncTable(table);
       expect((await context.db.select(table)).first?.value).toEqual(new Date("2026-09-10T06:20:26Z"));
       const value = new Date("2026-09-10T06:20:26.101Z");
-      await context.db.update(table, { value }, table.$id.equals("old"));
+      await context.db.update(table, { value }).where(table.$id.equals("old"));
       expect((await context.db.select(table)).first?.value).toEqual(value);
     });
   }
@@ -206,7 +221,7 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
       name: "existing",
       status: "pending",
     });
-    await context.db.update(migrated, { status: "success" }, migrated.$id.equals("one"));
+    await context.db.update(migrated, { status: "success" }).where(migrated.$id.equals("one"));
     await context.db.syncTable(migrated);
     expect((await context.db.select(migrated)).first?.status).toBe("success");
   });
@@ -221,7 +236,7 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
       }),
     });
     await context.db.syncTable(table);
-    await context.db.insertMany(
+    await context.db.insert(
       table,
       ["b", "c", "d", "e"].map((id) => ({ id, createdAt: 1789021226101, optional: id === "c" ? null : 1 })),
     );

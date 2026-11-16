@@ -228,10 +228,6 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     return statement.compile(this);
   }
 
-  buildUpdateReturningSql(_table: Table, _values: Record<string, unknown>, _where: SelectCondition): Statement {
-    throw new Error("This adaptor does not support UPDATE RETURNING in a writable CTE");
-  }
-
   buildSelectSql(_select: SelectQuery, _scalar = false, _named = false): Statement {
     throw new Error("This adaptor does not support scalar subqueries");
   }
@@ -348,6 +344,96 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     table: TTable,
     where: SelectCondition<ValueOfTable<TTable>>,
   ): Promise<SqlResult<void, 0>>;
+
+  /** A result's rows as the table's values, as a select's are decoded. */
+  decode(table: Table, result: SqlResult): SqlResult {
+    return this.decodeResult(table, result);
+  }
+
+  /** The rows' values as SQL tuples, every row with `columns` in order (a missing one is NULL). */
+  protected valueTuples(rows: readonly Record<string, unknown>[], columns: readonly string[]): string {
+    return rows.map((row) => `(${columns.map((key) => this.valueToSql(row[key], true)).join(", ")})`).join(", ");
+  }
+
+  /**
+   * Inserts `rows`, skipping any that conflict on `fields` (a unique key), and returns the rows it
+   * inserted when asked. MySQL and MariaDB skip with `INSERT IGNORE`, which can't return them.
+   */
+  async executeInsertIgnoring<TTable extends Table>(
+    table: TTable,
+    rows: InputOfTable<TTable>[],
+    fields: readonly SingleFieldBinding[],
+    shouldReturn = false,
+  ): Promise<SqlResult<ValueOfTable<TTable>>> {
+    if (!rows.length) return { results: [], first: undefined };
+    const columns = Object.keys(table.fields);
+    const quote = (name: string) => this.quoteIdentifier(name);
+    const into = `${quote(String(table.id))} (${columns.map(quote).join(", ")})`;
+    const values = this.valueTuples(rows as Record<string, unknown>[], columns);
+    if (this.selectDialect === "mysql" || this.selectDialect === "mariadb") {
+      if (shouldReturn) throw new Error("[zodbase] MySQL can't return the rows an insert that skips conflicts wrote");
+      await this.execute(raw(`INSERT IGNORE INTO ${into} VALUES ${values}`));
+      return { results: [], first: undefined };
+    }
+    if (this.selectDialect === "mssql") throw new Error("[zodbase] SQL Server can't skip conflicting inserts");
+    const target = fields.map((field) => quote(String(field.key))).join(", ");
+    const result = await this.execute(
+      raw(
+        `INSERT INTO ${into} VALUES ${values} ON CONFLICT (${target}) DO NOTHING${shouldReturn ? this.insertReturningSql(table, "after-values") : ""}`,
+      ),
+    );
+    return shouldReturn ? (this.decodeResult(table, result) as any) : { results: [], first: undefined };
+  }
+
+  /**
+   * `INSERT INTO table (columns) <select>`, returning the inserted rows when asked: the select's
+   * projection gives the columns' values in order.
+   */
+  buildInsertSelectSql(table: Table, columns: readonly string[], select: Statement, shouldReturn: boolean): Statement {
+    const quote = (name: string) => this.quoteIdentifier(name);
+    return sql`INSERT INTO ${raw(quote(String(table.id)))} (${raw(columns.map(quote).join(", "))})${raw(
+      shouldReturn ? this.insertReturningSql(table, "before-values") : "",
+    )} ${select}${raw(shouldReturn ? this.insertReturningSql(table, "after-values") : "")}`;
+  }
+
+  /**
+   * The statement an insert runs, for adaptors that can run it beside others in one round trip or
+   * inside a writable CTE (`executeTogether`): `undefined` elsewhere. Every row sets the table's
+   * columns, in order.
+   */
+  buildInsertStatement(
+    _table: Table,
+    _rows: readonly Record<string, unknown>[],
+    _options: {
+      returning: boolean;
+      conflict?: { fields: readonly SingleFieldBinding[]; action: "nothing" | "update" };
+    },
+  ): Statement | undefined {
+    return undefined;
+  }
+
+  /** The statement an update runs, as `buildInsertStatement` gives an insert's. */
+  buildUpdateStatement(
+    _table: Table,
+    _values: Record<string, unknown>,
+    _where: SelectCondition,
+    _returning: boolean,
+  ): Statement | undefined {
+    return undefined;
+  }
+
+  /** The statement a delete runs, as `buildInsertStatement` gives an insert's. */
+  buildDeleteStatement(_table: Table, _where: SelectCondition): Statement | undefined {
+    return undefined;
+  }
+
+  /**
+   * Runs the statements in one round trip as one transaction, returning each one's rows, where the
+   * database can (`undefined` elsewhere, and the caller runs them in a transaction instead).
+   */
+  async executeTogether(_statements: readonly Statement[]): Promise<SqlResult[] | undefined> {
+    return undefined;
+  }
 
   abstract buildJsonArrayContainsSql(fieldSql: string, value: unknown): Statement;
 

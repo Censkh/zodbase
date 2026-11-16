@@ -27,11 +27,11 @@ describe("lazy adaptor initialization", () => {
 
     await database.syncTable(AssetsTable);
     await database.insert(AssetsTable, { id: "asset-1", tags: ["cached"] });
-    const [firstResult, secondResult] = await Promise.all([query, database.count(AssetsTable)]);
+    const [firstResult, secondResult] = await Promise.all([query, database.select(AssetsTable).count()]);
 
     expect(initializationCount).toBe(1);
     expect(firstResult.results).toEqual([{ id: "asset-1" }]);
-    expect(secondResult.first).toEqual({ _count: 1 });
+    expect(secondResult).toBe(1);
     driver.close();
   });
   it("resolves dialect helpers for migrations and revision writes", async () => {
@@ -62,7 +62,7 @@ describe("lazy adaptor initialization", () => {
       schema: zod.object({ updatedAt: zod.number().meta(metaStore([monotonicTimestamp()])) }),
     });
     // Constructing the write must not require initialization of the async adaptor.
-    const update = database.update(table, { updatedAt: 0 }, table.$updatedAt.greaterThan(0));
+    const update = database.update(table, { updatedAt: 0 }).where(table.$updatedAt.greaterThan(0));
     expect(statements).toEqual([]);
     await database.syncTable(table);
     await update;

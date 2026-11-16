@@ -84,7 +84,7 @@ const createTestDb = async () => {
   });
 
   await db.syncTable(AssetTable);
-  await db.insertMany(AssetTable, testAssets);
+  await db.insert(AssetTable, testAssets);
 
   return db;
 };
@@ -92,7 +92,7 @@ const createTestDb = async () => {
 describe("RSQL Filter", () => {
   it("filters JSON array fields by an exact member", async () => {
     const db = await createTestDb();
-    await db.insertMany(AssetTable, [
+    await db.insert(AssetTable, [
       {
         id: "tagged-1",
         name: "Tagged One",

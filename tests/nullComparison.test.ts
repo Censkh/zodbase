@@ -17,7 +17,7 @@ const ItemTable = createTable({
 const createDb = async () => {
   const db = new Database({ adaptor: new BunSqliteAdaptor({ driver: new BunDatabase(":memory:") }) });
   await db.syncTable(ItemTable);
-  await db.insertMany(ItemTable, [
+  await db.insert(ItemTable, [
     { id: "root", folderId: null, name: "root", credits: 5 },
     { id: "child", folderId: "f1", name: "child", credits: 7 },
   ]);

@@ -26,7 +26,7 @@ it("select only field", async () => {
     { id: crypto.randomUUID(), otherField: "c" },
     { id: crypto.randomUUID(), otherField: "d" },
   ];
-  await db.insertMany(BoardTable, items);
+  await db.insert(BoardTable, items);
 
   const { results } = await db.select(BoardTable, { id: BoardTable.$id });
 
