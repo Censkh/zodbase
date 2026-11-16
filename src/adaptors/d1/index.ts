@@ -33,6 +33,15 @@ export default class D1Adaptor extends SqliteAdaptor<D1Database> {
     return super.isInternalTable(name) || name.startsWith("_cf_");
   }
 
+  // One D1 batch: a single round trip for all of them.
+  protected override async executeReads(statements: Statement[]): Promise<SqlResult[]> {
+    if (statements.length === 0) return [];
+    const results = await this.driver.batch(
+      statements.map((statement) => prepare(this.driver, statement[TO_SQL_SYMBOL]())),
+    );
+    return results.map(({ results }) => this.mapResult({ results, first: results[0] }));
+  }
+
   async execute(statement: Statement): Promise<SqlResult> {
     if (typeof statement?.[TO_SQL_SYMBOL] !== "function") {
       throw new Error("Invalid statement");

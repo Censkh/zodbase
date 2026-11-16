@@ -27,6 +27,15 @@ export interface SchemaTableInfo {
   indexes: SchemaIndexInfo[];
 }
 
+/**
+ * A table as the database holds it, in the detail syncing needs: its columns as `fetchTableColumns`
+ * reads them, and its secondary indexes and unique constraints as `SchemaTableInfo` lists them.
+ */
+export interface LiveTableSchema {
+  columns: TableColumnInfo[];
+  indexes: SchemaIndexInfo[];
+}
+
 export interface SchemaIndexInfo {
   name: string;
   unique: boolean;

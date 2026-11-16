@@ -44,7 +44,14 @@ import type {
   ValueOfTable,
 } from "./QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL, type ToSql } from "./Statement";
-import { getPrimaryKey, type SchemaDrift, type SchemaTableInfo, type Table, type TableIndex } from "./Table";
+import {
+  getPrimaryKey,
+  type SchemaDrift,
+  type SchemaTableInfo,
+  type Table,
+  type TableColumnInfo,
+  type TableIndex,
+} from "./Table";
 import { isZodRequired, isZodTypeExtends } from "./ZodUtils";
 
 export * from "./index.common";
@@ -194,6 +201,7 @@ const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): Data
     [RESOLVE_ADAPTOR]: getAdaptor,
     createTable: call("createTable"),
     fetchTableColumns: call("fetchTableColumns"),
+    fetchLiveSchema: call("fetchLiveSchema"),
     syncTableIndexes: call("syncTableIndexes"),
     syncTableLocality: call("syncTableLocality"),
     processDiff: call("processDiff"),
@@ -550,7 +558,7 @@ export class Database {
   async syncTable<TTable extends Table>(table: TTable): Promise<void> {
     await this.options.adaptor.createTable(table);
 
-    const diff = await this.diffTable(table);
+    const diff = this.diffTable(table, (await this.options.adaptor.fetchTableColumns(table)).results);
 
     if (diff.fields.length > 0 || diff.primaryKey) {
       await this.adaptor.processDiff(table, diff);
@@ -560,6 +568,26 @@ export class Database {
       await this.adaptor.syncTableIndexes(table);
     }
     await this.adaptor.syncTableLocality(table);
+  }
+
+  /**
+   * Syncs each table as `syncTable` would. Where the adaptor reads the whole schema at once
+   * (`fetchLiveSchema`), a table that already has its columns and indexes costs no further round
+   * trips, so syncing an up-to-date schema takes a few queries rather than several per table.
+   */
+  async syncTables(tables: readonly Table[]): Promise<void> {
+    const live = await this.adaptor.fetchLiveSchema();
+    for (const table of tables) {
+      const current = live?.get(String(table.id));
+      const diff = current && this.diffTable(table, current.columns);
+      if (!current || !diff || diff.fields.length > 0 || diff.primaryKey) {
+        await this.syncTable(table);
+        continue;
+      }
+      const indexes = new Set(current.indexes.map((index) => index.name));
+      if (table.indexes.some((index) => !indexes.has(index.id))) await this.adaptor.syncTableIndexes(table);
+      await this.adaptor.syncTableLocality(table);
+    }
   }
 
   /** Every table in the database's current schema: its columns, indexes and unique constraints. */
@@ -602,18 +630,16 @@ export class Database {
     return this.options.adaptor;
   }
 
-  private async diffTable<TTable extends Table>(table: TTable): Promise<TableDiff> {
-    const tableRemoteSchema = await this.options.adaptor.fetchTableColumns(table);
-
+  private diffTable<TTable extends Table>(table: TTable, remoteColumns: readonly TableColumnInfo[]): TableDiff {
     const diff: TableDiff = {
       fields: [],
     };
 
-    if (tableRemoteSchema.results.length === 0) {
+    if (remoteColumns.length === 0) {
       return diff;
     }
 
-    for (const column of tableRemoteSchema.results) {
+    for (const column of remoteColumns) {
       const field = Object.entries(table.fields).find(([key]) => key === column.name)?.[1];
       if (!field) {
         diff.fields.push({ key: column.name, type: "removed" });
@@ -622,9 +648,7 @@ export class Database {
 
     // A one-column key keeps its own field's change; any other key change is the table's.
     const expectedPrimaryKey = getPrimaryKey(table);
-    const remotePrimaryKey = tableRemoteSchema.results
-      .filter((column) => column.primaryKey)
-      .map((column) => column.name);
+    const remotePrimaryKey = remoteColumns.filter((column) => column.primaryKey).map((column) => column.name);
     const samePrimaryKey =
       remotePrimaryKey.length === expectedPrimaryKey.length &&
       expectedPrimaryKey.every((key) => remotePrimaryKey.includes(key));
@@ -632,7 +656,7 @@ export class Database {
 
     for (const [key, value] of Object.entries(table.fields)) {
       const field = value as SingleFieldBinding;
-      const column = tableRemoteSchema.results.find((column) => column.name === key);
+      const column = remoteColumns.find((column) => column.name === key);
       if (!column) {
         diff.fields.push({
           key: field.key,
@@ -666,7 +690,7 @@ export class Database {
         }
         const foreignKeyMeta = getMetaItem(field.schema, foreignKey);
         if (expectedPrimaryKey.length === 1 && expectedPrimaryKey[0] === key && !column.primaryKey) {
-          if (tableRemoteSchema.results.some((existingColumn) => existingColumn.primaryKey)) {
+          if (remoteColumns.some((existingColumn) => existingColumn.primaryKey)) {
             throw new Error(
               `[zodbase] Cannot add primary key '${key}' to '${String(table.id)}': another primary key already exists`,
             );

@@ -30,7 +30,7 @@ import { compileRelationalQuery, type SelectDialect } from "./RelationalQuery";
 import { divideSql, SqlExpression } from "./SqlExpression";
 import { type Statement, TO_SQL_SYMBOL } from "./Statement";
 import { canShareSubquery, isSubquery } from "./Subquery";
-import { getPrimaryKey, type SchemaTableInfo, type TableIndex } from "./Table";
+import { getPrimaryKey, type LiveTableSchema, type SchemaTableInfo, type TableIndex } from "./Table";
 
 export interface DatabaseAdaptorOptions<TDriver = any> {
   driver: TDriver;
@@ -463,6 +463,15 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   /** Every table in the current schema, as `SchemaTableInfo` describes it. Read-only. */
   describeSchema(): Promise<SchemaTableInfo[]> {
     throw new Error("This adaptor does not support schema introspection");
+  }
+
+  /**
+   * Every table in the current schema by name, with its columns and indexes, read in a few round
+   * trips for all tables at once; undefined when the adaptor can only read them table by table, so
+   * `syncTables` syncs each table on its own. Read-only.
+   */
+  async fetchLiveSchema(): Promise<Map<string, LiveTableSchema> | undefined> {
+    return undefined;
   }
 
   abstract fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>>;

@@ -29,7 +29,7 @@ import {
 } from "../../QueryBuilder";
 import { isRelationalQuery } from "../../RelationalQuery";
 import type { Statement } from "../../Statement";
-import type { SchemaTableInfo, TableIndex } from "../../Table";
+import type { LiveTableSchema, SchemaTableInfo, TableIndex } from "../../Table";
 
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
 
@@ -265,23 +265,59 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
   }
 
   override async describeSchema(): Promise<SchemaTableInfo[]> {
+    return [...(await this.fetchLiveSchema()).entries()].map(([name, { columns, indexes }]) => ({
+      name,
+      columns: columns.map((column) => column.name),
+      indexes,
+    }));
+  }
+
+  /** Runs read-only statements, in one round trip where the driver can batch them. */
+  protected async executeReads(statements: Statement[]): Promise<SqlResult[]> {
+    const results: SqlResult[] = [];
+    for (const statement of statements) results.push(await this.execute(statement));
+    return results;
+  }
+
+  // Every table's PRAGMA reads go together (executeReads): one round trip on D1, where reading them
+  // table by table takes two or three each.
+  override async fetchLiveSchema(): Promise<Map<string, LiveTableSchema>> {
     const { results } = await this.execute(raw("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"));
-    const tables: SchemaTableInfo[] = [];
-    for (const { name } of results as { name: string }[]) {
-      if (this.isInternalTable(name)) continue;
-      const columns = await this.execute(raw(`PRAGMA table_info(${quoteIdentifier(name)})`));
-      const indexes = await this.execute(raw(`PRAGMA index_list(${quoteIdentifier(name)})`));
-      tables.push({
-        name,
-        columns: columns.results.map((row: any) => String(row.name)),
+    const names = (results as { name: string }[]).map(({ name }) => name).filter((name) => !this.isInternalTable(name));
+    const pragmas = ["table_info", "foreign_key_list", "index_list"];
+    const reads = await this.executeReads(
+      names.flatMap((name) => pragmas.map((pragma) => raw(`PRAGMA ${pragma}(${quoteIdentifier(name)})`))),
+    );
+    const rows = (name: string, pragma: string) =>
+      reads[names.indexOf(name) * pragmas.length + pragmas.indexOf(pragma)]!.results as any[];
+    const schema = new Map<string, LiveTableSchema>();
+    for (const name of names) {
+      const foreignKeys = new Map(
+        rows(name, "foreign_key_list").map((row) => [
+          row.from,
+          { table: String(row.table), field: String(row.to), onDelete: normalizeForeignKeyAction(row.on_delete) },
+        ]),
+      );
+      schema.set(name, {
+        columns: rows(name, "table_info").map((row) => {
+          const foreignKey = foreignKeys.get(row.name) as TableColumnInfo["foreignKey"];
+          return {
+            name: String(row.name),
+            type: {} as any,
+            notNull: Number(row.notnull) === 1,
+            // pk is the column's position in the primary key, from 1; 0 for other columns.
+            primaryKey: Number(row.pk) > 0,
+            ...(foreignKey ? { foreignKey } : {}),
+          };
+        }),
         // A primary key's autoindex belongs to the table; UNIQUE constraints ("u") and created
         // indexes ("c") are reported.
-        indexes: indexes.results
-          .filter((row: any) => row.origin !== "pk")
-          .map((row: any) => ({ name: String(row.name), unique: Number(row.unique) === 1 })),
+        indexes: rows(name, "index_list")
+          .filter((row) => row.origin !== "pk")
+          .map((row) => ({ name: String(row.name), unique: Number(row.unique) === 1 })),
       });
     }
-    return tables;
+    return schema;
   }
 
   /** Tables the engine keeps for itself, such as `sqlite_sequence`. */
