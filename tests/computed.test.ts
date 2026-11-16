@@ -72,6 +72,19 @@ describe.each(TEST_DATABASE_FACTORIES)("computed columns: $name", ({ create, nam
     expect(upserted.first).toMatchObject({ id: "item_c2", name: "aged cheese", shelf: "cellar" });
   });
 
+  it("inserts a row that leaves the computed column out, and refuses one it can't be computed for", async () => {
+    const table = shelvedTable();
+    await context.db.syncTable(table);
+    const { first } = await context.db
+      .insert(table, { id: "item_a4", name: "rug" } as zod.input<typeof shelvedSchema>)
+      .returning();
+    expect(first).toEqual({ id: "item_a4", name: "rug", shelf: "attic" });
+    // No shelf has the code z: the row fails its schema before reaching the database.
+    expect(() => context.db.insert(table, { id: "item_z1", name: "ghost" } as zod.input<typeof shelvedSchema>)).toThrow(
+      zod.ZodError,
+    );
+  });
+
   it("finds nothing to change when a table with a computed column syncs again", async () => {
     const table = shelvedTable();
     await context.db.syncTable(table);

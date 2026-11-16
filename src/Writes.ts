@@ -148,7 +148,10 @@ export const createInsert = <TTable extends Table, TOne extends boolean>(
   if (subqueries && conflict) throw new Error("[zodbase] An insert of subquery values can't handle conflicts");
   const schema = table.schema as zod.ZodObject<any>;
   const rows = input.map((row) => {
-    if (!subqueries) return withComputed(table, schema.parse(row) as Record<string, unknown>);
+    // Computed before parsing, so a row needn't give a computed column, and one that can't be
+    // computed from it fails the schema.
+    if (!subqueries)
+      return schema.parse(withComputed(table, row as Record<string, unknown>)) as Record<string, unknown>;
     const expressions: Record<string, unknown> = {};
     const literals: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(row as object)) {
