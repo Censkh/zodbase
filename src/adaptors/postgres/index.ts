@@ -746,6 +746,9 @@ export default class PostgresAdaptor<
     const rows = values.map((value) =>
       Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([, item]) => item !== undefined)),
     );
+    // incoming(field) is the joined row's value.
+    const condition =
+      where && resolveIncoming(where, (field) => new SqlExpression(() => cast(String(field.key)), field.schema));
     for (const group of groupUpsertRows(rows, keys)) {
       const columns = Object.keys(group[0]!).filter((column) => !keys.includes(column));
       if (!columns.length) continue;
@@ -753,9 +756,6 @@ export default class PostgresAdaptor<
       await this.execute(
         sql`UPDATE ${table} SET ${raw(columns.map((column) => `${quoteIdentifier(column)} = ${cast(column)}`).join(", "))}
             FROM (VALUES ${raw(group.map((row) => `(${names.map((name) => this.valueToSql(row[name], true)).join(", ")})`).join(", "))})
-    // incoming(field) is the joined row's value.
-    const condition =
-      where && resolveIncoming(where, (field) => new SqlExpression(() => cast(String(field.key)), field.schema));
               AS v (${raw(names.map(quoteIdentifier).join(", "))})
             WHERE ${raw(keys.map((key) => `${quoteIdentifier(String(table.id))}.${quoteIdentifier(key)} = ${cast(key)}`).join(" AND "))}${
               condition ? sql` AND ${buildConditionSql(this, condition, true)}` : raw("")
