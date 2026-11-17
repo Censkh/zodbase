@@ -28,7 +28,7 @@ import type {
 import { isScalarSelect, SELECT_QUERY } from "./QueryBuilder";
 import type { QueryStatement } from "./QueryStatement";
 import { compileRelationalQuery, type SelectDialect } from "./RelationalQuery";
-import { divideSql, SqlExpression } from "./SqlExpression";
+import { divideSql, IncomingValue, SqlExpression } from "./SqlExpression";
 import { type Statement, TO_SQL_SYMBOL } from "./Statement";
 import { canShareSubquery, isSubquery } from "./Subquery";
 import { getPrimaryKey, type LiveTableSchema, type SchemaTableInfo, type TableIndex, writableFieldKeys } from "./Table";
@@ -66,11 +66,37 @@ export const groupUpsertRows = <TRow extends Record<string, unknown>>(
   return [...groups.values()];
 };
 
-/** The condition matching `row` on each of `fields`: its key, for an update of several rows. */
-export const keyCondition = (fields: readonly SingleFieldBinding<any, any>[], row: Record<string, unknown>) =>
-  fields
-    .map((field) => field.equals(row[String(field.key)] as any) as SelectCondition)
-    .reduce((all, condition) => all.and(condition));
+/** `condition` with each `incoming(field)` in it replaced by `replace(field)`. */
+export const resolveIncoming = (
+  condition: SelectCondition,
+  replace: (field: IncomingValue["field"]) => unknown,
+): SelectCondition => {
+  if ("conditions" in condition)
+    return { ...condition, conditions: condition.conditions.map((child) => child && resolveIncoming(child, replace)) };
+  if ("exists" in condition) return condition;
+  return condition.value instanceof IncomingValue ? { ...condition, value: replace(condition.value.field) } : condition;
+};
+
+/** The fields `incoming(…)` names in `condition`. */
+export const incomingFields = (condition: SelectCondition | undefined): string[] => {
+  if (!condition || "exists" in condition) return [];
+  if ("conditions" in condition) return condition.conditions.flatMap((child) => incomingFields(child));
+  return condition.value instanceof IncomingValue ? [String(condition.value.field.key)] : [];
+};
+
+/**
+ * The condition updating `row` in an update of several rows: its key, matched on each of `fields`,
+ * and `where`, if given, with `incoming(…)` taking the row's values.
+ */
+export const keyCondition = (
+  fields: readonly SingleFieldBinding<any, any>[],
+  row: Record<string, unknown>,
+  where?: SelectCondition,
+) =>
+  [
+    ...fields.map((field) => field.equals(row[String(field.key)] as any) as SelectCondition),
+    ...(where ? [resolveIncoming(where, (field) => row[String(field.key)])] : []),
+  ].reduce((all, condition) => all.and(condition));
 
 export default abstract class DatabaseAdaptor<TDriver = any> {
   private transactionQueue: Promise<void> = Promise.resolve();
@@ -341,7 +367,12 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
-  >(table: TTable, values: TValue[], fields: readonly SingleFieldBinding<TValue, TKey>[]): Promise<SqlResult<void, 0>>;
+  >(
+    table: TTable,
+    values: TValue[],
+    fields: readonly SingleFieldBinding<TValue, TKey>[],
+    where?: SelectCondition,
+  ): Promise<SqlResult<void, 0>>;
   abstract executeCount<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     fields: SingleFieldBinding<ValueOfTable<TTable>, TKey>[],

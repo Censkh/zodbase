@@ -81,6 +81,19 @@ Each record updates only the fields it supplies, and must include every key fiel
 await db.update(Placements, rows).by([Placements.$region, Placements.$id]);
 ```
 
+To update a record only where a condition also holds, add `.where(...)`. In it, `incoming(field)` is the value the record brings for that field, so a stored value can be compared with it. This moves each key's `lastUsedAt` forward, never back:
+
+```ts
+import { incoming } from "zodbase";
+
+await db
+  .update(ApiKeys, touches)
+  .by(ApiKeys.$id)
+  .where(ApiKeys.$lastUsedAt.equals(null).or(ApiKeys.$lastUsedAt.lessThan(incoming(ApiKeys.$lastUsedAt))));
+```
+
+Every record must give each field the condition compares with `incoming(...)`. An update with a condition can't use `.returning()`, since the records it skipped can't be told from those it changed. `incoming(...)` has no value anywhere else, and a query using it is rejected.
+
 On PostgreSQL and CockroachDB the records go as one statement per set of fields they change, joined to the table on the key, so the database writes them together rather than one round trip at a time. Other adaptors run one update per record.
 
 ## Delete with a condition

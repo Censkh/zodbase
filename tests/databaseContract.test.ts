@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as zod from "zod";
-import { createTable, Database, foreignKey, metaStore, primaryKey } from "../src";
+import { createTable, Database, foreignKey, incoming, metaStore, primaryKey } from "../src";
 import type DatabaseAdaptor from "../src/DatabaseAdaptor";
 import type { SelectQuery, SqlResult } from "../src/QueryBuilder";
 import type { Statement } from "../src/Statement";
@@ -289,6 +289,46 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
     expect(() =>
       db.update(Placements, [{ id: "a", label: "no region" }]).by([Placements.$region, Placements.$id]),
     ).toThrow("needs its region");
+  });
+
+  it("updates each row only where its condition holds against the value it brings", async () => {
+    const Touches = createTable({
+      id: "contract_touches",
+      schema: zod.object({
+        id: zod.string().meta(metaStore([primaryKey()])),
+        at: zod.number().nullable(),
+      }),
+    });
+    await db.syncTable(Touches);
+    await db.insert(Touches, [
+      { id: "older", at: 10 },
+      { id: "newer", at: 30 },
+      { id: "never", at: null },
+    ]);
+    await db
+      .update(Touches, [
+        { id: "older", at: 20 },
+        { id: "newer", at: 25 },
+        { id: "never", at: 5 },
+      ])
+      .by(Touches.$id)
+      // Forward only, or set where there's none.
+      .where(Touches.$at.equals(null).or(Touches.$at.lessThan(incoming(Touches.$at))));
+    const { results } = await db.select(Touches).orderBy(Touches.$id, "ASC");
+    expect(results).toEqual([
+      { id: "never", at: 5 },
+      { id: "newer", at: 30 },
+      { id: "older", at: 20 },
+    ]);
+    expect(() =>
+      db
+        .update(Touches, [{ id: "older" }])
+        .by(Touches.$id)
+        .where(Touches.$at.lessThan(incoming(Touches.$at))),
+    ).toThrow("needs its at");
+    await expect(
+      (async () => await db.select(Touches).where(Touches.$at.lessThan(incoming(Touches.$at))))(),
+    ).rejects.toThrow("has a value only in the .where(…) of an update of rows");
   });
 
   it("upsertMany inserts and updates rows by key, keeping a repeated key's last row", async () => {

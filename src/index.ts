@@ -762,7 +762,7 @@ export type { default as DatabaseAdaptor } from "./DatabaseAdaptor";
 export * from "./MetaTypes";
 export type { SelectCondition, SelectQueryBuilder } from "./QueryBuilder";
 export { type Compilable, union, withCtes } from "./QueryStatement";
-export { add, coalesce, divide, expression, scalar, subtract, sum } from "./SqlExpression";
+export { add, coalesce, divide, expression, IncomingValue, incoming, scalar, subtract, sum } from "./SqlExpression";
 export type {
   DeleteWrite,
   InsertSelectWrite,

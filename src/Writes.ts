@@ -1,7 +1,7 @@
 import type * as zod from "zod";
 import { findFieldMetaItems } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
-import { keyCondition } from "./DatabaseAdaptor";
+import { incomingFields, keyCondition } from "./DatabaseAdaptor";
 import { toLazyPromise } from "./LazyPromise";
 import { monotonicTimestamp, updatedAt } from "./MetaTypes";
 import type {
@@ -355,6 +355,13 @@ export interface UpdateRows<TTable extends Table> {
 }
 
 export interface UpdateRowsWrite<TTable extends Table> extends Write {
+  /**
+   * Updates a row only where `condition` also holds; several calls must all hold. `incoming(field)`
+   * in it is the value the row gives that field: `.where(T.$at.lessThan(incoming(T.$at)))` moves
+   * each row's `at` forward only. An update with a condition can't return its rows, since those it
+   * skipped can't be told from those it changed afterwards.
+   */
+  where(condition: SelectCondition<ValueOfTable<TTable>>): Omit<UpdateRowsWrite<TTable>, "returning">;
   /** Runs the update, returning the rows it changed (just `keys` of each, when given). */
   returning(...keys: BindingKeys<ValueOfTable<TTable>>[]): Write<SqlDefiniteResult<ValueOfTable<TTable>, number>>;
 }
@@ -365,6 +372,7 @@ export const createUpdateRows = <TTable extends Table>(
   table: TTable,
   rows: Partial<InputOfTable<TTable>>[],
   by: readonly SingleFieldBinding<ValueOfTable<TTable>>[],
+  where?: SelectCondition,
 ): UpdateRowsWrite<TTable> => {
   if (!by.length) throw new Error("[zodbase] An update of rows needs at least one key field");
   const keys = by.map((field) => String(field.key));
@@ -380,10 +388,14 @@ export const createUpdateRows = <TTable extends Table>(
     }
     return { ...found, ...(Object.keys(values).length ? parseUpdateValues(table, values) : {}) };
   });
+  for (const key of incomingFields(where))
+    for (const row of parsed)
+      if (row[key] === undefined)
+        throw new Error(`[zodbase] Each row of an update comparing with incoming(${key}) needs its ${key}`);
   const plan = (keys: readonly string[] | undefined): WritePlan => ({
     async run(target) {
       if (!parsed.length) return EMPTY;
-      const result = await target.executeUpdateMany(table, parsed as any, by as any);
+      const result = await target.executeUpdateMany(table, parsed as any, by as any, where && snapshotCondition(where));
       if (keys === undefined) return EMPTY;
       if (result.results.length) return pickKeys(result, keys);
       return pickKeys(
@@ -401,7 +413,8 @@ export const createUpdateRows = <TTable extends Table>(
     build: () => undefined,
   });
   return write(adaptor, plan(undefined), {
-    returning: (...keys: string[]) => write(adaptor, plan(keys.length ? keys : ["*"]), {}),
+    where: (next: SelectCondition) => createUpdateRows(adaptor, table, rows, by, conditionAnd(where, next)),
+    ...(where ? {} : { returning: (...keys: string[]) => write(adaptor, plan(keys.length ? keys : ["*"]), {}) }),
   }) as unknown as UpdateRowsWrite<TTable>;
 };
 

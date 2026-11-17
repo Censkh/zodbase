@@ -13,6 +13,7 @@ export const query = <T extends object>(table: Table<T>) => QueryBuilder<T> => {
 */
 import { join, type OrderDirection, raw, sql, type Table } from "./index";
 import { type Compilable, isCompilable, toQueryStatement } from "./QueryStatement";
+import type { IncomingValue } from "./SqlExpression";
 import { SqlExpression } from "./SqlExpression";
 import { type Statement, TO_SQL_SYMBOL, type ToSql } from "./Statement";
 
@@ -64,7 +65,9 @@ export interface SingleFieldBinding<
   TName extends string = string,
 > extends BaseFieldBinding<TValue, TKey, TName> {
   schema: zod.ZodType<TValue[TKey]>;
-  equals(value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined>): SelectFieldCondition<TValue, TKey>;
+  equals(
+    value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined> | IncomingValue<TValue[TKey]>,
+  ): SelectFieldCondition<TValue, TKey>;
 
   like(value: TValue[TKey]): SelectFieldCondition<TValue, TKey>;
 
@@ -78,21 +81,28 @@ export interface SingleFieldBinding<
   notMatches(pattern: string): SelectFieldCondition<TValue, TKey>;
 
   greaterThan(
-    value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined>,
+    value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined> | IncomingValue<TValue[TKey]>,
   ): SelectFieldCondition<TValue, TKey>;
 
-  lessThan(value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined>): SelectFieldCondition<TValue, TKey>;
+  lessThan(
+    value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined> | IncomingValue<TValue[TKey]>,
+  ): SelectFieldCondition<TValue, TKey>;
 
   greaterThanOrEquals(
-    value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined>,
+    value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined> | IncomingValue<TValue[TKey]>,
   ): SelectFieldCondition<TValue, TKey>;
 
   lessThanOrEquals(
-    value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined>,
+    value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined> | IncomingValue<TValue[TKey]>,
   ): SelectFieldCondition<TValue, TKey>;
 
   notEquals(
-    value: TValue[TKey] | FieldReference<TValue[TKey] | null | undefined> | undefined | null,
+    value:
+      | TValue[TKey]
+      | FieldReference<TValue[TKey] | null | undefined>
+      | IncomingValue<TValue[TKey]>
+      | undefined
+      | null,
   ): SelectFieldCondition<TValue, TKey>;
 
   in(values: TValue[TKey][] | Statement | Compilable): SelectFieldCondition<TValue, TKey>;

@@ -210,9 +210,14 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & z.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
-  >(table: TTable, values: TValue[], fields: readonly SingleFieldBinding<TValue, TKey>[]): Promise<SqlResult<void, 0>> {
+  >(
+    table: TTable,
+    values: TValue[],
+    fields: readonly SingleFieldBinding<TValue, TKey>[],
+    where?: SelectCondition,
+  ): Promise<SqlResult<void, 0>> {
     // node-mssql permits only one in-flight request on a transaction connection.
-    for (const value of values) await this.executeUpdate(table, value, keyCondition(fields, value) as any);
+    for (const value of values) await this.executeUpdate(table, value, keyCondition(fields, value, where) as any);
     return { results: [], first: undefined };
   }
 

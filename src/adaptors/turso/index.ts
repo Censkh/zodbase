@@ -2,7 +2,14 @@ import type { Client } from "@libsql/client";
 import type * as zod from "zod";
 import type DatabaseAdaptor from "../../DatabaseAdaptor";
 import { keyCondition } from "../../DatabaseAdaptor";
-import type { InputOfTable, SingleFieldBinding, SqlResult, StringKeys, ValueOfTable } from "../../QueryBuilder";
+import type {
+  InputOfTable,
+  SelectCondition,
+  SingleFieldBinding,
+  SqlResult,
+  StringKeys,
+  ValueOfTable,
+} from "../../QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
 import type { Table } from "../../Table";
 import SqliteAdaptor from "../sqlite";
@@ -43,9 +50,14 @@ export default class TursoAdaptor extends SqliteAdaptor<Client> {
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
-  >(table: TTable, values: TValue[], fields: readonly SingleFieldBinding<TValue, TKey>[]): Promise<SqlResult<void, 0>> {
+  >(
+    table: TTable,
+    values: TValue[],
+    fields: readonly SingleFieldBinding<TValue, TKey>[],
+    where?: SelectCondition,
+  ): Promise<SqlResult<void, 0>> {
     const statements = values.map((value) => {
-      return this.buildUpdateSql(table, value, keyCondition(fields, value) as any)[TO_SQL_SYMBOL]();
+      return this.buildUpdateSql(table, value, keyCondition(fields, value, where) as any)[TO_SQL_SYMBOL]();
     });
 
     await this.driver.batch(statements, "write");

@@ -4,6 +4,7 @@ import DatabaseAdaptor, {
   type DatabaseAdaptorOptions,
   groupUpsertRows,
   type PossiblySelectedResult,
+  resolveIncoming,
 } from "../../DatabaseAdaptor";
 import { quoteIdentifier } from "../../Escaping";
 import {
@@ -37,6 +38,7 @@ import {
   type ValueOfTable,
 } from "../../QueryBuilder";
 import { isRelationalQuery } from "../../RelationalQuery";
+import { SqlExpression } from "../../SqlExpression";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
 import { type SchemaTableInfo, type TableIndex, writableFieldKeys } from "../../Table";
 
@@ -714,7 +716,12 @@ export default class PostgresAdaptor<
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
-  >(table: TTable, values: TValue[], fields: readonly SingleFieldBinding<TValue, TKey>[]): Promise<SqlResult<void, 0>> {
+  >(
+    table: TTable,
+    values: TValue[],
+    fields: readonly SingleFieldBinding<TValue, TKey>[],
+    where?: SelectCondition,
+  ): Promise<SqlResult<void, 0>> {
     const startTimestamp = Date.now();
     const keys = fields.map((field) => String(field.key));
     const tableFields = table.fields as Record<string, { schema: zod.ZodType }>;
@@ -729,8 +736,13 @@ export default class PostgresAdaptor<
       await this.execute(
         sql`UPDATE ${table} SET ${raw(columns.map((column) => `${quoteIdentifier(column)} = ${cast(column)}`).join(", "))}
             FROM (VALUES ${raw(group.map((row) => `(${names.map((name) => this.valueToSql(row[name], true)).join(", ")})`).join(", "))})
+    // incoming(field) is the joined row's value.
+    const condition =
+      where && resolveIncoming(where, (field) => new SqlExpression(() => cast(String(field.key)), field.schema));
               AS v (${raw(names.map(quoteIdentifier).join(", "))})
-            WHERE ${raw(keys.map((key) => `${quoteIdentifier(String(table.id))}.${quoteIdentifier(key)} = ${cast(key)}`).join(" AND "))}`,
+            WHERE ${raw(keys.map((key) => `${quoteIdentifier(String(table.id))}.${quoteIdentifier(key)} = ${cast(key)}`).join(" AND "))}${
+              condition ? sql` AND ${buildConditionSql(this, condition, true)}` : raw("")
+            }`,
       );
     }
     return {

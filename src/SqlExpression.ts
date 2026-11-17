@@ -25,6 +25,24 @@ export class SqlExpression<T extends zod.ZodType = zod.ZodType> implements ToSql
   }
 }
 
+/**
+ * The value an update of rows (`update(table, rows).by(key)`) gives `field` for the row it is
+ * updating, for its `.where(…)` to compare a stored value with: `.where(T.$at.lessThan(incoming(T.$at)))`.
+ * Every row must give the field. Anywhere else it has no value, and building it throws.
+ */
+export class IncomingValue<T = unknown> extends SqlExpression {
+  constructor(readonly field: FieldReference<T>) {
+    super(() => {
+      throw new Error(
+        `[zodbase] incoming(${String(field.key)}) has a value only in the .where(…) of an update of rows`,
+      );
+    }, field.schema);
+  }
+}
+
+/** A field's value in the row an update of rows is updating (`IncomingValue`). */
+export const incoming = <T>(field: FieldReference<T> & ToSql) => new IncomingValue<T>(field);
+
 /** Trusted SQL projection with a schema for driver-value decoding. */
 export const expression = <T extends zod.ZodType>(statement: Statement, schema: T) =>
   new SqlExpression(statement, schema);

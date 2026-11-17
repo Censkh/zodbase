@@ -3,7 +3,14 @@ import type * as zod from "zod";
 import type DatabaseAdaptor from "../../DatabaseAdaptor";
 import type { DatabaseAdaptorOptions } from "../../DatabaseAdaptor";
 import { keyCondition } from "../../DatabaseAdaptor";
-import type { InputOfTable, SingleFieldBinding, SqlResult, StringKeys, ValueOfTable } from "../../QueryBuilder";
+import type {
+  InputOfTable,
+  SelectCondition,
+  SingleFieldBinding,
+  SqlResult,
+  StringKeys,
+  ValueOfTable,
+} from "../../QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
 import type { Table } from "../../Table";
 import SqliteAdaptor from "../sqlite";
@@ -68,11 +75,16 @@ export default class D1Adaptor extends SqliteAdaptor<D1Database> {
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
-  >(table: TTable, values: TValue[], fields: readonly SingleFieldBinding<TValue, TKey>[]): Promise<SqlResult<void, 0>> {
+  >(
+    table: TTable,
+    values: TValue[],
+    fields: readonly SingleFieldBinding<TValue, TKey>[],
+    where?: SelectCondition,
+  ): Promise<SqlResult<void, 0>> {
     const statements = values.map((value) => {
       return prepare(
         this.driver,
-        this.buildUpdateSql(table, value, keyCondition(fields, value) as any)[TO_SQL_SYMBOL](),
+        this.buildUpdateSql(table, value, keyCondition(fields, value, where) as any)[TO_SQL_SYMBOL](),
       );
     });
 
@@ -115,9 +127,14 @@ class D1BatchTransactionAdaptor extends D1Adaptor {
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
-  >(table: TTable, values: TValue[], fields: readonly SingleFieldBinding<TValue, TKey>[]): Promise<SqlResult<void, 0>> {
+  >(
+    table: TTable,
+    values: TValue[],
+    fields: readonly SingleFieldBinding<TValue, TKey>[],
+    where?: SelectCondition,
+  ): Promise<SqlResult<void, 0>> {
     for (const value of values) {
-      await this.execute(this.buildUpdateSql(table, value, keyCondition(fields, value) as any));
+      await this.execute(this.buildUpdateSql(table, value, keyCondition(fields, value, where) as any));
     }
     return { results: [], first: undefined };
   }

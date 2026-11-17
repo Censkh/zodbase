@@ -333,10 +333,15 @@ export default class MysqlAdaptor<
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
-  >(table: TTable, values: TValue[], fields: readonly SingleFieldBinding<TValue, TKey>[]): Promise<SqlResult<void, 0>> {
+  >(
+    table: TTable,
+    values: TValue[],
+    fields: readonly SingleFieldBinding<TValue, TKey>[],
+    where?: SelectCondition,
+  ): Promise<SqlResult<void, 0>> {
     const startTimestamp = Date.now();
     await Promise.all(
-      values.map((value) => this.execute(this.buildUpdateSql(table, value, keyCondition(fields, value) as any))),
+      values.map((value) => this.execute(this.buildUpdateSql(table, value, keyCondition(fields, value, where) as any))),
     );
     return { results: [], first: undefined, timings: { wallTimeMs: Date.now() - startTimestamp } };
   }
