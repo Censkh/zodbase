@@ -108,6 +108,22 @@ describe.each(TEST_DATABASE_FACTORIES)("writes: $name", ({ name, create }) => {
     ]);
   });
 
+  it("upserts rows that hold only their key, returning the existing row", async () => {
+    const Keys = createTable({
+      id: "writes_key",
+      schema: zod.object({ id: zod.string().meta(metaStore([primaryKey()])) }),
+    });
+    await db.syncTable(Keys);
+    await db.insert(Keys, { id: "a" });
+    const upserted = await db.insert(Keys, { id: "a" }).onConflict(Keys.$id).doUpdate().returning();
+    expect(upserted.results).toEqual([{ id: "a" }]);
+    await db
+      .insert(Keys, [{ id: "a" }, { id: "b" }])
+      .onConflict(Keys.$id)
+      .doUpdate();
+    expect((await db.select(Keys).orderBy(Keys.$id, "ASC")).results).toEqual([{ id: "a" }, { id: "b" }]);
+  });
+
   it("updates only the rows every where condition matches, returning them", async () => {
     await db.insert(Counters, counters);
     const updated = await db

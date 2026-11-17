@@ -66,6 +66,19 @@ const TYPE_ORDERING: Record<FieldDiffType, number> = {
   removed: 2,
 };
 
+/**
+ * What an upsert sets on a conflict: each column but the conflict key's, which the existing row
+ * already has. Setting a key column, even to its own value, is a key change to CockroachDB, which then
+ * checks the key is unique in every region of a regional-by-row table and gives up the auto-commit
+ * fast path. A row of only key columns sets its first, so the upsert still returns the row.
+ */
+const conflictAssignments = (columns: readonly string[], keys: readonly string[]) => {
+  const assigned = columns.filter((column) => !keys.includes(column));
+  return (assigned.length ? assigned : keys.slice(0, 1))
+    .map((column) => `${quoteIdentifier(column)} = excluded.${quoteIdentifier(column)}`)
+    .join(", ");
+};
+
 export default class PostgresAdaptor<
   TDriver extends PostgresClient | PostgresPool = PostgresClient | PostgresPool,
 > extends DatabaseAdaptor<TDriver> {
@@ -225,9 +238,10 @@ export default class PostgresAdaptor<
       ? ""
       : conflict.action === "nothing"
         ? ` ON CONFLICT (${target}) DO NOTHING`
-        : ` ON CONFLICT (${target}) DO UPDATE SET ${columns
-            .map((key) => `${quoteIdentifier(key)} = excluded.${quoteIdentifier(key)}`)
-            .join(", ")}`;
+        : ` ON CONFLICT (${target}) DO UPDATE SET ${conflictAssignments(
+            columns,
+            conflict.fields.map((field) => String(field.key)),
+          )}`;
     return sql`INSERT INTO ${table.id} (${raw(columns.map(quoteIdentifier))})
                           VALUES ${raw(this.valueTuples(rows, columns))}${raw(onConflict)}${raw(
                             options.returning ? ` RETURNING ${this.selectFields(table)}` : "",
@@ -434,7 +448,12 @@ export default class PostgresAdaptor<
       await this.execute(sql`INSERT INTO ${table.id} (${raw(keys.map(quoteIdentifier))})
                              VALUES ${raw(rows.map((row) => sql`(${raw(keys.map((key) => valueToSql(row[key], true)))})`))}
                              ON CONFLICT (${target})
-                             DO UPDATE SET ${raw(keys.map((key) => raw(`${quoteIdentifier(key)} = excluded.${quoteIdentifier(key)}`)))}`);
+                             DO UPDATE SET ${raw(
+                               conflictAssignments(
+                                 keys,
+                                 fields.map((field) => String(field.key)),
+                               ),
+                             )}`);
     }
     return { results: [], first: undefined };
   }
@@ -498,15 +517,13 @@ export default class PostgresAdaptor<
     const target = raw(fields.map((field) => quoteIdentifier(String(field.key))).join(", "));
     return sql`INSERT INTO ${table.id} (${raw(Object.keys(values).map(quoteIdentifier))})
                VALUES (${raw(Object.values(values).map((v) => valueToSql(v, true)))}) ON CONFLICT (${target})
-                 DO
-    UPDATE SET ${raw(
-      Object.entries(values).map(
-        ([key, value]) => sql`${raw(quoteIdentifier(key))}
-      =
-      ${raw(valueToSql(value, true))}`,
-      ),
-    )}
-      RETURNING ${raw(this.selectFields(table))}`;
+               DO UPDATE SET ${raw(
+                 conflictAssignments(
+                   Object.keys(values),
+                   fields.map((field) => String(field.key)),
+                 ),
+               )}
+               RETURNING ${raw(this.selectFields(table))}`;
   }
 
   async processDiff(table: Table, diff: TableDiff): Promise<void> {
