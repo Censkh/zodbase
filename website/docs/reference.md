@@ -37,7 +37,7 @@ Every write is a builder: awaiting it runs it.
 | `.onConflict(key).doNothing()` / `.doUpdate()` | Skips rows that conflict on `key`, or updates the existing rows to them. |
 | `db.insert(table).fromSelect(select)` | Inserts what a select gives; its projection names the columns. |
 | `db.update(table, patch).where(condition)` | Updates supplied fields; values can be expressions such as `add(field, 1)`. |
-| `db.updateEach(table, patches, { by })` | Matches each patch using a field. |
+| `db.update(table, records).by(key)` | Updates each record found by a key field, or a compound key's fields. |
 | `db.delete(table).where(condition)` | Deletes only with an explicit condition. |
 | `.returning(...keys)` | Runs the write, returning the stored rows (or just `keys`). |
 | `db.batch([...writes])` | Runs the writes atomically, in one round trip on PostgreSQL and CockroachDB. |

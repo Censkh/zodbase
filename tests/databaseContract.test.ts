@@ -232,14 +232,12 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
     await db.insert(PeopleTable, people[0]);
     await db.insert(PeopleTable, people.slice(1));
     await db.update(PeopleTable, { age: 37 }).where(PeopleTable.$id.equals("1"));
-    await db.updateEach(
-      PeopleTable,
-      [
+    await db
+      .update(PeopleTable, [
         { id: "2", age: 46 },
         { id: "3", age: 29 },
-      ],
-      { by: PeopleTable.$id },
-    );
+      ])
+      .by(PeopleTable.$id);
     await db
       .insert(PeopleTable, { id: "4", name: "Margaret Hamilton", age: 46, nickname: "Maggie" })
       .onConflict(PeopleTable.$id)
@@ -254,6 +252,43 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
       { id: "2", name: "Grace", age: 46 },
       { id: "4", name: "Margaret Hamilton", age: 46 },
     ]);
+  });
+
+  it("updates each row by a compound key to its own values, leaving the fields it omits", async () => {
+    const Placements = createTable({
+      id: "contract_placements",
+      schema: zod.object({
+        region: zod.string(),
+        id: zod.string(),
+        label: zod.string(),
+        tags: zod.array(zod.string()),
+        score: zod.number(),
+      }),
+      primaryKey: ["region", "id"],
+    });
+    await db.syncTable(Placements);
+    await db.insert(Placements, [
+      { region: "eu", id: "a", label: "first", tags: ["x"], score: 1 },
+      { region: "us", id: "a", label: "second", tags: ["y"], score: 2 },
+      { region: "eu", id: "b", label: "third", tags: [], score: 3 },
+    ]);
+    await db
+      .update(Placements, [
+        // Rows that change different fields, and a key that matches no row.
+        { region: "eu", id: "a", label: "renamed", tags: ["x", "z"] },
+        { region: "us", id: "a", score: 20 },
+        { region: "us", id: "b", label: "absent" },
+      ])
+      .by([Placements.$region, Placements.$id]);
+    const { results } = await db.select(Placements).orderBy(Placements.$region, "ASC").orderBy(Placements.$id, "ASC");
+    expect(results).toEqual([
+      { region: "eu", id: "a", label: "renamed", tags: ["x", "z"], score: 1 },
+      { region: "eu", id: "b", label: "third", tags: [], score: 3 },
+      { region: "us", id: "a", label: "second", tags: ["y"], score: 20 },
+    ]);
+    expect(() =>
+      db.update(Placements, [{ id: "a", label: "no region" }]).by([Placements.$region, Placements.$id]),
+    ).toThrow("needs its region");
   });
 
   it("upsertMany inserts and updates rows by key, keeping a repeated key's last row", async () => {
@@ -364,11 +399,11 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
 
   it("treats empty bulk operations as no-ops", async () => {
     expect(await db.insert(PeopleTable, [])).toEqual({ results: [], first: undefined });
-    expect(await db.updateEach(PeopleTable, [], { by: PeopleTable.$id })).toMatchObject({
+    expect(await db.update(PeopleTable, []).by(PeopleTable.$id)).toMatchObject({
       results: [],
       first: undefined,
     });
-    expect(await db.updateEach(PeopleTable, [], { by: PeopleTable.$id }).returning()).toEqual({
+    expect(await db.update(PeopleTable, []).by(PeopleTable.$id).returning()).toEqual({
       results: [],
       first: undefined,
     });

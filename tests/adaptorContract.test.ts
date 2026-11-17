@@ -95,7 +95,7 @@ describe("adaptor execution contract", () => {
     await adaptor.execute(sql`DELETE FROM example`);
 
     const Table = createTable({ id: "example", schema: zod.object({ id: zod.string(), name: zod.string() }) });
-    await adaptor.executeUpdateMany(Table, [{ id: "1", name: "Ada" }], Table.$id);
+    await adaptor.executeUpdateMany(Table, [{ id: "1", name: "Ada" }], [Table.$id]);
     expect(preparedSql).toHaveLength(3);
     expect(executionMethods).toEqual(["all", "run"]);
     expect(batchedStatements[0]).toHaveLength(1);
@@ -287,7 +287,7 @@ describe("adaptor execution contract", () => {
     });
 
     const Table = createTable({ id: "example", schema: zod.object({ id: zod.string(), name: zod.string() }) });
-    await adaptor.executeUpdateMany(Table, [{ id: "1", name: "Ada" }], Table.$id);
+    await adaptor.executeUpdateMany(Table, [{ id: "1", name: "Ada" }], [Table.$id]);
     expect(executed).toEqual(["SELECT * FROM example"]);
     expect(batches[0]).toHaveLength(1);
     expect(batchModes).toEqual(["write"]);

@@ -1,4 +1,5 @@
 import type * as zod from "zod";
+import { keyCondition } from "../../DatabaseAdaptor";
 import type { InputOfTable, SingleFieldBinding, SqlResult, StringKeys, ValueOfTable } from "../../QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
 import type { Table } from "../../Table";
@@ -55,11 +56,11 @@ export default class ExpoSQLiteAdaptor extends SqliteAdaptor<ExpoSQLiteDatabase>
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
-  >(table: TTable, values: TValue[], field: SingleFieldBinding<TValue, TKey>): Promise<SqlResult<void, 0>> {
+  >(table: TTable, values: TValue[], fields: readonly SingleFieldBinding<TValue, TKey>[]): Promise<SqlResult<void, 0>> {
     // Execute updates sequentially for expo-sqlite
     // (expo-sqlite doesn't have batch support like D1)
     for (const value of values) {
-      const sql = this.buildUpdateSql(table, value, field.equals(value[field.key] as any) as any)[TO_SQL_SYMBOL]();
+      const sql = this.buildUpdateSql(table, value, keyCondition(fields, value) as any)[TO_SQL_SYMBOL]();
       await this.driver.runAsync(sql);
     }
 

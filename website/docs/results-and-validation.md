@@ -15,7 +15,7 @@ console.log(result.first);   // First record, or undefined
 
 ## Validation happens on writes
 
-`insert` (with or without `onConflict`) parses complete records through the Zod table schema. `update` and `updateEach` validate the supplied fields while preserving omitted fields. Put both construction and awaiting of an operation inside your error-handling block when you need to catch validation and driver failures.
+`insert` (with or without `onConflict`) parses complete records through the Zod table schema. `update` validates the supplied fields while preserving omitted fields. Put both construction and awaiting of an operation inside your error-handling block when you need to catch validation and driver failures.
 
 ```ts
 try {

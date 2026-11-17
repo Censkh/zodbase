@@ -1,4 +1,5 @@
 import type * as zod from "zod";
+import { keyCondition } from "../../DatabaseAdaptor";
 import type { InputOfTable, SingleFieldBinding, SqlResult, StringKeys, ValueOfTable } from "../../QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
 import type { Table } from "../../Table";
@@ -35,9 +36,9 @@ export default class BetterSqlite3Adaptor extends SqliteAdaptor<BetterSqlite3Dat
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
-  >(table: TTable, values: TValue[], field: SingleFieldBinding<TValue, TKey>): Promise<SqlResult<void, 0>> {
+  >(table: TTable, values: TValue[], fields: readonly SingleFieldBinding<TValue, TKey>[]): Promise<SqlResult<void, 0>> {
     for (const value of values) {
-      await this.execute(this.buildUpdateSql(table, value, field.equals(value[field.key] as any) as any));
+      await this.execute(this.buildUpdateSql(table, value, keyCondition(fields, value) as any));
     }
 
     return {

@@ -124,7 +124,7 @@ describe.each(TEST_DATABASE_FACTORIES)("SQL Escaping for $name", ({ create }) =>
       { id: "1", data: evilStrings[0] },
       { id: "2", data: evilStrings[1] },
     ];
-    await db.updateEach(TestTable, updatedItems as any, { by: TestTable.$id as any });
+    await db.update(TestTable, updatedItems as any).by(TestTable.$id as any);
 
     const { results } = await db.select(TestTable).where(TestTable.$id.in(["1", "2"]));
     // sort to ensure order

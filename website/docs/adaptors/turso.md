@@ -29,7 +29,7 @@ For local development, use a file URL such as `"file:app.db"` and omit the remot
 
 `db.transaction()` opens a libSQL `"write"` transaction. Operations on the callback's `tx` instance use that transaction. It commits on success, rolls back on error, and closes the transaction handle in either case. Nested transactions are rejected.
 
-`updateEach` sends the generated updates through `driver.batch(statements, "write")`. Reads map the driver's `rows` into Zodbase's result shape.
+An update of several records (`update(table, records).by(key)`) sends the generated updates through `driver.batch(statements, "write")`. Reads map the driver's `rows` into Zodbase's result shape.
 
 ## Schema changes and cleanup
 

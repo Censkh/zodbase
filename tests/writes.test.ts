@@ -134,14 +134,12 @@ describe.each(TEST_DATABASE_FACTORIES)("writes: $name", ({ name, create }) => {
 
   it("updates each row matching its key to its own values", async () => {
     await db.insert(Counters, counters);
-    await db.updateEach(
-      Counters,
-      [
+    await db
+      .update(Counters, [
         { id: "a", count: 5 },
         { id: "c", count: 7 },
-      ],
-      { by: Counters.$id },
-    );
+      ])
+      .by(Counters.$id);
     expect((await stored()).map((row) => row.count)).toEqual([5, 2, 7]);
   });
 

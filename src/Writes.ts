@@ -1,6 +1,7 @@
 import type * as zod from "zod";
 import { findFieldMetaItems } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
+import { keyCondition } from "./DatabaseAdaptor";
 import { toLazyPromise } from "./LazyPromise";
 import { monotonicTimestamp, updatedAt } from "./MetaTypes";
 import type {
@@ -341,19 +342,44 @@ export const createUpdate = <TTable extends Table>(
   }) as unknown as UpdateWrite<TTable>;
 };
 
-export interface UpdateEachWrite<TTable extends Table> extends Write {
-  /** Runs the updates, returning the rows they changed (just `keys` of each, when given). */
+/** `update(table, rows)`: each row's own values, waiting for the key that finds its row. */
+export interface UpdateRows<TTable extends Table> {
+  /**
+   * Updates each row whose `key` (a field, or the fields of a key in order) matches one of the
+   * rows to that row's other values; the fields a row leaves out stay as they are. A row matching
+   * no row changes nothing, and a key given more than once keeps its last row.
+   */
+  by(
+    key: SingleFieldBinding<ValueOfTable<TTable>> | readonly SingleFieldBinding<ValueOfTable<TTable>>[],
+  ): UpdateRowsWrite<TTable>;
+}
+
+export interface UpdateRowsWrite<TTable extends Table> extends Write {
+  /** Runs the update, returning the rows it changed (just `keys` of each, when given). */
   returning(...keys: BindingKeys<ValueOfTable<TTable>>[]): Write<SqlDefiniteResult<ValueOfTable<TTable>, number>>;
 }
 
-/** Updates each row matching its `by` field's value to that row's other values. */
-export const createUpdateEach = <TTable extends Table>(
+/** Updates each of `rows` found by its `by` fields to its other values. */
+export const createUpdateRows = <TTable extends Table>(
   adaptor: () => DatabaseAdaptor,
   table: TTable,
   rows: Partial<InputOfTable<TTable>>[],
-  by: SingleFieldBinding<ValueOfTable<TTable>>,
-): UpdateEachWrite<TTable> => {
-  const parsed = rows.map((row) => parseUpdateValues(table, row as Record<string, unknown>));
+  by: readonly SingleFieldBinding<ValueOfTable<TTable>>[],
+): UpdateRowsWrite<TTable> => {
+  if (!by.length) throw new Error("[zodbase] An update of rows needs at least one key field");
+  const keys = by.map((field) => String(field.key));
+  // A row's key only finds it, as a condition would: stored rows may hold keys their schema no
+  // longer accepts. Only the values it writes are parsed.
+  const parsed = rows.map((row) => {
+    const values = { ...(row as Record<string, unknown>) };
+    const found: Record<string, unknown> = {};
+    for (const key of keys) {
+      if (values[key] === undefined) throw new Error(`[zodbase] Each row of an update by ${key} needs its ${key}`);
+      found[key] = values[key];
+      delete values[key];
+    }
+    return { ...found, ...(Object.keys(values).length ? parseUpdateValues(table, values) : {}) };
+  });
   const plan = (keys: readonly string[] | undefined): WritePlan => ({
     async run(target) {
       if (!parsed.length) return EMPTY;
@@ -364,7 +390,7 @@ export const createUpdateEach = <TTable extends Table>(
         await target.executeSelect({
           table,
           fields: [{ table, key: "*" } as any],
-          where: by.in(parsed.map((row) => row[String(by.key)]) as any) as SelectCondition,
+          where: parsed.map((row) => keyCondition(by, row)).reduce((any, condition) => any.or(condition)),
           orderBy: [],
           limit: undefined,
           offset: undefined,
@@ -376,7 +402,7 @@ export const createUpdateEach = <TTable extends Table>(
   });
   return write(adaptor, plan(undefined), {
     returning: (...keys: string[]) => write(adaptor, plan(keys.length ? keys : ["*"]), {}),
-  }) as unknown as UpdateEachWrite<TTable>;
+  }) as unknown as UpdateRowsWrite<TTable>;
 };
 
 export interface DeleteWrite<TTable extends Table> extends Write {

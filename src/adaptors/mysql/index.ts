@@ -1,7 +1,11 @@
 import type { Connection, Pool, RowDataPacket } from "mysql2/promise";
 import * as zod from "zod";
 import { getMetaItem, type ZodMetaItem } from "zod-meta";
-import DatabaseAdaptor, { type DatabaseAdaptorOptions, type PossiblySelectedResult } from "../../DatabaseAdaptor";
+import DatabaseAdaptor, {
+  type DatabaseAdaptorOptions,
+  keyCondition,
+  type PossiblySelectedResult,
+} from "../../DatabaseAdaptor";
 import { quoteMysqlIdentifier } from "../../Escaping";
 import {
   type BackfillOptions,
@@ -329,12 +333,10 @@ export default class MysqlAdaptor<
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
-  >(table: TTable, values: TValue[], field: SingleFieldBinding<TValue, TKey>): Promise<SqlResult<void, 0>> {
+  >(table: TTable, values: TValue[], fields: readonly SingleFieldBinding<TValue, TKey>[]): Promise<SqlResult<void, 0>> {
     const startTimestamp = Date.now();
     await Promise.all(
-      values.map((value) =>
-        this.execute(this.buildUpdateSql(table, value, field.equals(value[field.key] as any) as any)),
-      ),
+      values.map((value) => this.execute(this.buildUpdateSql(table, value, keyCondition(fields, value) as any))),
     );
     return { results: [], first: undefined, timings: { wallTimeMs: Date.now() - startTimestamp } };
   }

@@ -64,18 +64,24 @@ await db.update(Projects, { assetCount: add(Projects.$assetCount, 1) }).where(Pr
 
 ## Update several records by a key
 
+Give `update` an array of records and name the key that finds each one with `.by(...)`:
+
 ```ts
-await db.updateEach(
-  Users,
-  [
+await db
+  .update(Users, [
     { id: "ada", active: false },
     { id: "grace", name: "Grace Hopper" },
-  ],
-  { by: Users.$id },
-);
+  ])
+  .by(Users.$id);
 ```
 
-Include the key in every item. Each item updates only its supplied fields.
+Each record updates only the fields it supplies, and must include every key field. A record whose key matches no row changes nothing; a key given more than once keeps its last record. For a compound key, pass its fields in order:
+
+```ts
+await db.update(Placements, rows).by([Placements.$region, Placements.$id]);
+```
+
+On PostgreSQL and CockroachDB the records go as one statement per set of fields they change, joined to the table on the key, so the database writes them together rather than one round trip at a time. Other adaptors run one update per record.
 
 ## Delete with a condition
 

@@ -69,14 +69,11 @@ describe.each(TEST_DATABASE_FACTORIES)("partial update defaults: $name", ({ crea
 
   it("preserves omitted values separately for each bulk update", async () => {
     await database
-      .updateEach(
-        table,
-        [
-          { id: "first", name: "  Updated  " },
-          { id: "second", credits: 40 },
-        ],
-        { by: table.$id },
-      )
+      .update(table, [
+        { id: "first", name: "  Updated  " },
+        { id: "second", credits: 40 },
+      ])
+      .by(table.$id)
       .returning();
     expect((await database.select(table).orderBy(table.$id, "ASC")).results).toMatchObject([
       { id: "first", name: "Updated", credits: 25, note: "kept" },

@@ -7,14 +7,14 @@ import {
   createInsert,
   createInsertSelect,
   createUpdate,
-  createUpdateEach,
+  createUpdateRows,
   type DeleteWrite,
   type InsertSelectWrite,
   type InsertWrite,
   isWrite,
   runBatch,
   type SubqueryInsertWrite,
-  type UpdateEachWrite,
+  type UpdateRows,
   type UpdateWrite,
   type Write,
   type WriteResult,
@@ -526,18 +526,19 @@ export class Database {
       : createInsert(adaptor, table, [values], true);
   }
 
+  /** Updates each row `.by(key)` finds to that row's own values. */
+  update<TTable extends Table>(table: TTable, rows: Partial<InputOfTable<TTable>>[]): UpdateRows<TTable>;
   /** Updates the rows `.where(…)` matches to `values`; running it without a condition throws. */
-  update<TTable extends Table>(table: TTable, values: UpdateValues<TTable>): UpdateWrite<TTable> {
-    return createUpdate(() => this.options.adaptor, table, values);
-  }
-
-  /** Updates each row whose `by` field matches one of `rows` to that row's other values. */
-  updateEach<TTable extends Table>(
+  update<TTable extends Table>(table: TTable, values: UpdateValues<TTable>): UpdateWrite<TTable>;
+  update<TTable extends Table>(
     table: TTable,
-    rows: Partial<InputOfTable<TTable>>[],
-    { by }: { by: SingleFieldBinding<ValueOfTable<TTable>> },
-  ): UpdateEachWrite<TTable> {
-    return createUpdateEach(() => this.options.adaptor, table, rows, by);
+    values: UpdateValues<TTable> | Partial<InputOfTable<TTable>>[],
+  ): UpdateWrite<TTable> | UpdateRows<TTable> {
+    const adaptor = () => this.options.adaptor;
+    if (!Array.isArray(values)) return createUpdate(adaptor, table, values);
+    return {
+      by: (key) => createUpdateRows(adaptor, table, values, Array.isArray(key) ? key : [key as any]),
+    } as UpdateRows<TTable>;
   }
 
   /**
@@ -766,7 +767,8 @@ export type {
   DeleteWrite,
   InsertSelectWrite,
   InsertWrite,
-  UpdateEachWrite,
+  UpdateRows,
+  UpdateRowsWrite,
   UpdateWrite,
   Write,
   WriteResult,

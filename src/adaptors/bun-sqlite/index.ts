@@ -1,5 +1,6 @@
 import type { Database as BunDatabase } from "bun:sqlite";
 import type * as zod from "zod";
+import { keyCondition } from "../../DatabaseAdaptor";
 import type { Table } from "../../index";
 import type { InputOfTable, SingleFieldBinding, SqlResult, StringKeys, ValueOfTable } from "../../QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
@@ -25,9 +26,9 @@ export default class BunSqliteAdaptor extends SqliteAdaptor<BunDatabase> {
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
-  >(table: TTable, values: TValue[], field: SingleFieldBinding<TValue, TKey>): Promise<SqlResult<void, 0>> {
+  >(table: TTable, values: TValue[], fields: readonly SingleFieldBinding<TValue, TKey>[]): Promise<SqlResult<void, 0>> {
     const statements = values.map((value) => {
-      return this.buildUpdateSql(table, value, field.equals(value[field.key] as any) as any);
+      return this.buildUpdateSql(table, value, keyCondition(fields, value) as any);
     });
     await Promise.all(statements.map((statement) => this.execute(statement)));
     return {

@@ -1,6 +1,6 @@
 import * as z from "zod";
 import { getMetaItem } from "zod-meta";
-import DatabaseAdaptor, { type PossiblySelectedResult } from "../../DatabaseAdaptor";
+import DatabaseAdaptor, { keyCondition, type PossiblySelectedResult } from "../../DatabaseAdaptor";
 import {
   backfill,
   computed,
@@ -210,9 +210,9 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & z.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
-  >(table: TTable, values: TValue[], field: SingleFieldBinding<TValue, TKey>): Promise<SqlResult<void, 0>> {
+  >(table: TTable, values: TValue[], fields: readonly SingleFieldBinding<TValue, TKey>[]): Promise<SqlResult<void, 0>> {
     // node-mssql permits only one in-flight request on a transaction connection.
-    for (const value of values) await this.executeUpdate(table, value, field.equals(value[field.key] as any) as any);
+    for (const value of values) await this.executeUpdate(table, value, keyCondition(fields, value) as any);
     return { results: [], first: undefined };
   }
 

@@ -66,6 +66,12 @@ export const groupUpsertRows = <TRow extends Record<string, unknown>>(
   return [...groups.values()];
 };
 
+/** The condition matching `row` on each of `fields`: its key, for an update of several rows. */
+export const keyCondition = (fields: readonly SingleFieldBinding<any, any>[], row: Record<string, unknown>) =>
+  fields
+    .map((field) => field.equals(row[String(field.key)] as any) as SelectCondition)
+    .reduce((all, condition) => all.and(condition));
+
 export default abstract class DatabaseAdaptor<TDriver = any> {
   private transactionQueue: Promise<void> = Promise.resolve();
 
@@ -335,7 +341,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
-  >(table: TTable, values: TValue[], field: SingleFieldBinding<TValue, TKey>): Promise<SqlResult<void, 0>>;
+  >(table: TTable, values: TValue[], fields: readonly SingleFieldBinding<TValue, TKey>[]): Promise<SqlResult<void, 0>>;
   abstract executeCount<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
     table: TTable,
     fields: SingleFieldBinding<ValueOfTable<TTable>, TKey>[],

@@ -703,19 +703,36 @@ export default class PostgresAdaptor<
       `;
   }
 
+  /**
+   * One statement per set of columns the rows change, joining the rows to the table on their key:
+   * `UPDATE t SET c = v.c FROM (VALUES …) AS v (k, c) WHERE t.k = v.k`. The database finds and
+   * writes them together, where statements of their own each wait on their own row (on CockroachDB,
+   * a write's consensus in its region). The values are cast to their columns' types, which a
+   * VALUES list doesn't carry.
+   */
   async executeUpdateMany<
     TTable extends Table,
     TValue extends Partial<InputOfTable<TTable>> & zod.ZodRawShape,
     TKey extends StringKeys<ValueOfTable<TTable>>,
-  >(table: TTable, values: TValue[], field: SingleFieldBinding<TValue, TKey>): Promise<SqlResult<void, 0>> {
+  >(table: TTable, values: TValue[], fields: readonly SingleFieldBinding<TValue, TKey>[]): Promise<SqlResult<void, 0>> {
     const startTimestamp = Date.now();
-    const statements = values.map((value) => {
-      return this.driver.query(
-        this.buildUpdateSql(table, value, field.equals(value[field.key] as any) as any, false)[TO_SQL_SYMBOL](),
+    const keys = fields.map((field) => String(field.key));
+    const tableFields = table.fields as Record<string, { schema: zod.ZodType }>;
+    const cast = (column: string) => `v.${quoteIdentifier(column)}::${this.typeToSql(tableFields[column]!.schema)}`;
+    const rows = values.map((value) =>
+      Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([, item]) => item !== undefined)),
+    );
+    for (const group of groupUpsertRows(rows, keys)) {
+      const columns = Object.keys(group[0]!).filter((column) => !keys.includes(column));
+      if (!columns.length) continue;
+      const names = [...keys, ...columns];
+      await this.execute(
+        sql`UPDATE ${table} SET ${raw(columns.map((column) => `${quoteIdentifier(column)} = ${cast(column)}`).join(", "))}
+            FROM (VALUES ${raw(group.map((row) => `(${names.map((name) => this.valueToSql(row[name], true)).join(", ")})`).join(", "))})
+              AS v (${raw(names.map(quoteIdentifier).join(", "))})
+            WHERE ${raw(keys.map((key) => `${quoteIdentifier(String(table.id))}.${quoteIdentifier(key)} = ${cast(key)}`).join(" AND "))}`,
       );
-    });
-
-    await Promise.all(statements);
+    }
     return {
       results: [],
       first: undefined,
