@@ -342,8 +342,20 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     return sql`LOWER(${raw(fieldSql)}) ${raw(negate ? "NOT GLOB" : "GLOB")} ${caseInsensitiveGlob(pattern, true)}`;
   }
 
+  /** The longest LIKE or GLOB pattern the database takes, in bytes: SQLite's default. */
+  protected patternLengthLimit = 50_000;
+
+  // instr has no limit on what it looks for, and treats every character literally, so a search is
+  // a GLOB only where it has letters beyond ASCII to fold: LOWER folds only ASCII ones. A search too
+  // long for the database's pattern limit folds its ASCII letters alone, and matches others exactly.
   override buildContainsTextSql(fieldSql: string, text: string): Statement {
-    return sql`LOWER(${raw(fieldSql)}) GLOB ${`*${caseInsensitiveGlob(text, false)}*`}`;
+    const value = sql`LOWER(${raw(fieldSql)})`;
+    const lowered = Array.from(text, (char) => (char <= "\u007f" ? char.toLowerCase() : char)).join("");
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: ASCII is every character from NUL.
+    if (/^[\u0000-\u007f]*$/.test(text)) return sql`instr(${value}, ${lowered}) > 0`;
+    const glob = `*${caseInsensitiveGlob(text, false)}*`;
+    if (new TextEncoder().encode(glob).length <= this.patternLengthLimit) return sql`${value} GLOB ${glob}`;
+    return sql`instr(${value}, ${lowered}) > 0`;
   }
 
   override buildSelectSql(select: SelectQuery, scalar = false, named = false): Statement {

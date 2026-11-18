@@ -24,6 +24,9 @@ const prepare = (driver: D1Database, rawSql: string): D1PreparedStatement => {
 };
 
 export default class D1Adaptor extends SqliteAdaptor<D1Database> {
+  // D1 refuses a LIKE or GLOB pattern longer than 50 bytes ("LIKE or GLOB pattern too complex").
+  protected override patternLengthLimit = 50;
+
   protected override async executeTransaction<TResult>(
     callback: (adaptor: DatabaseAdaptor) => Promise<TResult>,
   ): Promise<TResult> {

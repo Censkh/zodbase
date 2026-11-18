@@ -75,7 +75,7 @@ SQL LIKE uses `%` for any sequence and `_` for one character; a backslash makes 
 | `.in(values)` / `.notIn(values)` | Membership in a value list. A null in the list matches a null value, as `.equals(null)` does. |
 | `.like(pattern)` | SQL LIKE matching. |
 | `.matches(pattern)` / `.notMatches(pattern)` | Case-insensitive match where `*` is the only wildcard. Letters of every alphabet match their other case, `"É"` matching `"é"`. |
-| `.containsText(text)` | Case-insensitive substring match, every character in the text literal. |
+| `.containsText(text)` | Case-insensitive substring match, every character in the text literal. On D1, which limits a pattern to 50 bytes, a search with letters beyond ASCII that is too long for one folds its ASCII letters alone. |
 | `.contains(value)` | JSON-array membership, using the adaptor's implementation. |
 
 An empty `in([])` condition matches no rows. An empty `notIn([])` matches all rows. Use schema-compatible values; a nullable field is needed for a typed null equality check.
