@@ -32,6 +32,7 @@ module.exports = {
         "adaptors/cockroach",
         "adaptors/turso",
         "adaptors/expo-sqlite",
+        "adaptors/dynamodb",
         "adaptors/sqlite",
       ],
     },

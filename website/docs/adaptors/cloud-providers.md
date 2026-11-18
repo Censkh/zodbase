@@ -23,9 +23,9 @@ Choose the adaptor for the database engine and connection protocol, not the host
 
 TLS, IAM/Entra authentication, proxies, private networks and connection lifetime belong in the driver/provider configuration. Use a writer-capable endpoint for migrations and mutations. Aurora's HTTP Data API is a different transport and is **not** covered by the PostgreSQL TCP adaptor.
 
-## Cosmos DB, DynamoDB, Firestore and Spanner
+## DynamoDB, Cosmos DB, Firestore and Spanner
 
-Cosmos DB's NoSQL/document API, DynamoDB and Firestore are not relational SQL engines. Their partition-scoped transactions, query restrictions and indexing models require dedicated APIs and contracts; there is no supported adaptor for them here. Cosmos DB's SQL-like query language does not make relational subquery writes portable.
+DynamoDB has a [dedicated adaptor](/adaptors/dynamodb/) that maps keys and indexes from your schema and supports a cheap-to-query subset of Zodbase. Cosmos DB's NoSQL/document API and Firestore are not relational SQL engines either. Their partition-scoped transactions, query restrictions and indexing models require dedicated APIs and contracts; there is no supported adaptor for them here. Cosmos DB's SQL-like query language does not make relational subquery writes portable.
 
 Spanner has its own execution, schema and transaction semantics, even when using its PostgreSQL interface. Do not route it through `postgres` and assume schema sync or the subquery SQL is supported. It needs a dedicated tested adaptor. Oracle and Db2 engines are also not currently supported.
 
