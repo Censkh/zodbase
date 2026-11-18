@@ -10,7 +10,7 @@ import {
 
 beforeAll(acquireTestDatabaseContainers, 180_000);
 afterAll(releaseTestDatabaseContainers, 180_000);
-describe.each(TEST_DATABASE_FACTORIES)("scalar insert plan: $name", ({ name, create }) => {
+describe.each(TEST_DATABASE_FACTORIES)("scalar insert plan: $name ($connection)", ({ name, create }) => {
   it("uses an indexed parent lookup inside one statement", async () => {
     const context = await create();
     const { db } = context;

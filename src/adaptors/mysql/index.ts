@@ -72,7 +72,7 @@ export default class MysqlAdaptor<
     if ("getConnection" in this.driver) {
       const connection = await this.driver.getConnection();
       const Adaptor = this.constructor as new (options: DatabaseAdaptorOptions<Connection>) => DatabaseAdaptor;
-      const adaptor = new Adaptor({ ...this.options, driver: connection });
+      const adaptor = new Adaptor(this.optionsFor(connection));
       try {
         return await adaptor.transaction(callback);
       } finally {
@@ -119,7 +119,7 @@ export default class MysqlAdaptor<
       const connection = await this.driver.getConnection();
       try {
         const Adaptor = this.constructor as new (options: DatabaseAdaptorOptions<Connection>) => MysqlAdaptor;
-        return await new Adaptor({ ...this.options, driver: connection }).execute(statement);
+        return await new Adaptor(this.optionsFor(connection)).execute(statement);
       } finally {
         connection.release();
       }

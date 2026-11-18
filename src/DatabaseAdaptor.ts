@@ -33,11 +33,19 @@ import { type Statement, TO_SQL_SYMBOL } from "./Statement";
 import { canShareSubquery, isSubquery } from "./Subquery";
 import { getPrimaryKey, type LiveTableSchema, type SchemaTableInfo, type TableIndex, writableFieldKeys } from "./Table";
 
-export interface DatabaseAdaptorOptions<TDriver = any> {
-  driver: TDriver;
+/**
+ * The driver an adaptor runs statements with: one ready to use, or, with `lazy: true`, a function
+ * that opens one, called once before the adaptor's first statement (and again after it fails), so a
+ * database that's never queried never connects.
+ */
+export type DatabaseAdaptorDriver<TDriver = any> =
+  | { driver: TDriver; lazy?: false }
+  | { driver: () => TDriver | Promise<TDriver>; lazy: true };
+
+export type DatabaseAdaptorOptions<TDriver = any> = DatabaseAdaptorDriver<TDriver> & {
   debug?: boolean;
   events?: DatabaseEvents;
-}
+};
 
 export interface PossiblySelectedResult<TValue = any, TLimit extends number = number>
   extends SqlResult<TValue, TLimit> {
@@ -92,16 +100,10 @@ export const resolveIncoming = (
 };
 
 /** The fields `incoming(…)` names in `condition`. */
-/** On a lazily initialized adaptor, resolves to the adaptor it initializes. */
-export const RESOLVE_ADAPTOR = Symbol("zodbase.resolveAdaptor");
-
-/**
- * The adaptor, initialized: a lazy one (`DatabaseOptions.adaptor` as a function) forwards only what
- * runs a statement, so anything that builds SQL with it must resolve it first.
- */
-export const resolveAdaptor = async (adaptor: DatabaseAdaptor): Promise<DatabaseAdaptor> => {
-  const lazy = adaptor as DatabaseAdaptor & { [RESOLVE_ADAPTOR]?: () => Promise<DatabaseAdaptor> };
-  return lazy[RESOLVE_ADAPTOR] ? lazy[RESOLVE_ADAPTOR]() : adaptor;
+/** The adaptor, once its driver is open: what anything that runs a statement awaits first. */
+export const connected = async <TAdaptor extends DatabaseAdaptor>(adaptor: TAdaptor): Promise<TAdaptor> => {
+  await adaptor.connect();
+  return adaptor;
 };
 
 export const incomingFields = (condition: SelectCondition | undefined): string[] => {
@@ -127,10 +129,46 @@ export const keyCondition = (
 export default abstract class DatabaseAdaptor<TDriver = any> {
   private transactionQueue: Promise<void> = Promise.resolve();
 
-  constructor(protected readonly options: DatabaseAdaptorOptions<TDriver>) {}
+  /** The driver statements run with: given, or opened from a lazy one. */
+  private openDriver: TDriver | undefined;
+  private opening: Promise<TDriver> | undefined;
 
-  protected get driver() {
-    return this.options.driver;
+  constructor(protected readonly options: DatabaseAdaptorOptions<TDriver>) {
+    if (options.lazy) {
+      if (typeof options.driver !== "function")
+        throw new Error("[zodbase] A lazy driver must be a function that opens the driver");
+    } else this.openDriver = options.driver;
+  }
+
+  /**
+   * Opens a lazy driver, once: statements that start while it opens wait for the same driver, and
+   * one that fails to open leaves the next to try again. A driver given ready is already open.
+   */
+  async connect(): Promise<void> {
+    if (this.openDriver !== undefined || !this.options.lazy) return;
+    const open = this.options.driver;
+    this.opening ??= Promise.resolve()
+      .then(open)
+      .then(
+        (driver) => (this.openDriver = driver),
+        (error: unknown) => {
+          this.opening = undefined;
+          throw error;
+        },
+      );
+    await this.opening;
+  }
+
+  /** This adaptor's options for one running on `driver`, already open: a transaction's client, say. */
+  protected optionsFor<TOther>(driver: TOther): DatabaseAdaptorOptions<TOther> {
+    const { driver: _driver, lazy: _lazy, ...rest } = this.options;
+    return { ...rest, driver };
+  }
+
+  protected get driver(): TDriver {
+    if (this.openDriver === undefined)
+      throw new Error("[zodbase] The database's lazy driver isn't open: a statement ran before connect()");
+    return this.openDriver;
   }
 
   quoteIdentifier(value: string): string {

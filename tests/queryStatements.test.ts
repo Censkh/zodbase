@@ -6,7 +6,7 @@ import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
 
 test("composes recursive statements with named projections and literal text predicates", async () => {
   const driver = new Sqlite(":memory:");
-  const db = new Database({ adaptor: async () => new BunSqliteAdaptor({ driver }) });
+  const db = new Database({ adaptor: new BunSqliteAdaptor({ driver }) });
   const Tree = createTable({
     id: "tree",
     schema: z.object({ id: z.number(), parentId: z.number().nullable(), name: z.string() }),

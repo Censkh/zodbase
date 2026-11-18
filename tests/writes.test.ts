@@ -52,7 +52,7 @@ const counters = [
   { id: "c", name: "Cherries", count: 3 },
 ];
 
-describe.each(TEST_DATABASE_FACTORIES)("writes: $name", ({ name, create }) => {
+describe.each(TEST_DATABASE_FACTORIES)("writes: $name ($connection)", ({ name, create }) => {
   let context: TestDatabaseContext;
   let db: Database;
   let Counters: ReturnType<typeof createCounters>;

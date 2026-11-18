@@ -34,7 +34,7 @@ export type { InsertValues, ScalarSubquery } from "./QueryBuilder";
 import * as zod from "zod";
 import { getMetaItem } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
-import { RESOLVE_ADAPTOR, resolveAdaptor } from "./DatabaseAdaptor";
+import { connected } from "./DatabaseAdaptor";
 import { escapeSqlValue } from "./Escaping";
 import { toLazyPromise } from "./LazyPromise";
 import { computed, foreignKey } from "./MetaTypes";
@@ -55,14 +55,7 @@ import type {
   ValueOfTable,
 } from "./QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL, type ToSql } from "./Statement";
-import {
-  getPrimaryKey,
-  type SchemaDrift,
-  type SchemaTableInfo,
-  type Table,
-  type TableColumnInfo,
-  type TableIndex,
-} from "./Table";
+import { getPrimaryKey, type SchemaDrift, type SchemaTableInfo, type Table, type TableColumnInfo } from "./Table";
 import { isZodRequired, isZodTypeExtends } from "./ZodUtils";
 
 export * from "./index.common";
@@ -153,69 +146,14 @@ export interface DatabaseEvents {
   onExecuteStatement?: (event: ExecuteStatementEvent) => void;
 }
 
-export type DatabaseAdaptorInitializer = () => DatabaseAdaptor | Promise<DatabaseAdaptor>;
-
 export interface DatabaseOptions {
-  adaptor: DatabaseAdaptor | DatabaseAdaptorInitializer;
+  /** Connects lazily when its driver is given as `{ driver: () => …, lazy: true }`. */
+  adaptor: DatabaseAdaptor;
   events?: DatabaseEvents;
   debug?: boolean;
 }
 
-interface ResolvedDatabaseOptions extends Omit<DatabaseOptions, "adaptor"> {
-  adaptor: DatabaseAdaptor;
-}
-
-const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): DatabaseAdaptor => {
-  let adaptorPromise: Promise<DatabaseAdaptor> | undefined;
-  let resolved: DatabaseAdaptor | undefined;
-  const getAdaptor = () =>
-    (adaptorPromise ??= Promise.resolve()
-      .then(initialize)
-      .then((adaptor) => (resolved = adaptor)));
-  const call =
-    (method: keyof DatabaseAdaptor) =>
-    async (...args: unknown[]) => {
-      const adaptor = await getAdaptor();
-      return (adaptor[method] as (...args: unknown[]) => unknown).apply(adaptor, args);
-    };
-
-  const initialized = () => {
-    if (!resolved) throw new Error("Database adaptor has not initialized");
-    return resolved;
-  };
-
-  return {
-    typeToSql: (type: zod.ZodType) => initialized().typeToSql(type),
-    quoteIdentifier: (value: string) => initialized().quoteIdentifier(value),
-    createTableStatement: (table: Table, name?: string) => initialized().createTableStatement(table, name),
-    createIndexStatement: (table: Table, index: TableIndex) => initialized().createIndexStatement(table, index),
-    tableSettingStatements: (table: Table) => initialized().tableSettingStatements(table),
-    execute: call("execute"),
-    compileStatement: call("compileStatement"),
-    executeSelect: call("executeSelect"),
-    executeQueryCount: call("executeQueryCount"),
-    executeCappedCount: call("executeCappedCount"),
-    executeInsert: call("executeInsert"),
-    executeInsertSubqueries: call("executeInsertSubqueries"),
-    executeInsertMany: call("executeInsertMany"),
-    executeUpdate: call("executeUpdate"),
-    executeUpsert: call("executeUpsert"),
-    executeUpsertMany: call("executeUpsertMany"),
-    executeUpdateMany: call("executeUpdateMany"),
-    executeCount: call("executeCount"),
-    executeDelete: call("executeDelete"),
-    executeInsertIgnoring: call("executeInsertIgnoring"),
-    executeTogether: call("executeTogether"),
-    [RESOLVE_ADAPTOR]: getAdaptor,
-    createTable: call("createTable"),
-    fetchTableColumns: call("fetchTableColumns"),
-    fetchLiveSchema: call("fetchLiveSchema"),
-    syncTableIndexes: call("syncTableIndexes"),
-    syncTableLocality: call("syncTableLocality"),
-    processDiff: call("processDiff"),
-    transaction: call("transaction"),
-  } as unknown as DatabaseAdaptor;
-};
+type ResolvedDatabaseOptions = DatabaseOptions;
 
 interface BaseFieldModification<M> {
   type: M;
@@ -397,7 +335,7 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
 
     async execute() {
       assertSelectArguments(query);
-      return adaptor.executeSelect(query);
+      return (await connected(adaptor)).executeSelect(query);
     },
     /**
      * The number of rows the query matches, ignoring its ordering, limit and offset. With `upTo`, it
@@ -405,6 +343,7 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
      * least `upTo`".
      */
     async count(options: { upTo?: number } = {}): Promise<number> {
+      await adaptor.connect();
       if (options.upTo !== undefined) return adaptor.executeCappedCount(query, options.upTo);
       const all = [{ table: query.table, key: "*" }] as any;
       const result = isRelationalQuery(query)
@@ -414,9 +353,9 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
     },
   };
 
-  return toLazyPromise(() => {
+  return toLazyPromise(async () => {
     assertSelectArguments(query);
-    return adaptor.executeSelect(query);
+    return (await connected(adaptor)).executeSelect(query);
   }, builder) as any;
 };
 
@@ -465,10 +404,7 @@ export class Database {
     /** The named queries every statement it builds starts with (`with`). */
     private readonly withClause?: WithClause,
   ) {
-    this.options = {
-      ...options,
-      adaptor: typeof options.adaptor === "function" ? createLazyDatabaseAdaptor(options.adaptor) : options.adaptor,
-    };
+    this.options = options;
   }
 
   /** The SQL any builder or statement compiles to for this database. */
@@ -483,7 +419,7 @@ export class Database {
   }
 
   async execute(statement: Statement | Compilable) {
-    const adaptor = this.options.adaptor;
+    const adaptor = await this.connected();
     return adaptor.execute(isCompilable(statement) ? await this.compile(statement) : statement);
   }
 
@@ -497,12 +433,17 @@ export class Database {
     writes: TWrites,
   ): Promise<{ -readonly [K in keyof TWrites]: WriteResult<TWrites[K]> }> {
     for (const write of writes) if (!isWrite(write)) throw new Error("[zodbase] A batch takes only write builders");
-    return (await runBatch(await this.resolvedAdaptor(), writes)) as any;
+    return (await runBatch(await this.connected(), writes)) as any;
   }
 
-  /** The adaptor, initialized: a lazy one (`DatabaseOptions.adaptor` as a function) first resolves. */
-  private resolvedAdaptor(): Promise<DatabaseAdaptor> {
-    return resolveAdaptor(this.options.adaptor);
+  /** The adaptor, its driver open: what each statement this database runs awaits first. */
+  private connected(): Promise<DatabaseAdaptor> {
+    return connected(this.options.adaptor);
+  }
+
+  /** Opens the database's lazy driver now rather than with its first statement. */
+  async connect(): Promise<void> {
+    await this.options.adaptor.connect();
   }
 
   /**
@@ -587,15 +528,17 @@ export class Database {
     if (this.transactionScoped) {
       throw new Error("Nested transactions are not supported");
     }
-    return this.options.adaptor.transaction((adaptor) =>
-      callback(
-        new Database(
-          {
-            ...this.options,
-            adaptor,
-          },
-          true,
-          this.withClause,
+    return this.connected().then((connectedAdaptor) =>
+      connectedAdaptor.transaction((adaptor) =>
+        callback(
+          new Database(
+            {
+              ...this.options,
+              adaptor,
+            },
+            true,
+            this.withClause,
+          ),
         ),
       ),
     );
@@ -693,6 +636,7 @@ export class Database {
   }
 
   async syncTable<TTable extends Table>(table: TTable): Promise<void> {
+    await this.connected();
     await this.options.adaptor.createTable(table);
 
     const diff = this.diffTable(table, (await this.options.adaptor.fetchTableColumns(table)).results);
@@ -713,6 +657,7 @@ export class Database {
    * trips, so syncing an up-to-date schema takes a few queries rather than several per table.
    */
   async syncTables(tables: readonly Table[]): Promise<void> {
+    await this.connected();
     const live = await this.adaptor.fetchLiveSchema();
     for (const table of tables) {
       const current = live?.get(String(table.id));
@@ -738,6 +683,7 @@ export class Database {
    * so this is how to find what a removal or rename left behind. Read-only: it changes nothing.
    */
   async diffSchema(tables: readonly Table[]): Promise<SchemaDrift> {
+    await this.connected();
     const defined = new Map(tables.map((table) => [String(table.id), table]));
     const drift: SchemaDrift = { tables: [], columns: [], indexes: [] };
     const byName = (left: { name: string }, right: { name: string }) => (left.name < right.name ? -1 : 1);

@@ -28,7 +28,7 @@ const shelvedSchema = zod.object({
   shelf: zod.string().meta(metaStore([shelf])),
 });
 
-describe.each(TEST_DATABASE_FACTORIES)("computed columns: $name", ({ create, name }) => {
+describe.each(TEST_DATABASE_FACTORIES)("computed columns: $name ($connection)", ({ create, name }) => {
   let context: TestDatabaseContext;
   let tableId: string;
   beforeEach(async () => {

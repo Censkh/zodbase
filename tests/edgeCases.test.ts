@@ -12,7 +12,7 @@ import {
 beforeAll(acquireTestDatabaseContainers, 180_000);
 afterAll(releaseTestDatabaseContainers, 180_000);
 
-describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, create }) => {
+describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name ($connection)", ({ name: engine, create }) => {
   let context: TestDatabaseContext;
   beforeEach(async () => {
     context = await create();

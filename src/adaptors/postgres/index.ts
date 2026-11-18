@@ -74,7 +74,7 @@ export default class PostgresAdaptor<
     if ("totalCount" in this.driver) {
       const client = await (this.driver as PostgresPool).connect();
       const Adaptor = this.constructor as new (options: DatabaseAdaptorOptions<PostgresClient>) => DatabaseAdaptor;
-      const adaptor = new Adaptor({ ...this.options, driver: client });
+      const adaptor = new Adaptor(this.optionsFor(client));
       try {
         return await adaptor.transaction(callback);
       } finally {

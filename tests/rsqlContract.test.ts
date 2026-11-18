@@ -55,7 +55,7 @@ const assets = [
   },
 ];
 
-describe.each(TEST_DATABASE_FACTORIES)("RSQL contract: $name", ({ create }) => {
+describe.each(TEST_DATABASE_FACTORIES)("RSQL contract: $name ($connection)", ({ create }) => {
   let context: TestDatabaseContext;
   let AssetsTable: ReturnType<typeof createAssetsTable>;
 

@@ -24,7 +24,7 @@ The [shared SQLite base](/adaptors/sqlite/) documents common schema behavior and
 
 Import the adaptor from `zodbase/adaptors/<name>` and construct it with `{ driver }`. The application owns the driver's lifetime. Credentials, TLS, pool limits, and driver options belong in driver configuration.
 
-You can pass an async initializer to `Database` to defer connection setup. It runs at most once per database instance; see [runtime and configuration](/configuration/).
+To connect only when the first statement runs, give an adaptor its driver as a function with `lazy: true`; see [runtime and configuration](/configuration/).
 
 ## Shared API, different capabilities
 

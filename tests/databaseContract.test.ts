@@ -35,7 +35,7 @@ const people = [
 const withMetadata = <TSchema extends zod.ZodType>(schema: TSchema, ...metadata: Parameters<TSchema["meta"]>[0][]) =>
   schema.meta(metaStore(metadata));
 
-describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, create }) => {
+describe.each(TEST_DATABASE_FACTORIES)("database contract: $name ($connection)", ({ name, create }) => {
   let context: TestDatabaseContext;
   let db: Database;
   let PeopleTable: ReturnType<typeof createPeopleTable>;
@@ -705,6 +705,8 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
 
 class CountingAdaptor implements Partial<DatabaseAdaptor> {
   executions = 0;
+
+  async connect(): Promise<void> {}
 
   async executeSelect(_query: SelectQuery): Promise<SqlResult> {
     this.executions += 1;

@@ -21,7 +21,7 @@ import {
 beforeAll(acquireTestDatabaseContainers, 180_000);
 afterAll(releaseTestDatabaseContainers, 180_000);
 
-describe.each(TEST_DATABASE_FACTORIES)("arithmetic expressions: $name", ({ create, name }) => {
+describe.each(TEST_DATABASE_FACTORIES)("arithmetic expressions: $name ($connection)", ({ create, name }) => {
   let context: TestDatabaseContext;
   beforeAll(async () => {
     context = await create();

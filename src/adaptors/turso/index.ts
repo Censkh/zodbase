@@ -20,7 +20,7 @@ export default class TursoAdaptor extends SqliteAdaptor<Client> {
     callback: (adaptor: DatabaseAdaptor) => Promise<TResult>,
   ): Promise<TResult> {
     const transaction = await this.driver.transaction("write");
-    const adaptor = new TursoAdaptor({ ...this.options, driver: transaction as unknown as Client });
+    const adaptor = new TursoAdaptor(this.optionsFor(transaction as unknown as Client));
     try {
       const result = await callback(adaptor);
       await transaction.commit();

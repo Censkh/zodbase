@@ -13,18 +13,15 @@ const db = new Database({
 
 The adaptor is required. The application owns the driver, connection configuration, credentials, and cleanup. For example, close Bun SQLite with `driver.close()` or a PostgreSQL pool with its own driver API when your application is finished.
 
-## Initialize lazily
+## Connect lazily
 
 ```ts
 const db = new Database({
-  adaptor: async () => {
-    const driver = await connect();
-    return new PostgresAdaptor({ driver });
-  },
+  adaptor: new PostgresAdaptor({ driver: () => connect(), lazy: true }),
 });
 ```
 
-The initializer is shared across concurrent first operations and runs at most once per `Database` instance. `connect()` is your own factory. A failed initialization is also memoized; construct a new instance if your application needs to retry initialization.
+With `lazy: true`, `driver` is a function that opens the driver, which the adaptor calls once, just before its first statement; a database that's never queried never connects. Statements that start while it opens wait for the same driver, and if opening fails they reject and the next statement tries again. `connect()` is your own factory. Building queries and their SQL needs no connection. Call `await db.connect()` to open it earlier, for work that will certainly query. A `driver` that isn't a function is refused with `lazy: true`.
 
 ## Server and browser imports
 

@@ -1,7 +1,7 @@
 import type * as zod from "zod";
 import { findFieldMetaItems } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
-import { type Conflict, incomingFields, keyCondition, resolveAdaptor } from "./DatabaseAdaptor";
+import { type Conflict, connected, incomingFields, keyCondition } from "./DatabaseAdaptor";
 import { toLazyPromise } from "./LazyPromise";
 import { monotonicTimestamp, updatedAt } from "./MetaTypes";
 import type {
@@ -86,7 +86,7 @@ const write = <TResult extends SqlResult, TExtra extends object>(
   clause?: WithClause,
 ): Write<TResult> & TExtra => {
   const plan = withClausePlan(unscoped, clause);
-  return toLazyPromise(async () => (await plan.run(await resolveAdaptor(adaptor()))) as TResult, {
+  return toLazyPromise(async () => (await plan.run(await connected(adaptor()))) as TResult, {
     ...extra,
     [WRITE]: plan,
     [COMPILE]: (target: DatabaseAdaptor) => {

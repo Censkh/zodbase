@@ -9,10 +9,14 @@ export interface NeonHttpDriver {
 
 export default class NeonHttpAdaptor extends PostgresAdaptor {
   constructor(options: DatabaseAdaptorOptions<NeonHttpDriver>) {
-    super({
-      ...options,
-      driver: { query: (text) => options.driver.query(text, [], { arrayMode: false, fullResults: true }) },
+    const wrap = (driver: NeonHttpDriver) => ({
+      query: (text: string) => driver.query(text, [], { arrayMode: false, fullResults: true }),
     });
+    super(
+      options.lazy
+        ? { ...options, driver: async () => wrap(await options.driver()) }
+        : { ...options, driver: wrap(options.driver) },
+    );
   }
 
   /** Neon's HTTP endpoint takes one statement a request: a batch runs in a transaction instead. */

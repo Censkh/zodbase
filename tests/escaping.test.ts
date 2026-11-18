@@ -25,7 +25,7 @@ const TestTable = createTable({
   }),
 });
 
-describe.each(TEST_DATABASE_FACTORIES)("SQL Escaping for $name", ({ create }) => {
+describe.each(TEST_DATABASE_FACTORIES)("SQL Escaping for $name ($connection)", ({ create }) => {
   let db: Database;
   let context: TestDatabaseContext;
 

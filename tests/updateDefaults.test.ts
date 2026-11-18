@@ -10,7 +10,7 @@ import {
 beforeAll(acquireTestDatabaseContainers, 180_000);
 afterAll(releaseTestDatabaseContainers, 180_000);
 
-describe.each(TEST_DATABASE_FACTORIES)("partial update defaults: $name", ({ create }) => {
+describe.each(TEST_DATABASE_FACTORIES)("partial update defaults: $name ($connection)", ({ create }) => {
   let context: TestDatabaseContext;
   let database: Database;
   let defaultCalls: number;

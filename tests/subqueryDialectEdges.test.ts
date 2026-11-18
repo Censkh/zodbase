@@ -10,7 +10,7 @@ import {
 beforeAll(acquireTestDatabaseContainers, 180_000);
 afterAll(releaseTestDatabaseContainers, 180_000);
 
-describe.each(TEST_DATABASE_FACTORIES)("scalar edge contracts: $name", ({ name, create }) => {
+describe.each(TEST_DATABASE_FACTORIES)("scalar edge contracts: $name ($connection)", ({ name, create }) => {
   it("preserves SQL NULL, pagination, column alignment and transaction rollback", async () => {
     const { db, close } = await create();
     const parent = createTable({

@@ -10,7 +10,7 @@ import {
 beforeAll(acquireTestDatabaseContainers, 180_000);
 afterAll(releaseTestDatabaseContainers, 180_000);
 
-describe.each(TEST_DATABASE_FACTORIES)("scalar insert: $name", ({ name, create }) => {
+describe.each(TEST_DATABASE_FACTORIES)("scalar insert: $name ($connection)", ({ name, create }) => {
   it("resolves parents inside one insert, preserves defaults and returns database values", async () => {
     const context = await create();
     const db = context.db;
@@ -87,13 +87,6 @@ describe.each(TEST_DATABASE_FACTORIES)("scalar insert: $name", ({ name, create }
         ).rejects.toThrow("RETURNING");
         expect(statements).toHaveLength(before);
       }
-      // A lazy connection still compiles the subquery on the resolved adaptor.
-      const lazy = new Database({ adaptor: async () => adaptor });
-      await lazy.insert(child, {
-        id: "lazy",
-        region: lazy.select(parent, { region: parent.$region }).where(parent.$id.equals("parent'1")),
-        timestamp,
-      });
     } finally {
       await context.close();
     }

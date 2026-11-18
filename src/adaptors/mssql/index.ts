@@ -107,7 +107,7 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
     const transaction = this.driver.transaction();
     await transaction.begin();
     try {
-      const result = await callback(new MssqlAdaptor({ ...this.options, driver: transaction }));
+      const result = await callback(new MssqlAdaptor(this.optionsFor(transaction)));
       await transaction.commit();
       return result;
     } catch (error) {

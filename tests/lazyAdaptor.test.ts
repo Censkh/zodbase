@@ -4,15 +4,18 @@ import { createTable, Database, exists, incoming, metaStore, monotonicTimestamp,
 import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
 import PostgresAdaptor from "../src/adaptors/postgres";
 
-describe("lazy adaptor initialization", () => {
-  it("initializes once when the first database operation executes", async () => {
+describe("lazy drivers", () => {
+  it("opens the driver once, when the first statement runs", async () => {
     const driver = new BunDatabase(":memory:");
     let initializationCount = 0;
     const database = new Database({
-      adaptor: async () => {
-        initializationCount += 1;
-        return new BunSqliteAdaptor({ driver });
-      },
+      adaptor: new BunSqliteAdaptor({
+        driver: async () => {
+          initializationCount += 1;
+          return driver;
+        },
+        lazy: true,
+      }),
     });
     const AssetsTable = createTable({
       id: "lazy_assets",
@@ -34,9 +37,9 @@ describe("lazy adaptor initialization", () => {
     expect(secondResult).toBe(1);
     driver.close();
   });
-  it("builds every kind of write with the adaptor it initializes", async () => {
+  it("builds and runs every kind of write on a lazily opened driver", async () => {
     const driver = new BunDatabase(":memory:");
-    const database = new Database({ adaptor: async () => new BunSqliteAdaptor({ driver }) });
+    const database = new Database({ adaptor: new BunSqliteAdaptor({ driver: () => driver, lazy: true }) });
     const Items = createTable({
       id: "lazy_items",
       schema: zod.object({ id: zod.string().meta(metaStore([primaryKey()])), count: zod.number() }),
@@ -78,7 +81,7 @@ describe("lazy adaptor initialization", () => {
     ]);
     driver.close();
   });
-  it("runs a write after a WITH clause with the adaptor it initializes", async () => {
+  it("runs a write after a WITH clause on a lazily opened driver", async () => {
     const statements: string[] = [];
     const driver = {
       async query(statement: string) {
@@ -86,7 +89,7 @@ describe("lazy adaptor initialization", () => {
         return { rows: [] };
       },
     };
-    const database = new Database({ adaptor: async () => new PostgresAdaptor({ driver: driver as any }) });
+    const database = new Database({ adaptor: new PostgresAdaptor({ driver: () => driver as any, lazy: true }) });
     const Items = createTable({
       id: "lazy_with_items",
       schema: zod.object({ id: zod.string().meta(metaStore([primaryKey()])), count: zod.number() }),
@@ -100,7 +103,7 @@ describe("lazy adaptor initialization", () => {
     expect(statements).toHaveLength(1);
     expect(statements[0]!.replace(/\s+/g, " ")).toStartWith('WITH "removed" AS (DELETE FROM "lazy_with_items"');
   });
-  it("resolves dialect helpers for migrations and revision writes", async () => {
+  it("builds SQL before the driver opens, and opens it for migrations and revision writes", async () => {
     const statements: string[] = [];
     const driver = {
       async query(statement: string) {
@@ -122,17 +125,54 @@ describe("lazy adaptor initialization", () => {
         return { rows: [] };
       },
     };
-    const database = new Database({ adaptor: async () => new PostgresAdaptor({ driver: driver as any }) });
+    const database = new Database({ adaptor: new PostgresAdaptor({ driver: () => driver as any, lazy: true }) });
     const table = createTable({
       id: "lazy_revisions",
       schema: zod.object({ updatedAt: zod.number().meta(metaStore([monotonicTimestamp()])) }),
     });
-    // Constructing the write must not require initialization of the async adaptor.
+    // Building the write doesn't open the driver: dialect helpers need none.
     const update = database.update(table, { updatedAt: 0 }).where(table.$updatedAt.greaterThan(0));
     expect(statements).toEqual([]);
     await database.syncTable(table);
     await update;
     expect(statements.some((sql) => sql.includes('ALTER COLUMN "updatedAt" TYPE DOUBLE PRECISION'))).toBe(true);
     expect(statements.at(-1)).toContain('CASE WHEN "updatedAt"');
+  });
+
+  it("refuses a lazy driver that isn't a function", () => {
+    const driver = new BunDatabase(":memory:");
+    expect(() => new BunSqliteAdaptor({ driver: driver as any, lazy: true })).toThrow(
+      "[zodbase] A lazy driver must be a function that opens the driver",
+    );
+    driver.close();
+  });
+
+  it("shares one open between concurrent first statements, and opens again after one fails", async () => {
+    const driver = new BunDatabase(":memory:");
+    let opens = 0;
+    const database = new Database({
+      adaptor: new BunSqliteAdaptor({
+        driver: async () => {
+          opens += 1;
+          if (opens === 1) throw new Error("network down");
+          return driver;
+        },
+        lazy: true,
+      }),
+    });
+    const Rows = createTable({
+      id: "lazy_retry",
+      schema: zod.object({ id: zod.string().meta(metaStore([primaryKey()])) }),
+    });
+    // Both first statements wait on the one open that fails.
+    const results = await Promise.allSettled([database.syncTable(Rows), database.syncTable(Rows)]);
+    expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+    expect(opens).toBe(1);
+    // The next statement opens it again.
+    await database.syncTable(Rows);
+    await database.insert(Rows, { id: "a" });
+    expect((await database.select(Rows)).results).toEqual([{ id: "a" }]);
+    expect(opens).toBe(2);
+    driver.close();
   });
 });

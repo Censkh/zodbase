@@ -34,15 +34,22 @@ export interface TestDatabaseContext {
 }
 
 export interface TestDatabaseFactory {
+  /** The database: what tests that expect one database's behaviour compare. */
   name: string;
+  /** Whether its driver is given ready or opened lazily, as production connects. */
+  connection: "ready" | "lazy";
   create(): Promise<TestDatabaseContext>;
 }
 
-const createBunSqliteDatabase = async (): Promise<TestDatabaseContext> => {
+/** A driver ready to use, or the same one opened lazily, as production connects. */
+const driverOptions = <TDriver>(driver: TDriver, lazy: boolean) =>
+  lazy ? { driver: async () => driver, lazy: true as const } : { driver };
+
+const createBunSqliteDatabase = async (lazy = false): Promise<TestDatabaseContext> => {
   const driver = new BunDatabase(":memory:");
   return {
     db: new Database({
-      adaptor: new BunSqliteAdaptor({ driver }),
+      adaptor: new BunSqliteAdaptor(driverOptions(driver, lazy)),
     }),
     async close() {
       driver.close();
@@ -50,11 +57,11 @@ const createBunSqliteDatabase = async (): Promise<TestDatabaseContext> => {
   };
 };
 
-const createTursoDatabase = async (): Promise<TestDatabaseContext> => {
+const createTursoDatabase = async (lazy = false): Promise<TestDatabaseContext> => {
   const databasePath = `/tmp/zodbase_${crypto.randomUUID()}.db`;
   const driver = createClient({ url: `file:${databasePath}` });
   return {
-    db: new Database({ adaptor: new TursoAdaptor({ driver }) }),
+    db: new Database({ adaptor: new TursoAdaptor(driverOptions(driver, lazy)) }),
     async close() {
       driver.close();
       await Promise.all([
@@ -66,7 +73,7 @@ const createTursoDatabase = async (): Promise<TestDatabaseContext> => {
   };
 };
 
-const createPostgresDatabase = async (): Promise<TestDatabaseContext> => {
+const createPostgresDatabase = async (lazy = false): Promise<TestDatabaseContext> => {
   const uri = sharedDatabases?.postgres ?? postgresContainer?.getConnectionUri();
   if (!uri) {
     throw new Error("PostgreSQL test container has not been started");
@@ -85,7 +92,7 @@ const createPostgresDatabase = async (): Promise<TestDatabaseContext> => {
 
   return {
     db: new Database({
-      adaptor: new PostgresAdaptor({ driver }),
+      adaptor: new PostgresAdaptor(driverOptions(driver, lazy)),
     }),
     async connect() {
       const connection = new Client({ connectionString: connectionUrl.toString() });
@@ -112,7 +119,7 @@ const mysqlOptions = (container: StartedMySqlContainer): ConnectionOptions => ({
   password: container.getRootPassword(),
 });
 
-const createMysqlDatabase = async (engine: "mysql" | "mariadb"): Promise<TestDatabaseContext> => {
+const createMysqlDatabase = async (engine: "mysql" | "mariadb", lazy = false): Promise<TestDatabaseContext> => {
   const container = engine === "mariadb" ? mariadbContainer : mysqlContainer;
   const options = sharedDatabases?.[engine] ?? (container && mysqlOptions(container));
   if (!options) throw new Error("MySQL-compatible test container has not been started");
@@ -126,7 +133,9 @@ const createMysqlDatabase = async (engine: "mysql" | "mariadb"): Promise<TestDat
   }
   const driver = await createConnection({ ...options, database: databaseName });
   return {
-    db: new Database({ adaptor: new (engine === "mariadb" ? MariaDbAdaptor : MysqlAdaptor)({ driver }) }),
+    db: new Database({
+      adaptor: new (engine === "mariadb" ? MariaDbAdaptor : MysqlAdaptor)(driverOptions(driver, lazy)),
+    }),
     async close() {
       await driver.end();
       const cleanupDriver = await createConnection(options);
@@ -139,7 +148,7 @@ const createMysqlDatabase = async (engine: "mysql" | "mariadb"): Promise<TestDat
   };
 };
 
-const createCockroachDatabase = async (): Promise<TestDatabaseContext> => {
+const createCockroachDatabase = async (lazy = false): Promise<TestDatabaseContext> => {
   const uri = sharedDatabases?.cockroach ?? cockroachContainer?.getConnectionUri();
   if (!uri) {
     throw new Error("CockroachDB test container has not been started");
@@ -160,7 +169,7 @@ const createCockroachDatabase = async (): Promise<TestDatabaseContext> => {
   await driver.connect();
 
   return {
-    db: new Database({ adaptor: new CockroachAdaptor({ driver }) }),
+    db: new Database({ adaptor: new CockroachAdaptor(driverOptions(driver, lazy)) }),
     async connect() {
       const connection = new Client({ connectionString: connectionUrl.toString() });
       await connection.connect();
@@ -298,12 +307,20 @@ export const releaseTestDatabaseContainers = async (): Promise<void> => {
 };
 
 const ALL_TEST_DATABASE_FACTORIES: TestDatabaseFactory[] = [
-  { name: "bun-sqlite", create: createBunSqliteDatabase },
-  { name: "turso-local", create: createTursoDatabase },
-  { name: "postgres", create: createPostgresDatabase },
-  { name: "cockroach", create: createCockroachDatabase },
-  { name: "mysql", create: () => createMysqlDatabase("mysql") },
-  { name: "mariadb", create: () => createMysqlDatabase("mariadb") },
+  { name: "bun-sqlite", connection: "ready", create: createBunSqliteDatabase },
+  { name: "turso-local", connection: "ready", create: createTursoDatabase },
+  { name: "postgres", connection: "ready", create: createPostgresDatabase },
+  { name: "cockroach", connection: "ready", create: createCockroachDatabase },
+  { name: "mysql", connection: "ready", create: () => createMysqlDatabase("mysql") },
+  { name: "mariadb", connection: "ready", create: () => createMysqlDatabase("mariadb") },
+  // Each again with its driver opened lazily, as production connects: anything that ran a
+  // statement before the driver opened would fail here and nowhere else.
+  { name: "bun-sqlite", connection: "lazy", create: () => createBunSqliteDatabase(true) },
+  { name: "turso-local", connection: "lazy", create: () => createTursoDatabase(true) },
+  { name: "postgres", connection: "lazy", create: () => createPostgresDatabase(true) },
+  { name: "cockroach", connection: "lazy", create: () => createCockroachDatabase(true) },
+  { name: "mysql", connection: "lazy", create: () => createMysqlDatabase("mysql", true) },
+  { name: "mariadb", connection: "lazy", create: () => createMysqlDatabase("mariadb", true) },
 ];
 
 export const TEST_DATABASE_FACTORIES = ALL_TEST_DATABASE_FACTORIES.filter(({ name }) => testsEngine(name));

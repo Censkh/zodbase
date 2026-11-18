@@ -10,7 +10,7 @@ import {
 beforeAll(acquireTestDatabaseContainers, 180_000);
 afterAll(releaseTestDatabaseContainers, 180_000);
 
-describe.each(TEST_DATABASE_FACTORIES)("identifier security: $name", ({ create }) => {
+describe.each(TEST_DATABASE_FACTORIES)("identifier security: $name ($connection)", ({ create }) => {
   let context: TestDatabaseContext;
 
   beforeEach(async () => {

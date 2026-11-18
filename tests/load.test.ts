@@ -26,7 +26,7 @@ const items = [
   { id: "c", group: "y" },
 ];
 
-describe.each(TEST_DATABASE_FACTORIES)("load: $name", ({ create }) => {
+describe.each(TEST_DATABASE_FACTORIES)("load: $name ($connection)", ({ create }) => {
   let context: TestDatabaseContext;
   let db: Database;
   let Items: ReturnType<typeof createItems>;
