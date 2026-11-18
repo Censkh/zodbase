@@ -27,6 +27,7 @@ This reference summarizes the current API. Zodbase is under active development; 
 | `.forceIndex(name)` | Looks rows up through one of the table's indexes, never by scanning a whole index, on CockroachDB; ignored elsewhere. |
 | `.count({ upTo? })` | The number of matching rows; with `upTo`, reads at most that many. |
 | `.groupBy(...fields)` | One row per group, for aggregates such as `sum`. |
+| `greatest(a, b)` | The larger of two numbers, such as a total kept at zero or more. |
 | `.crossJoin(table)` | Pairs every row with every row of `table`. |
 | `values(table, rows)` | Literal rows read as a table under `table`'s name. |
 | `exists(query)` / `notExists(query)` | Whether a (correlated) query gives any row. |
@@ -45,6 +46,7 @@ Every write is a builder: awaiting it runs it.
 | `db.update(table, records).by(key)` | Updates each record found by a key field, or a compound key's fields. |
 | `db.update(table, records).by(key).where(condition)` | Updates each record only where the condition holds; `incoming(field)` is the record's value for a field. |
 | `db.delete(table).where(condition)` | Deletes only with an explicit condition. |
+| `.returning(...keys)` on a delete | The rows it removed, as one statement on PostgreSQL and CockroachDB. |
 | `.returning(...keys)` | Runs the write, returning the stored rows (or just `keys`). |
 | `db.batch([...writes])` | Runs the writes atomically, in one round trip on PostgreSQL and CockroachDB. |
 | `db.load(field, value, { where? })` | The row whose unique `field` is `value`; loads started in the same tick share one `IN (…)` query. |
