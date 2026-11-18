@@ -34,6 +34,7 @@ export type { InsertValues, ScalarSubquery } from "./QueryBuilder";
 import * as zod from "zod";
 import { getMetaItem } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
+import { RESOLVE_ADAPTOR, resolveAdaptor } from "./DatabaseAdaptor";
 import { escapeSqlValue } from "./Escaping";
 import { toLazyPromise } from "./LazyPromise";
 import { computed, foreignKey } from "./MetaTypes";
@@ -163,9 +164,6 @@ export interface DatabaseOptions {
 interface ResolvedDatabaseOptions extends Omit<DatabaseOptions, "adaptor"> {
   adaptor: DatabaseAdaptor;
 }
-
-/** On a lazily initialized adaptor, resolves to the adaptor it initializes. */
-const RESOLVE_ADAPTOR = Symbol("zodbase.resolveAdaptor");
 
 const createLazyDatabaseAdaptor = (initialize: DatabaseAdaptorInitializer): DatabaseAdaptor => {
   let adaptorPromise: Promise<DatabaseAdaptor> | undefined;
@@ -503,9 +501,8 @@ export class Database {
   }
 
   /** The adaptor, initialized: a lazy one (`DatabaseOptions.adaptor` as a function) first resolves. */
-  private async resolvedAdaptor(): Promise<DatabaseAdaptor> {
-    const adaptor = this.options.adaptor as DatabaseAdaptor & { [RESOLVE_ADAPTOR]?: () => Promise<DatabaseAdaptor> };
-    return adaptor[RESOLVE_ADAPTOR] ? adaptor[RESOLVE_ADAPTOR]() : adaptor;
+  private resolvedAdaptor(): Promise<DatabaseAdaptor> {
+    return resolveAdaptor(this.options.adaptor);
   }
 
   /**

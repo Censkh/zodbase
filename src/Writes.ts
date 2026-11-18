@@ -1,7 +1,7 @@
 import type * as zod from "zod";
 import { findFieldMetaItems } from "zod-meta";
 import type DatabaseAdaptor from "./DatabaseAdaptor";
-import { type Conflict, incomingFields, keyCondition } from "./DatabaseAdaptor";
+import { type Conflict, incomingFields, keyCondition, resolveAdaptor } from "./DatabaseAdaptor";
 import { toLazyPromise } from "./LazyPromise";
 import { monotonicTimestamp, updatedAt } from "./MetaTypes";
 import type {
@@ -86,7 +86,7 @@ const write = <TResult extends SqlResult, TExtra extends object>(
   clause?: WithClause,
 ): Write<TResult> & TExtra => {
   const plan = withClausePlan(unscoped, clause);
-  return toLazyPromise(() => plan.run(adaptor()) as Promise<TResult>, {
+  return toLazyPromise(async () => (await plan.run(await resolveAdaptor(adaptor()))) as TResult, {
     ...extra,
     [WRITE]: plan,
     [COMPILE]: (target: DatabaseAdaptor) => {
@@ -367,17 +367,17 @@ export interface InsertSelectWrite<TTable extends Table> extends Write {
   ): ConflictActions<InsertSelectWrite<TTable>, TTable>;
 }
 
-/** `INSERT INTO table (columns) <select>`: the select's projection names the columns. */
+/** `INSERT INTO table (columns) <select>`: the columns the select reads name the columns. */
 export const createInsertSelect = <TTable extends Table>(
   adaptor: () => DatabaseAdaptor,
   table: TTable,
-  select: Compilable & { [SELECT_QUERY]: { query: { projection?: object } } },
+  select: Compilable & { [SELECT_QUERY]: { query: { projection?: object; fields: readonly { key: unknown }[] } } },
   conflict?: Conflict,
   clause?: WithClause,
 ): InsertSelectWrite<TTable> => {
-  const projection = select[SELECT_QUERY].query.projection;
-  if (!projection) throw new Error("[zodbase] An insert from a select needs the select's projection");
-  const columns = Object.keys(projection);
+  const { projection, fields } = select[SELECT_QUERY].query;
+  // A projection of only its table's own columns, read as they are, is kept as the select's fields.
+  const columns = projection ? Object.keys(projection) : fields.map((field) => String(field.key));
   // biome-ignore lint/suspicious/noPrototypeBuiltins: The library targets ES2015.
   if (!columns.length || columns.some((key) => !Object.prototype.hasOwnProperty.call(table.fields, key)))
     throw new Error("[zodbase] Invalid insert projection");

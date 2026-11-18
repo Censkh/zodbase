@@ -92,6 +92,18 @@ export const resolveIncoming = (
 };
 
 /** The fields `incoming(…)` names in `condition`. */
+/** On a lazily initialized adaptor, resolves to the adaptor it initializes. */
+export const RESOLVE_ADAPTOR = Symbol("zodbase.resolveAdaptor");
+
+/**
+ * The adaptor, initialized: a lazy one (`DatabaseOptions.adaptor` as a function) forwards only what
+ * runs a statement, so anything that builds SQL with it must resolve it first.
+ */
+export const resolveAdaptor = async (adaptor: DatabaseAdaptor): Promise<DatabaseAdaptor> => {
+  const lazy = adaptor as DatabaseAdaptor & { [RESOLVE_ADAPTOR]?: () => Promise<DatabaseAdaptor> };
+  return lazy[RESOLVE_ADAPTOR] ? lazy[RESOLVE_ADAPTOR]() : adaptor;
+};
+
 export const incomingFields = (condition: SelectCondition | undefined): string[] => {
   if (!condition || "exists" in condition) return [];
   if ("conditions" in condition) return condition.conditions.flatMap((child) => incomingFields(child));
