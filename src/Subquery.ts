@@ -53,7 +53,10 @@ export const snapshotQuery = (query: SelectQuery): SelectQuery => ({
   fields: [...query.fields],
   orderBy: query.orderBy.map((order) => ({ ...order })),
   where: query.where ? snapshotCondition(query.where) : undefined,
-  joins: query.joins?.map((join) => ({ ...join, on: snapshotCondition(join.on) })),
+  joins: query.joins?.map((join) =>
+    join.type === "CROSS" ? { ...join } : { ...join, on: snapshotCondition(join.on) },
+  ),
+  groupBy: query.groupBy ? [...query.groupBy] : undefined,
   projection: query.projection ? (snapshotValue(query.projection) as SelectQuery["projection"]) : undefined,
   includes: query.includes
     ? Object.fromEntries(Object.entries(query.includes).map(([key, child]) => [key, snapshotQuery(child)]))

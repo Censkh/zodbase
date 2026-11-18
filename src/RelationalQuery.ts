@@ -14,7 +14,15 @@ import { isZodTypeExtends } from "./ZodUtils";
 
 export type SelectDialect = "postgres" | "sqlite" | "mysql" | "mariadb" | "mssql";
 export const isRelationalQuery = (query: SelectQuery) =>
-  Boolean(query.joins?.length || query.projection || query.includes || query.table.sourceTable || query.with);
+  Boolean(
+    query.joins?.length ||
+      query.projection ||
+      query.includes ||
+      query.table.sourceTable ||
+      query.table.rows ||
+      query.with ||
+      query.groupBy?.length,
+  );
 export const isTable = (value: unknown): value is Table =>
   !!value &&
   typeof value === "object" &&
@@ -49,8 +57,11 @@ export const compileRelationalQuery = (
     reserved.add(name);
     return name;
   };
+  // A table of literal rows (`values`) reads them as a derived table under its own name.
   const tableSource = (table: Table) =>
-    `${q(String(table.sourceTable?.id ?? table.id))}${table.sourceTable ? ` AS ${q(String(table.id))}` : ""}`;
+    table.rows
+      ? `${adaptor.rowsSourceSql(table, table.rows)} AS ${q(String(table.id))}`
+      : `${q(String(table.sourceTable?.id ?? table.id))}${table.sourceTable ? ` AS ${q(String(table.id))}` : ""}`;
   const compile = (
     query: SelectQuery,
     outer: Map<string, Table>,
@@ -101,8 +112,12 @@ export const compileRelationalQuery = (
         if (join.type === "LEFT") {
           const marker = unique();
           markers.set(join.table, marker);
-          return `LEFT JOIN (SELECT *, 1 AS ${q(marker)} FROM ${q(String(join.table.sourceTable?.id ?? join.table.id))}) AS ${q(String(join.table.id))} ON ${condition(join.on)}`;
+          const source = join.table.rows
+            ? `${adaptor.rowsSourceSql(join.table, join.table.rows)} AS ${q(unique())}`
+            : q(String(join.table.sourceTable?.id ?? join.table.id));
+          return `LEFT JOIN (SELECT *, 1 AS ${q(marker)} FROM ${source}) AS ${q(String(join.table.id))} ON ${condition(join.on)}`;
         }
+        if (join.type === "CROSS") return `CROSS JOIN ${tableSource(join.table)}`;
         return `INNER JOIN ${tableSource(join.table)} ON ${condition(join.on)}`;
       })
       .join(" ");
@@ -210,7 +225,8 @@ export const compileRelationalQuery = (
         suffix += ` LIMIT ${dialect === "sqlite" ? "-1" : "18446744073709551615"}`;
       if (query.offset !== undefined) suffix += ` OFFSET ${query.offset}`;
     }
-    const from = `FROM ${tableSource(query.table)} ${joins}${query.where ? ` WHERE ${condition(query.where)}` : ""}`;
+    const grouping = query.groupBy?.length ? ` GROUP BY ${query.groupBy.map((field) => ref(field)).join(", ")}` : "";
+    const from = `FROM ${tableSource(query.table)} ${joins}${query.where ? ` WHERE ${condition(query.where)}` : ""}${grouping}`;
     return {
       sql: `SELECT ${top}${expressions.join(", ")} ${from}${suffix}`,
       columns,

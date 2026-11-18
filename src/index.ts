@@ -376,6 +376,14 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
       (query.joins ??= []).push({ type: "INNER", table, on });
       return this;
     },
+    crossJoin(table: Table) {
+      (query.joins ??= []).push({ type: "CROSS", table });
+      return this;
+    },
+    groupBy(...fields: SingleFieldBinding[]) {
+      (query.groupBy ??= []).push(...fields);
+      return this;
+    },
     include(includes: Record<string, { [SELECT_QUERY]: { query: SelectQuery } }>) {
       query.includes = {
         ...query.includes,
@@ -888,7 +896,7 @@ export const mapSqlResult = <TFrom, TTo, TResultLimit extends number>(
 };
 
 export { metaStore } from "zod-meta";
-export { exists } from "./Bindings";
+export { exists, notExists } from "./Bindings";
 export type { default as DatabaseAdaptor } from "./DatabaseAdaptor";
 export * from "./MetaTypes";
 export type { SelectCondition, SelectQueryBuilder } from "./QueryBuilder";

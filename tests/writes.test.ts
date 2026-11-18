@@ -8,10 +8,13 @@ import {
   expression,
   incoming,
   metaStore,
+  notExists,
   primaryKey,
   sql,
+  sum,
   union,
   unionAll,
+  values,
 } from "../src";
 import {
   acquireTestDatabaseContainers,
@@ -157,6 +160,58 @@ describe.each(TEST_DATABASE_FACTORIES)("writes: $name", ({ name, create }) => {
       { id: "a", name: "Apples", count: 0 },
       { id: "b", name: "Bananas", count: 2 },
     ]);
+  });
+
+  it("groups rows, summing each group", async () => {
+    await db.insert(Counters, [...counters, { id: "d", name: "Apples", count: 10 }]);
+    const { results } = await db
+      .select(Counters, { name: Counters.$name, total: sum(Counters.$count) })
+      .groupBy(Counters.$name)
+      .orderBy(Counters.$name, "ASC");
+    expect(results).toEqual([
+      { name: "Apples", total: 11 },
+      { name: "Bananas", total: 2 },
+      { name: "Cherries", total: 3 },
+    ]);
+  });
+
+  it("reads literal rows as a table, pairing them with a query's rows by a cross join", async () => {
+    await db.insert(Counters, counters);
+    const Labels = createTable({
+      id: "writes_labels",
+      schema: zod.object({ suffix: zod.string(), position: zod.number().int() }),
+    });
+    const labels = values(Labels, [
+      { suffix: "one", position: 1 },
+      { suffix: "two", position: 2 },
+    ]);
+    expect((await db.select(labels).orderBy(labels.$position, "ASC")).results).toEqual([
+      { suffix: "one", position: 1 },
+      { suffix: "two", position: 2 },
+    ]);
+    await db
+      .insert(Copies)
+      .select(
+        db
+          .select(Counters, { id: labels.$suffix, label: Counters.$name })
+          .crossJoin(labels)
+          .where(Counters.$id.equals("a")),
+      );
+    expect((await db.select(Copies).orderBy(Copies.$id, "ASC")).results).toEqual([
+      { id: "one", label: "Apples" },
+      { id: "two", label: "Apples" },
+    ]);
+    expect((await db.select(values(Labels, []))).results).toEqual([]);
+  });
+
+  it("matches rows where a correlated query gives no row", async () => {
+    await db.insert(Counters, counters);
+    await db.insert(Copies, { id: "b", label: "Bananas" });
+    const { results } = await db
+      .select(Counters, { id: Counters.$id })
+      .where(notExists(db.select(Copies, { id: Copies.$id }).where(Copies.$id.equals(Counters.$id))))
+      .orderBy(Counters.$id, "ASC");
+    expect(results).toEqual([{ id: "a" }, { id: "c" }]);
   });
 
   it("refuses to update or delete without a where condition", async () => {

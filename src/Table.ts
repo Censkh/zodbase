@@ -77,6 +77,8 @@ export type Table<
   Omit<TableOptions<TValue, TName, TSchema>, "id"> & {
     id: TName & ToSql;
     sourceTable?: Table;
+    /** The literal rows a `values` table reads, in place of a stored table. */
+    rows?: readonly Record<string, unknown>[];
     fields: Bindings<TValue, TName>;
     indexes: TableIndex[];
     addIndex(id: string, fields: SingleFieldBinding[], options?: TableIndexOptions): Table<TValue, TName, TSchema>;
@@ -246,6 +248,18 @@ export const alias = <T extends Table, N extends string>(
   const aliased = createTable({ id: name, schema: table.schema });
   aliased.sourceTable = table.sourceTable ?? table;
   return aliased as Table<zod.infer<T["schema"]>, N, T["schema"]>;
+};
+
+/**
+ * A table whose rows are `rows`, parsed by `table`'s schema, read under `table`'s name: select from
+ * it, or join it, to use literal rows as a query's input (`SELECT … FROM (rows) AS name`). Like a
+ * named query's table, `table` is a `createTable` of the rows' shape that is never synced.
+ */
+export const values = <T extends Table>(table: T, rows: readonly zod.input<T["schema"]>[]): T => {
+  const parsed = rows.map((row) => (table.schema as zod.ZodType).parse(row) as Record<string, unknown>);
+  const source = createTable({ id: String(table.id), schema: table.schema });
+  source.rows = parsed;
+  return source as unknown as T;
 };
 
 /** The computed columns of a table (`computed`), by key. */

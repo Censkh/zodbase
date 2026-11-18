@@ -123,6 +123,32 @@ const many = await db.select(Users).count({ upTo: 1000 });
 
 `.count()` counts the rows the query matches, without applying its order, limit, or offset. To count a field's non-null values, add `.where(field.notEquals(null))`.
 
+## Group and aggregate
+
+```ts
+import { sum } from "zodbase";
+
+const { results } = await db
+  .select(Orders, { customerId: Orders.$customerId, total: sum(Orders.$amount) })
+  .groupBy(Orders.$customerId);
+```
+
+The projection gives the grouped fields and aggregates of the rest.
+
+## Read literal rows as a table
+
+```ts
+import { values } from "zodbase";
+
+const Requested = createTable({ id: "requested", schema: z.object({ sku: z.string(), quantity: z.number() }) });
+const requested = values(Requested, [{ sku: "a", quantity: 2 }, { sku: "b", quantity: 1 }]);
+const { results } = await db
+  .select(requested, { sku: requested.$sku, quantity: requested.$quantity, stock: Stock.$count })
+  .innerJoin(Stock, Stock.$sku.equals(requested.$sku));
+```
+
+`values(table, rows)` parses the rows by the table's schema and reads them as a derived table under its name, each value cast to its column's type. `crossJoin(table)` pairs every row with every row of `table`, such as a single-row named query's.
+
 ## Force an index
 
 ```ts

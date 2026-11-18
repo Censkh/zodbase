@@ -26,6 +26,10 @@ This reference summarizes the current API. Zodbase is under active development; 
 | `.clone()` | Copies a select builder for independent changes. |
 | `.forceIndex(name)` | Looks rows up through one of the table's indexes, never by scanning a whole index, on CockroachDB; ignored elsewhere. |
 | `.count({ upTo? })` | The number of matching rows; with `upTo`, reads at most that many. |
+| `.groupBy(...fields)` | One row per group, for aggregates such as `sum`. |
+| `.crossJoin(table)` | Pairs every row with every row of `table`. |
+| `values(table, rows)` | Literal rows read as a table under `table`'s name. |
+| `exists(query)` / `notExists(query)` | Whether a (correlated) query gives any row. |
 
 ## Writes
 

@@ -81,6 +81,8 @@ await db.update(Users, { name: "Ada Lovelace" }).where(Users.$id.equals("ada"));
 
 Omitted fields stay unchanged, including defaults and generated IDs. An explicit `null` is preserved if the schema permits it. An empty update object is rejected. Repeated `.where(...)` calls must all hold, as on a select. Running an update without a condition is rejected.
 
+A field marked `updatedAt()` is stamped with the current time on every update unless the update sets it itself; set it to its own column, `{ updatedAt: Users.$updatedAt }`, to leave it as it is. Any update value may name a column this way.
+
 Values can be expressions of the row's own columns, such as a counter's next value:
 
 ```ts

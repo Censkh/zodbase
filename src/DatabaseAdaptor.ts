@@ -25,7 +25,7 @@ import type {
   StringKeys,
   ValueOfTable,
 } from "./QueryBuilder";
-import { buildConditionSql, isScalarSelect, SELECT_QUERY } from "./QueryBuilder";
+import { buildConditionSql, isFieldReference, isScalarSelect, SELECT_QUERY } from "./QueryBuilder";
 import type { QueryStatement, WithClause } from "./QueryStatement";
 import { compileRelationalQuery, type SelectDialect } from "./RelationalQuery";
 import { divideSql, IncomingValue, SqlExpression } from "./SqlExpression";
@@ -126,7 +126,11 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   }
 
   valueToSql(value: unknown, nested = false): string {
-    return value instanceof SqlExpression ? value.toSql(this) : valueToSql(value, nested);
+    if (value instanceof SqlExpression) return value.toSql(this);
+    // A column as a value (`update(T, { at: T.$at })`), quoted as this database quotes names.
+    if (isFieldReference(value))
+      return `${this.quoteIdentifier(String(value.table.id))}.${this.quoteIdentifier(String(value.key))}`;
+    return valueToSql(value, nested);
   }
 
   divideSql(dividend: string, divisor: string): string {
@@ -558,6 +562,22 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
           .join(", ")}${this.tablelessSelectSql}${where}`,
     );
     return this.buildInsertSelectSql(table, columns, raw(selects.join(" UNION ALL ")), shouldReturn, conflict);
+  }
+
+  /**
+   * A derived table of `rows` with `table`'s columns (`values`), each value cast to its column's
+   * type: `(SELECT … UNION ALL SELECT …)`, which every dialect reads, unlike VALUES with column names.
+   */
+  rowsSourceSql(table: Table, rows: readonly Record<string, unknown>[]): string {
+    const fields = Object.entries(table.fields as Record<string, { schema: zod.ZodType }>);
+    const select = (row?: Record<string, unknown>) =>
+      `SELECT ${fields
+        .map(
+          ([key, field]) =>
+            `${this.insertSelectValueSql(row ? this.valueToSql(row[key], true) : "NULL", field.schema)} AS ${this.quoteIdentifier(key)}`,
+        )
+        .join(", ")}`;
+    return `(${rows.length ? rows.map((row) => select(row)).join(" UNION ALL ") : `${select()}${this.tablelessSelectSql} WHERE 1 = 0`})`;
   }
 
   /** What a select of no table takes before a WHERE: MySQL's `FROM DUAL`. */

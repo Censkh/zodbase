@@ -35,7 +35,8 @@ export type InsertValues<TTable extends Table> = {
 export type UpdateValues<TTable extends Table> = {
   [K in keyof InputOfTable<TTable>]?:
     | InputOfTable<TTable>[K]
-    | SqlExpression<zod.ZodType<ValueOfTable<TTable>[K & keyof ValueOfTable<TTable>]>>;
+    | SqlExpression<zod.ZodType<ValueOfTable<TTable>[K & keyof ValueOfTable<TTable>]>>
+    | FieldReference<ValueOfTable<TTable>[K & keyof ValueOfTable<TTable>]>;
 };
 
 export type StringKeys<T> = {
@@ -132,6 +133,8 @@ export interface BaseSelectCondition<TValue> {
 
 export interface SelectExistsCondition<TValue> extends BaseSelectCondition<TValue> {
   exists: Compilable;
+  /** NOT EXISTS: true when the query gives no row (`notExists`). */
+  negated?: boolean;
 }
 
 export interface SelectCompoundCondition<TValue> extends BaseSelectCondition<TValue> {
@@ -209,7 +212,8 @@ const buildValidatedConditionSql = (
     )})`;
   }
 
-  if ("exists" in condition) return sql`EXISTS (${toQueryStatement(condition.exists).compile(adaptor)})`;
+  if ("exists" in condition)
+    return sql`${raw(condition.negated ? "NOT " : "")}EXISTS (${toQueryStatement(condition.exists).compile(adaptor)})`;
 
   const fieldSql = `${includeTable ? `${adaptor.quoteIdentifier(String(condition.field.table.id))}.` : ""}${adaptor.quoteIdentifier(String(condition.field.key))}`;
 
@@ -257,7 +261,13 @@ const buildValidatedConditionSql = (
 
 export interface SelectQuery<TTable extends Table = Table, TLimit extends number = number> {
   table: TTable;
-  joins?: { type: "LEFT" | "INNER"; table: Table; on: SelectCondition }[];
+  /** Joined tables: a cross join pairs every row with every row of its table, so it has no `on`. */
+  joins?: (
+    | { type: "LEFT" | "INNER"; table: Table; on: SelectCondition }
+    | { type: "CROSS"; table: Table; on?: undefined }
+  )[];
+  /** The fields its rows are grouped by, for aggregates such as `sum`. */
+  groupBy?: SingleFieldBinding[];
   projection?: Selection;
   includes?: Record<string, SelectQuery>;
   fields: FieldBinding<ValueOfTable<TTable>>[];
@@ -355,6 +365,17 @@ export type SelectQueryBuilder<
       table: T,
       on: SelectCondition,
     ): SelectQueryBuilder<TTable, TResultValue, TResultLimit, TNullable, TProjection, TIncludes>;
+    /** Pairs each row with every row of `table`, such as one row of a single-row named query. */
+    crossJoin<T extends Table>(
+      table: T,
+    ): SelectQueryBuilder<TTable, TResultValue, TResultLimit, TNullable, TProjection, TIncludes>;
+    /**
+     * Groups the rows by `fields`: one row a group, whose projection gives those fields and
+     * aggregates (`sum`, …) of the rest.
+     */
+    groupBy(
+      ...fields: SingleFieldBinding[]
+    ): SelectQueryBuilder<TTable, TResultValue, TResultLimit, TNullable, TProjection, TIncludes>;
     include<I extends Record<string, IncludeQuery>>(
       includes: I,
     ): SelectQueryBuilder<
@@ -414,7 +435,15 @@ export const assertSelectArguments = (query: SelectQuery) => {
   // The name is spliced into SQL text, so only the table's declared indexes are accepted.
   if (query.index !== undefined) {
     if (!query.table.indexes.some(({ id }) => id === query.index)) throw new Error("Invalid index");
-    if (query.joins?.length || query.includes || query.projection || query.table.sourceTable || query.with)
+    if (
+      query.joins?.length ||
+      query.includes ||
+      query.projection ||
+      query.table.sourceTable ||
+      query.table.rows ||
+      query.with ||
+      query.groupBy?.length
+    )
       throw new Error("An index hint applies to a single-table select");
   }
 };

@@ -32,7 +32,7 @@ export class SqlExpression<T extends zod.ZodType = zod.ZodType> implements ToSql
  * with the existing row's (`{ count: add(T.$count, incoming(T.$count)) }`). Anywhere else it has no
  * value, and building it throws.
  */
-export class IncomingValue<T = unknown> extends SqlExpression {
+export class IncomingValue<T = unknown> extends SqlExpression<zod.ZodType<T>> {
   constructor(readonly field: FieldReference<T>) {
     super((adaptor) => {
       if (adaptor?.incomingSql) return adaptor.incomingSql(String(field.key));

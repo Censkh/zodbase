@@ -130,6 +130,10 @@ export const createTableBinding = <TTable extends Table>(table: TTable): Binding
 /** True when the query gives any row; compiled with the condition. */
 export const exists = (query: Compilable): SelectCondition => createSelectCondition({ exists: query });
 
+/** True when the query gives no row; compiled with the condition. */
+export const notExists = (query: Compilable): SelectCondition =>
+  createSelectCondition({ exists: query, negated: true });
+
 const createSelectCondition = (options: Omit<SelectCondition, "and" | "or">): SelectCondition => {
   return {
     ...options,

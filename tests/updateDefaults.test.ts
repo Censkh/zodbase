@@ -57,6 +57,15 @@ describe.each(TEST_DATABASE_FACTORIES)("partial update defaults: $name", ({ crea
     expect(defaultCalls).toBe(0);
   });
 
+  it("keeps an update's own change time, or the stored one it names, rather than stamping", async () => {
+    await database.update(table, { name: "Set", changedAt: 7 }).where(table.$id.equals("first"));
+    await database.update(table, { name: "Kept", changedAt: table.$changedAt }).where(table.$id.equals("first"));
+    expect((await database.select(table).where(table.$id.equals("first"))).first).toMatchObject({
+      name: "Kept",
+      changedAt: 7,
+    });
+  });
+
   it("does not replace omitted defaults in ordinary updates", async () => {
     await database.update(table, { credits: 10 }).where(table.$id.equals("first"));
     expect((await database.select(table).where(table.$id.equals("first"))).first).toMatchObject({

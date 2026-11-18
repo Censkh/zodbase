@@ -15,7 +15,7 @@ import type {
   UpdateValues,
   ValueOfTable,
 } from "./QueryBuilder";
-import { isScalarSelect, SELECT_QUERY } from "./QueryBuilder";
+import { isFieldReference, isScalarSelect, SELECT_QUERY } from "./QueryBuilder";
 import { COMPILE, type Compilable, toQueryStatement, type WithClause } from "./QueryStatement";
 import { SqlExpression } from "./SqlExpression";
 import type { Statement } from "./Statement";
@@ -108,9 +108,12 @@ export const parseUpdateValues = (table: Table, values: Record<string, unknown>)
     // biome-ignore lint/suspicious/noPrototypeBuiltins: Consumers may target Object APIs older than ES2022.
     if (!Object.prototype.hasOwnProperty.call(schema.shape, key)) continue;
     const value = values[key];
-    parsed[key] = value instanceof SqlExpression ? value : schema.shape[key].parse(value);
+    // An expression or a column (`{ at: T.$at }`) is the database's to evaluate.
+    parsed[key] = value instanceof SqlExpression || isFieldReference(value) ? value : schema.shape[key].parse(value);
   }
-  for (const field of findFieldMetaItems(table.schema, updatedAt)) parsed[field.key] = Date.now();
+  // Stamped unless the update sets it itself, such as to its own column to leave it as it is.
+  for (const field of findFieldMetaItems(table.schema, updatedAt))
+    if (parsed[field.key] === undefined) parsed[field.key] = Date.now();
   for (const field of findFieldMetaItems(table.schema, monotonicTimestamp)) {
     const now = Date.now();
     parsed[field.key] = new SqlExpression((target) => {
@@ -511,6 +514,9 @@ export const createUpdateRows = <TTable extends Table>(
       found[key] = values[key];
       delete values[key];
     }
+    // Each row's values are sent as a table of literals, which can't name the row's own columns.
+    for (const [key, value] of Object.entries(values))
+      if (isFieldReference(value)) throw new Error(`[zodbase] A row of an update by key can't set ${key} to a column`);
     return { ...found, ...(Object.keys(values).length ? parseUpdateValues(table, values) : {}) };
   });
   for (const key of incomingFields(where))
