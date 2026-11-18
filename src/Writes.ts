@@ -20,7 +20,7 @@ import { COMPILE, type Compilable, toQueryStatement, type WithClause } from "./Q
 import { SqlExpression } from "./SqlExpression";
 import type { Statement } from "./Statement";
 import { hasSubqueries, isSubquery, snapshotCondition, snapshotQuery } from "./Subquery";
-import { computedFields, type Table, withComputed, withoutComputed } from "./Table";
+import { computedFields, getPrimaryKey, type Table, withComputed, withoutComputed } from "./Table";
 
 /**
  * A write as `Database.batch` and writable CTEs take it: how to run it on its own, and the one
@@ -435,6 +435,26 @@ export const createUpdate = <TTable extends Table>(
     return {
       async run(target) {
         const filter = snapshotCondition(requireWhere("Update", condition));
+        const key = getPrimaryKey(table);
+        // A database that can't return the rows it updates (MySQL) updates the rows it found
+        // matching, by key, and reads those back: the update may change whether a row matches.
+        if (returning && key.length && !target.updateReturnsRows) {
+          const select = (fields: unknown[], where: SelectCondition) =>
+            target.executeSelect({
+              table,
+              fields: fields as any,
+              where,
+              orderBy: [],
+              limit: undefined,
+              offset: undefined,
+            });
+          const bindings = key.map((name) => (table as any)[`$${name}`] as SingleFieldBinding);
+          const { results: matched } = (await select(bindings, filter)) as SqlResult<Record<string, unknown>>;
+          if (!matched.length) return read({ results: [], first: undefined });
+          const updated = matched.map((row) => keyCondition(bindings, row)).reduce((all, next) => all.or(next));
+          await target.executeUpdate(table, parsed as any, conditionAnd(filter, updated) as any, false);
+          return read(await select([{ table, key: "*" }], updated));
+        }
         const result = await target.executeUpdate(table, parsed as any, filter as any, returning);
         if (!returning) return EMPTY;
         if (result.selected) return read(result);

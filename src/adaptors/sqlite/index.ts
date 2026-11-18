@@ -20,6 +20,7 @@ import { quoteIdentifier } from "../../Escaping";
 import {
   buildConditionSql,
   type InputOfTable,
+  SELECT_QUERY,
   type SelectCondition,
   type SelectQuery,
   type SingleFieldBinding,
@@ -29,8 +30,11 @@ import {
   type ValueOfTable,
 } from "../../QueryBuilder";
 import { isRelationalQuery } from "../../RelationalQuery";
-import type { Statement } from "../../Statement";
+import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
+import { isSubquery } from "../../Subquery";
 import { type LiveTableSchema, type SchemaTableInfo, type TableIndex, writableFieldKeys } from "../../Table";
+import { spliceNulCharacters } from "../SqlText";
+import { caseInsensitiveGlob } from "./CaseFolding";
 
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
 
@@ -225,6 +229,65 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
   }
 
   protected override selectDialect = "sqlite" as const;
+
+  /**
+   * Rows as one multi-row VALUES, its columns named: SQLite refuses a compound SELECT of more than
+   * 500 terms, so a UNION ALL of one SELECT per row can't hold more rows than that.
+   */
+  private valuesSql(columns: readonly string[], rows: readonly Record<string, unknown>[]): string {
+    const values = rows.map(
+      (row) =>
+        `(${columns
+          .map((column) => {
+            const value = row[column];
+            return isSubquery(value)
+              ? `(${this.buildSelectSql(value[SELECT_QUERY].query, true)[TO_SQL_SYMBOL]()})`
+              : this.valueToSql(value, true);
+          })
+          .join(", ")})`,
+    );
+    const named = columns.map(
+      (column, index) => `${this.quoteIdentifier(`column${index + 1}`)} AS ${this.quoteIdentifier(column)}`,
+    );
+    return `SELECT ${named.join(", ")} FROM (VALUES ${values.join(", ")})`;
+  }
+
+  override rowsSourceSql(table: Table, rows: readonly Record<string, unknown>[]): string {
+    if (!rows.length) return super.rowsSourceSql(table, rows);
+    return `(${this.valuesSql(Object.keys(table.fields), rows)})`;
+  }
+
+  override buildConditionalInsertSql(
+    table: Table,
+    rows: readonly Record<string, unknown>[],
+    condition: SelectCondition | undefined,
+    shouldReturn: boolean,
+    conflict?: Conflict,
+  ): Statement {
+    const columns = writableFieldKeys(table);
+    const where = condition ? ` WHERE ${buildConditionSql(this, condition, true)[TO_SQL_SYMBOL]()}` : "";
+    return this.buildInsertSelectSql(
+      table,
+      columns,
+      raw(`${this.valuesSql(columns, rows)}${where}`),
+      shouldReturn,
+      conflict,
+    );
+  }
+
+  // SQLite reads a statement's text only up to a NUL character, but stores one in a string.
+  protected override sqlText(statement: Statement): string {
+    return spliceNulCharacters(super.sqlText(statement), "char(0)");
+  }
+
+  // SQLite's LIKE and LOWER fold only ASCII letters, so these match through GLOB character classes.
+  override buildPatternMatchSql(fieldSql: string, pattern: string, negate: boolean): Statement {
+    return sql`${raw(fieldSql)} ${raw(negate ? "NOT GLOB" : "GLOB")} ${caseInsensitiveGlob(pattern, true)}`;
+  }
+
+  override buildContainsTextSql(fieldSql: string, text: string): Statement {
+    return sql`${raw(fieldSql)} GLOB ${`*${caseInsensitiveGlob(text, false)}*`}`;
+  }
 
   override buildSelectSql(select: SelectQuery, scalar = false, named = false): Statement {
     if (isRelationalQuery(select)) return this.buildRelationalSelectSql(select, scalar, named);

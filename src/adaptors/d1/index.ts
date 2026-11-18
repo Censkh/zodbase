@@ -45,7 +45,7 @@ export default class D1Adaptor extends SqliteAdaptor<D1Database> {
   protected override async executeReads(statements: Statement[]): Promise<SqlResult[]> {
     if (statements.length === 0) return [];
     const results = await this.driver.batch(
-      statements.map((statement) => prepare(this.driver, statement[TO_SQL_SYMBOL]())),
+      statements.map((statement) => prepare(this.driver, this.sqlText(statement))),
     );
     return results.map(({ results }) => this.mapResult({ results, first: results[0] }));
   }
@@ -55,7 +55,7 @@ export default class D1Adaptor extends SqliteAdaptor<D1Database> {
       throw new Error("Invalid statement");
     }
 
-    const rawSql = statement[TO_SQL_SYMBOL]();
+    const rawSql = this.sqlText(statement);
     const preparedStatement = prepare(this.driver, rawSql);
     const normalizedSql = rawSql.trim().toUpperCase();
     const returnsRows =
@@ -84,7 +84,7 @@ export default class D1Adaptor extends SqliteAdaptor<D1Database> {
     const statements = values.map((value) => {
       return prepare(
         this.driver,
-        this.buildUpdateSql(table, value, keyCondition(fields, value, where) as any)[TO_SQL_SYMBOL](),
+        this.sqlText(this.buildUpdateSql(table, value, keyCondition(fields, value, where) as any)),
       );
     });
 
@@ -108,7 +108,7 @@ class D1BatchTransactionAdaptor extends D1Adaptor {
     if (typeof statement?.[TO_SQL_SYMBOL] !== "function") {
       throw new Error("Invalid statement");
     }
-    const rawSql = statement[TO_SQL_SYMBOL]();
+    const rawSql = this.sqlText(statement);
     const normalizedSql = rawSql.trim().toUpperCase();
     if (
       normalizedSql.startsWith("SELECT") ||

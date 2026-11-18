@@ -18,7 +18,7 @@ export default class BunSqliteAdaptor extends SqliteAdaptor<BunDatabase> {
     if (typeof statement?.[TO_SQL_SYMBOL] !== "function") {
       throw new Error("Invalid statement");
     }
-    const rawSql = statement[TO_SQL_SYMBOL]();
+    const rawSql = this.sqlText(statement);
     const preparedStatement = this.driver.prepare(rawSql);
 
     const res = await preparedStatement.all();

@@ -69,15 +69,18 @@ SQL LIKE uses `%` for any sequence and `_` for one character. Whether comparison
 
 | Method | Meaning |
 | --- | --- |
-| `.equals(value)` / `.notEquals(value)` | Equality / inequality; null renders as `IS NULL` / `IS NOT NULL`. |
+| `.equals(value)` / `.notEquals(value)` | Equality / inequality; null renders as `IS NULL` / `IS NOT NULL`. Text compares exactly, so `"a"` doesn't equal `"A"` or `"a "`, except in SQL Server, where the column's collation decides. |
 | `.greaterThan(value)` / `.lessThan(value)` | Strict comparisons. |
 | `.greaterThanOrEquals(value)` / `.lessThanOrEquals(value)` | Inclusive comparisons. |
-| `.in(values)` / `.notIn(values)` | Membership in a value list. |
+| `.in(values)` / `.notIn(values)` | Membership in a value list. A null in the list matches a null value, as `.equals(null)` does. |
 | `.like(pattern)` | SQL LIKE matching. |
-| `.matches(pattern)` / `.notMatches(pattern)` | Case-insensitive match where `*` is the only wildcard. |
+| `.matches(pattern)` / `.notMatches(pattern)` | Case-insensitive match where `*` is the only wildcard. Letters of every alphabet match their other case, `"É"` matching `"é"`. |
+| `.containsText(text)` | Case-insensitive substring match, every character in the text literal. |
 | `.contains(value)` | JSON-array membership, using the adaptor's implementation. |
 
 An empty `in([])` condition matches no rows. An empty `notIn([])` matches all rows. Use schema-compatible values; a nullable field is needed for a typed null equality check.
+
+Other comparisons follow SQL: a null value is neither equal nor unequal to a value, so `.notEquals("a")` and `.notIn(["a"])` don't match a row whose field is null. Add `.or(field.equals(null))` to include those.
 
 ## Order and paginate
 
@@ -89,7 +92,7 @@ const page = await db.select(Users, { id: Users.$id, name: Users.$name })
   .offset(40);
 ```
 
-Directions are uppercase `"ASC"` or `"DESC"`. Ordering calls append terms. Include a unique tie-breaker so records with the same name have a stable order. `.limit(0)` returns no rows. Offset pagination can shift when records are inserted or removed between requests.
+Directions are uppercase `"ASC"` or `"DESC"`. Ordering calls append terms. Null sorts as the smallest value in every database: first ascending, last descending. Include a unique tie-breaker so records with the same name have a stable order. `.limit(0)` returns no rows. Offset pagination can shift when records are inserted or removed between requests.
 
 For a simple keyset cursor ordered by a unique ID:
 
@@ -100,7 +103,7 @@ const page = await db.select(Users, { id: Users.$id, name: Users.$name })
   .limit(20);
 ```
 
-For multiple sort keys, build the corresponding compound continuation condition. Null ordering varies by database, so define an explicit policy for nullable cursor fields.
+For multiple sort keys, build the corresponding compound continuation condition, including where nulls sort for a nullable cursor field.
 
 ## Fetch one record
 

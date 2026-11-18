@@ -26,7 +26,7 @@ export default class ExpoSQLiteAdaptor extends SqliteAdaptor<ExpoSQLiteDatabase>
       throw new Error("Invalid statement");
     }
 
-    const rawSql = statement[TO_SQL_SYMBOL]();
+    const rawSql = this.sqlText(statement);
 
     try {
       // Use getAllAsync for SELECT queries, runAsync for others
@@ -72,7 +72,7 @@ export default class ExpoSQLiteAdaptor extends SqliteAdaptor<ExpoSQLiteDatabase>
     // Execute updates sequentially for expo-sqlite
     // (expo-sqlite doesn't have batch support like D1)
     for (const value of values) {
-      const sql = this.buildUpdateSql(table, value, keyCondition(fields, value, where) as any)[TO_SQL_SYMBOL]();
+      const sql = this.sqlText(this.buildUpdateSql(table, value, keyCondition(fields, value, where) as any));
       await this.driver.runAsync(sql);
     }
 

@@ -205,7 +205,7 @@ export const compileRelationalQuery = (
     const order = query.orderBy
       .map(({ field, direction }) => {
         if (direction !== "ASC" && direction !== "DESC") throw new Error("Invalid order direction");
-        return `${ref(field as SingleFieldBinding)} ${direction}`;
+        return adaptor.orderTermSql(ref(field as SingleFieldBinding), field as SingleFieldBinding, direction);
       })
       .join(", ");
     // Preserve collection ordering even on databases whose JSON aggregate ignores input order.

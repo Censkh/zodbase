@@ -258,6 +258,7 @@ describe("adaptor execution contract", () => {
     ).rejects.toBe(callbackError);
     expect(statements).toEqual([
       "SET SESSION sql_mode = CONCAT_WS(',', @@SESSION.sql_mode, 'NO_BACKSLASH_ESCAPES')",
+      "SET NAMES utf8mb4 COLLATE utf8mb4_0900_bin",
       "BEGIN",
       "UPDATE example SET id = 1",
       "ROLLBACK",

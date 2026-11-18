@@ -267,9 +267,7 @@ describe.each(TEST_DATABASE_FACTORIES)("edge cases: $name", ({ name: engine, cre
       .select(table, { id: table.$id })
       .orderBy(table.$optional, "ASC")
       .orderBy(table.$id, "ASC");
-    const nullsLast = engine === "postgres";
-    expect(ordered.results.map((row) => row.id)).toEqual(
-      nullsLast ? ["b", "d", "e", "a", "c"] : ["a", "c", "b", "d", "e"],
-    );
+    // NULL sorts first ascending in every database, PostgreSQL included.
+    expect(ordered.results.map((row) => row.id)).toEqual(["a", "c", "b", "d", "e"]);
   });
 });

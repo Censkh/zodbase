@@ -26,7 +26,7 @@ export default class BetterSqlite3Adaptor extends SqliteAdaptor<BetterSqlite3Dat
       throw new Error("Invalid statement");
     }
 
-    const preparedStatement = this.driver.prepare(statement[TO_SQL_SYMBOL]());
+    const preparedStatement = this.driver.prepare(this.sqlText(statement));
     let rows: unknown[] = [];
     if (preparedStatement.reader) {
       rows = preparedStatement.all();

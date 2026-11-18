@@ -23,7 +23,7 @@ interface SharedTestDatabases {
 }
 
 // Only the parent runner owns these disposable containers. Each test still gets its own database.
-const sharedDatabases: SharedTestDatabases | undefined = process.env.ZODBASE_TEST_DATABASES
+const sharedDatabases: Partial<SharedTestDatabases> | undefined = process.env.ZODBASE_TEST_DATABASES
   ? JSON.parse(process.env.ZODBASE_TEST_DATABASES)
   : undefined;
 
@@ -275,20 +275,29 @@ export const releaseCockroachTestContainer = async (): Promise<void> => {
   }
 };
 
+// `ZODBASE_TEST_ENGINES` (a comma-separated list of factory names) limits a run to those engines,
+// starting only the containers they need: `bun-sqlite,turso-local` needs none.
+const testEngines = process.env.ZODBASE_TEST_ENGINES?.split(",").map((name) => name.trim());
+const testsEngine = (...names: string[]) => !testEngines || names.some((name) => testEngines.includes(name));
+
 export const acquireTestDatabaseContainers = async (): Promise<void> => {
   const results = await Promise.allSettled([
-    acquirePostgresTestContainer(),
-    acquireMysqlTestContainers(),
-    acquireCockroachTestContainer(),
+    testsEngine("postgres") && acquirePostgresTestContainer(),
+    testsEngine("mysql", "mariadb") && acquireMysqlTestContainers(),
+    testsEngine("cockroach") && acquireCockroachTestContainer(),
   ]);
   for (const result of results) if (result.status === "rejected") throw result.reason;
 };
 
 export const releaseTestDatabaseContainers = async (): Promise<void> => {
-  await Promise.all([releasePostgresTestContainer(), releaseMysqlTestContainers(), releaseCockroachTestContainer()]);
+  await Promise.all([
+    testsEngine("postgres") && releasePostgresTestContainer(),
+    testsEngine("mysql", "mariadb") && releaseMysqlTestContainers(),
+    testsEngine("cockroach") && releaseCockroachTestContainer(),
+  ]);
 };
 
-export const TEST_DATABASE_FACTORIES: TestDatabaseFactory[] = [
+const ALL_TEST_DATABASE_FACTORIES: TestDatabaseFactory[] = [
   { name: "bun-sqlite", create: createBunSqliteDatabase },
   { name: "turso-local", create: createTursoDatabase },
   { name: "postgres", create: createPostgresDatabase },
@@ -297,14 +306,17 @@ export const TEST_DATABASE_FACTORIES: TestDatabaseFactory[] = [
   { name: "mariadb", create: () => createMysqlDatabase("mariadb") },
 ];
 
+export const TEST_DATABASE_FACTORIES = ALL_TEST_DATABASE_FACTORIES.filter(({ name }) => testsEngine(name));
+
 export const getSharedTestDatabases = (): string => {
-  if (!postgresContainer || !cockroachContainer || !mysqlContainer || !mariadbContainer) {
-    throw new Error("Test containers must be started before sharing connection details");
-  }
-  return JSON.stringify({
-    postgres: postgresContainer.getConnectionUri(),
-    cockroach: cockroachContainer.getConnectionUri(),
-    mysql: mysqlOptions(mysqlContainer),
-    mariadb: mysqlOptions(mariadbContainer),
-  } satisfies SharedTestDatabases);
+  const started = {
+    postgres: postgresContainer?.getConnectionUri(),
+    cockroach: cockroachContainer?.getConnectionUri(),
+    mysql: mysqlContainer && mysqlOptions(mysqlContainer),
+    mariadb: mariadbContainer && mysqlOptions(mariadbContainer),
+  } satisfies Partial<SharedTestDatabases>;
+  for (const [engine, details] of Object.entries(started))
+    if (testsEngine(engine) && !details)
+      throw new Error("Test containers must be started before sharing connection details");
+  return JSON.stringify(started);
 };

@@ -94,6 +94,25 @@ export default class PostgresAdaptor<
     return sql`${raw(fieldSql)} @> ${raw(valueToSql([value], true))}::jsonb`;
   }
 
+  // PostgreSQL's text can't hold a NUL character, and its protocol ends a statement's text at one.
+  protected override sqlText(statement: Statement): string {
+    const text = super.sqlText(statement);
+    if (text.includes("\0")) throw new Error("[zodbase] PostgreSQL can't store a NUL character in text");
+    return text;
+  }
+
+  /** Whether this database sorts NULL as the smallest value already (CockroachDB does). */
+  protected sortsNullFirst = false;
+
+  // PostgreSQL sorts NULL as the largest value. Only a nullable column says otherwise, as an index
+  // only gives rows in the order it was built for.
+  override orderTermSql(columnSql: string, field: SingleFieldBinding, direction: "ASC" | "DESC"): string {
+    const schema = (field.table.fields as Record<string, { schema: zod.ZodType } | undefined>)[String(field.key)]
+      ?.schema;
+    if (this.sortsNullFirst || !schema || isZodRequired(schema)) return super.orderTermSql(columnSql, field, direction);
+    return `${columnSql} ${direction} ${direction === "ASC" ? "NULLS FIRST" : "NULLS LAST"}`;
+  }
+
   // LIKE is case-sensitive in PostgreSQL; ILIKE matches the other databases.
   override buildPatternMatchSql(fieldSql: string, pattern: string, negate: boolean): Statement {
     return sql`${raw(fieldSql)} ${raw(negate ? "NOT ILIKE" : "ILIKE")} ${this.toLikePattern(pattern)} ESCAPE '!'`;
@@ -105,7 +124,7 @@ export default class PostgresAdaptor<
     }
 
     const startTimestamp = Date.now();
-    const rawSql = statement[TO_SQL_SYMBOL]();
+    const rawSql = this.sqlText(statement);
 
     let success = false;
     let timings: SqlResultTimings | undefined;
@@ -162,9 +181,12 @@ export default class PostgresAdaptor<
                  select.orderBy.length > 0
                    ? sql` ORDER BY
                    ${raw(
-                     select.orderBy.map(
-                       (order) =>
-                         `${this.quoteIdentifier(String(select.table.id))}.${this.quoteIdentifier(String(order.field.key))} ${order.direction}`,
+                     select.orderBy.map((order) =>
+                       this.orderTermSql(
+                         `${this.quoteIdentifier(String(select.table.id))}.${this.quoteIdentifier(String(order.field.key))}`,
+                         order.field as SingleFieldBinding,
+                         order.direction,
+                       ),
                      ),
                    )}`
                    : raw("")
@@ -252,7 +274,7 @@ export default class PostgresAdaptor<
   override async executeTogether(statements: readonly Statement[]): Promise<SqlResult[] | undefined> {
     if (statements.length === 1) return [await this.execute(statements[0]!)];
     const startTimestamp = Date.now();
-    const rawSql = statements.map((statement) => statement[TO_SQL_SYMBOL]()).join(";\n");
+    const rawSql = statements.map((statement) => this.sqlText(statement)).join(";\n");
     let success = false;
     let timings: SqlResultTimings | undefined;
     try {

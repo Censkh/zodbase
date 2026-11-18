@@ -12,8 +12,9 @@ import {
   type TableColumnInfo,
 } from "../../index";
 import type { SelectQuery, SqlResult } from "../../QueryBuilder";
-import type { Statement } from "../../Statement";
+import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
 import PostgresAdaptor from "../postgres";
+import { spliceNulCharacters } from "../SqlText";
 import { cockroachLocality, cockroachRegion } from "./metadata";
 
 export default class CockroachAdaptor extends PostgresAdaptor {
@@ -22,6 +23,14 @@ export default class CockroachAdaptor extends PostgresAdaptor {
 
   // Hidden columns are the engine's own: rowid, crdb_region and hash-sharded index shards.
   protected override visibleColumnCondition = "AND is_hidden = 'NO'";
+
+  // CockroachDB reads a statement's text only up to a NUL character, but stores one in a string.
+  protected override sqlText(statement: Statement): string {
+    return spliceNulCharacters(statement[TO_SQL_SYMBOL](), "chr(0)");
+  }
+
+  // CockroachDB sorts NULL as the smallest value, as SQLite and MySQL do.
+  protected override sortsNullFirst = true;
 
   override divideSql(dividend: string, divisor: string): string {
     // Mixed integer, decimal and float operands can make CockroachDB resolve an invalid overload.

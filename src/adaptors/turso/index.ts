@@ -13,6 +13,7 @@ import type {
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
 import type { Table } from "../../Table";
 import SqliteAdaptor from "../sqlite";
+import { exactFloatLiterals } from "./ExactFloats";
 
 export default class TursoAdaptor extends SqliteAdaptor<Client> {
   protected override async executeTransaction<TResult>(
@@ -32,13 +33,19 @@ export default class TursoAdaptor extends SqliteAdaptor<Client> {
     }
   }
 
+  // libsql stores a NUL character in text but reads it back as the text's end, so it refuses one.
+  protected override sqlText(statement: Statement): string {
+    const text = statement[TO_SQL_SYMBOL]();
+    if (text.includes("\0")) throw new Error("[zodbase] libsql can't read back a NUL character in text");
+    return exactFloatLiterals(text);
+  }
+
   async execute(statement: Statement): Promise<SqlResult> {
     if (typeof statement?.[TO_SQL_SYMBOL] !== "function") {
       throw new Error("Invalid statement");
     }
 
-    const rawSql = statement[TO_SQL_SYMBOL]();
-    const res = await this.driver.execute(rawSql);
+    const res = await this.driver.execute(this.sqlText(statement));
 
     return this.mapResult({
       results: res.rows,
@@ -57,7 +64,7 @@ export default class TursoAdaptor extends SqliteAdaptor<Client> {
     where?: SelectCondition,
   ): Promise<SqlResult<void, 0>> {
     const statements = values.map((value) => {
-      return this.buildUpdateSql(table, value, keyCondition(fields, value, where) as any)[TO_SQL_SYMBOL]();
+      return this.sqlText(this.buildUpdateSql(table, value, keyCondition(fields, value, where) as any));
     });
 
     await this.driver.batch(statements, "write");

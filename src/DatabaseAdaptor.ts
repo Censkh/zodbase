@@ -357,6 +357,8 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   ): Promise<SqlResult<ValueOfTable<TTable>, TLimit>>;
   abstract execute(statement: Statement): Promise<SqlResult>;
   protected supportsSubqueryReturning = true;
+  /** Whether an update can return the rows it changed (MySQL's has no RETURNING). */
+  readonly updateReturnsRows: boolean = true;
   protected materializeRepeatedSubqueries = false;
 
   async compileStatement(statement: QueryStatement): Promise<Statement> {
@@ -659,6 +661,19 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
    */
   buildPatternMatchSql(fieldSql: string, pattern: string, negate: boolean): Statement {
     return sql`${raw(fieldSql)} ${raw(negate ? "NOT LIKE" : "LIKE")} ${this.toLikePattern(pattern)} ESCAPE '!'`;
+  }
+
+  /**
+   * One ORDER BY term. NULL sorts as the smallest value, first ascending and last descending, as
+   * SQLite, MySQL and CockroachDB order it.
+   */
+  orderTermSql(columnSql: string, _field: SingleFieldBinding, direction: "ASC" | "DESC"): string {
+    return `${columnSql} ${direction}`;
+  }
+
+  /** A statement's text, as this database is sent it. */
+  protected sqlText(statement: Statement): string {
+    return statement[TO_SQL_SYMBOL]();
   }
 
   /** Case-insensitive substring match. Every character in the search term is literal. */

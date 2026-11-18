@@ -67,6 +67,7 @@ export default class MysqlAdaptor<
     return value;
   }
   protected override supportsSubqueryReturning = false;
+  override readonly updateReturnsRows = false;
   override async transaction<TResult>(callback: (adaptor: DatabaseAdaptor) => Promise<TResult>): Promise<TResult> {
     if ("getConnection" in this.driver) {
       const connection = await this.driver.getConnection();
@@ -117,15 +118,17 @@ export default class MysqlAdaptor<
     if ("getConnection" in this.driver) {
       const connection = await this.driver.getConnection();
       try {
-        return await new MysqlAdaptor({ ...this.options, driver: connection }).execute(statement);
+        const Adaptor = this.constructor as new (options: DatabaseAdaptorOptions<Connection>) => MysqlAdaptor;
+        return await new Adaptor({ ...this.options, driver: connection }).execute(statement);
       } finally {
         connection.release();
       }
     }
-    // Our SQL literals use standard doubled quotes. MySQL must not reinterpret backslashes.
-    await (this.sessionReady ??= this.driver.query(
-      "SET SESSION sql_mode = CONCAT_WS(',', @@SESSION.sql_mode, 'NO_BACKSLASH_ESCAPES')",
-    ));
+    // Our SQL literals use standard doubled quotes. MySQL must not reinterpret backslashes. Literals
+    // take the tables' collation, so comparing or combining them with columns never mixes two.
+    await (this.sessionReady ??= this.driver
+      .query("SET SESSION sql_mode = CONCAT_WS(',', @@SESSION.sql_mode, 'NO_BACKSLASH_ESCAPES')")
+      .then(() => this.driver.query(`SET NAMES utf8mb4 COLLATE ${this.textCollation}`)));
 
     const startTimestamp = Date.now();
     const rawSql = statement[TO_SQL_SYMBOL]();
@@ -564,6 +567,17 @@ export default class MysqlAdaptor<
           .concat(constraint ? [raw(constraint)] : []),
         ", ",
       )}
-    )`;
+    ) DEFAULT CHARSET=utf8mb4 COLLATE=${raw(this.textCollation)}`;
+  }
+
+  /**
+   * Text compares as it does in the other databases: by its exact characters, so `'a'` isn't `'A'`
+   * and `'a '` isn't `'a'`. MySQL's default collation ignores case and trailing spaces.
+   */
+  protected textCollation = "utf8mb4_0900_bin";
+
+  // Text compares case-sensitively, so a case-insensitive match lowercases both sides.
+  override buildPatternMatchSql(fieldSql: string, pattern: string, negate: boolean): Statement {
+    return sql`LOWER(${raw(fieldSql)}) ${raw(negate ? "NOT LIKE" : "LIKE")} ${this.toLikePattern(pattern.toLowerCase())} ESCAPE '!'`;
   }
 }

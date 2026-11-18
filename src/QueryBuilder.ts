@@ -195,12 +195,43 @@ export const buildConditionSql = (
   return buildValidatedConditionSql(adaptor, condition, includeTable);
 };
 
+/**
+ * Past this many terms, an AND or OR chain is written as a balanced tree of parenthesised halves:
+ * SQLite, for one, parses a flat chain as nested pairs and refuses an expression nested more than
+ * 1000 deep, so a chain of a thousand ORs fails.
+ */
+const BALANCED_CHAIN_LENGTH = 32;
+
+/** The terms of an AND or OR, with those of the same operator nested in it (`a.or(b).or(c)`) lifted in. */
+const chainedTerms = (condition: SelectCondition & { type: "AND" | "OR"; conditions: SelectCondition[] }) => {
+  const terms: SelectCondition[] = [];
+  const pending = [...condition.conditions].reverse();
+  while (pending.length) {
+    const term = pending.pop();
+    if (!term) continue;
+    if ("conditions" in term && term.type === condition.type) pending.push(...[...term.conditions].reverse());
+    else terms.push(term);
+  }
+  return terms;
+};
+
+const balancedChainSql = (terms: Statement[], operator: string): Statement => {
+  if (terms.length === 1) return terms[0]!;
+  const middle = Math.ceil(terms.length / 2);
+  return sql`(${balancedChainSql(terms.slice(0, middle), operator)}${raw(operator)}${balancedChainSql(terms.slice(middle), operator)})`;
+};
+
 const buildValidatedConditionSql = (
   adaptor: DatabaseAdaptor,
   condition: SelectCondition,
   includeTable: boolean,
 ): Statement => {
   if ("conditions" in condition) {
+    const terms = chainedTerms(condition);
+    if (terms.length > BALANCED_CHAIN_LENGTH) {
+      const built = terms.map((term) => buildValidatedConditionSql(adaptor, term, includeTable));
+      return balancedChainSql(built, ` ${condition.type} `);
+    }
     return sql`(${join(
       condition.conditions.reduce((result, childCondition) => {
         if (childCondition) {
@@ -240,6 +271,20 @@ const buildValidatedConditionSql = (
     condition.value.length === 0
   ) {
     return sql`${raw(condition.operator === "IN" ? "1 = 0" : "1 = 1")}`;
+  }
+
+  // A missing value in the list matches a missing one, as `equals(null)` does: `IN (NULL)` never
+  // matches, and `NOT IN (NULL, …)` matches no row at all.
+  if (
+    (condition.operator === "IN" || condition.operator === "NOT IN") &&
+    Array.isArray(condition.value) &&
+    condition.value.some((value) => value == null)
+  ) {
+    const present = condition.value.filter((value) => value != null);
+    const negated = condition.operator === "NOT IN";
+    const missing = sql`${raw(fieldSql)} ${raw(negated ? "IS NOT NULL" : "IS NULL")}`;
+    if (!present.length) return missing;
+    return sql`(${missing} ${raw(negated ? "AND" : "OR")} ${raw(fieldSql)} ${raw(condition.operator)} ${raw(adaptor.valueToSql(present))})`;
   }
 
   if ((condition.operator === "IN" || condition.operator === "NOT IN") && isCompilable(condition.value)) {
