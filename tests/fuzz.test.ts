@@ -29,6 +29,7 @@ const createRows = () =>
       text: z.string().nullable(),
       num: z.number().nullable(),
       int: z.int().nullable(),
+      big: z.bigint().nullable(),
       flag: z.boolean().nullable(),
       tags: z.array(z.string()).nullable(),
     }),
@@ -85,6 +86,25 @@ const num = fc.oneof(
   { weight: 1, arbitrary: fc.double({ noNaN: true, noDefaultInfinity: true }).map((n) => (Object.is(n, -0) ? 0 : n)) },
 );
 const int = fc.oneof(fc.constantFrom(0, 1, -1, 2147483647, -2147483648), fc.integer({ min: -5, max: 5 }));
+// 64-bit integers, around where a double stops holding them exactly and at their limits.
+const BIG_LIMIT = 2n ** 63n;
+const big = fc.oneof(
+  {
+    weight: 3,
+    arbitrary: fc.constantFrom(
+      0n,
+      1n,
+      -1n,
+      2n ** 53n - 1n,
+      2n ** 53n,
+      2n ** 53n + 1n,
+      -(2n ** 53n) - 1n,
+      BIG_LIMIT - 1n,
+      -BIG_LIMIT,
+    ),
+  },
+  { weight: 1, arbitrary: fc.bigInt({ min: -BIG_LIMIT, max: BIG_LIMIT - 1n }) },
+);
 const nullable = <T>(arbitrary: fc.Arbitrary<T>) => fc.option(arbitrary, { nil: null, freq: 4 });
 const tags = fc.array(text, { maxLength: 3 });
 
@@ -92,6 +112,7 @@ const rowValues = fc.record({
   text: nullable(text),
   num: nullable(num),
   int: nullable(int),
+  big: nullable(big),
   flag: nullable(fc.boolean()),
   tags: nullable(tags),
 });
@@ -104,10 +125,10 @@ type Leaf =
   | { op: "equals" | "notEquals"; column: Column; value: unknown }
   | {
       op: "greaterThan" | "greaterThanOrEquals" | "lessThan" | "lessThanOrEquals";
-      column: "num" | "int";
-      value: number;
+      column: "num" | "int" | "big";
+      value: number | bigint;
     }
-  | { op: "in" | "notIn"; column: "text" | "num" | "int"; value: unknown[] }
+  | { op: "in" | "notIn"; column: "text" | "num" | "int" | "big"; value: unknown[] }
   | { op: "matches" | "notMatches"; column: "text"; value: string }
   | { op: "containsText"; column: "text"; value: string }
   | { op: "contains" | "notContains"; column: "tags"; value: string };
@@ -118,7 +139,7 @@ const patterns = fc.oneof(
   text,
   text.map((value) => `${value}*`),
 );
-const comparison = (column: "num" | "int", values: fc.Arbitrary<number>) =>
+const comparison = <T extends number | bigint>(column: "num" | "int" | "big", values: fc.Arbitrary<T>) =>
   fc.record({
     op: fc.constantFrom("greaterThan", "greaterThanOrEquals", "lessThan", "lessThanOrEquals" as const),
     column: fc.constant(column),
@@ -147,6 +168,17 @@ const leaf: fc.Arbitrary<Leaf> = fc.oneof(
   }),
   comparison("num", num),
   comparison("int", int),
+  comparison("big", big),
+  fc.record({
+    op: fc.constantFrom("equals", "notEquals" as const),
+    column: fc.constant("big" as const),
+    value: nullable(big),
+  }),
+  fc.record({
+    op: fc.constantFrom("in", "notIn" as const),
+    column: fc.constant("big" as const),
+    value: fc.array(nullable(big), { maxLength: 4 }),
+  }),
   fc.record({
     op: fc.constantFrom("in", "notIn" as const),
     column: fc.constant("text" as const),
@@ -342,7 +374,7 @@ describe.each(TEST_DATABASE_FACTORIES)("fuzz: $name", ({ create }) => {
     await fc.assert(
       fc.asyncProperty(
         rows,
-        fc.constantFrom("num" as const, "int" as const, "flag" as const),
+        fc.constantFrom("num" as const, "int" as const, "big" as const, "flag" as const),
         fc.constantFrom("ASC" as const, "DESC" as const),
         fc.option(fc.nat({ max: 14 }), { nil: undefined }),
         fc.option(fc.nat({ max: 14 }), { nil: undefined }),
@@ -356,7 +388,7 @@ describe.each(TEST_DATABASE_FACTORIES)("fuzz: $name", ({ create }) => {
           if (offset !== undefined) query.offset(offset);
           // NULL sorts as the smallest value.
           const compare = (a: unknown, b: unknown) =>
-            a === b ? 0 : a === null ? -1 : b === null ? 1 : (a as number) < (b as number) ? -1 : 1;
+            a === b ? 0 : a === null ? -1 : b === null ? 1 : (a as number | bigint) < (b as number | bigint) ? -1 : 1;
           const sorted = [...values].sort((a, b) => {
             const order = compare(a[column], b[column]);
             const byValue = direction === "ASC" ? order : -order;
