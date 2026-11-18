@@ -40,7 +40,7 @@ import {
 } from "../../QueryBuilder";
 import { isRelationalQuery, type SelectDialect } from "../../RelationalQuery";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
-import { type TableIndex, writableFieldKeys } from "../../Table";
+import { type LiveTableSchema, type TableIndex, writableFieldKeys } from "../../Table";
 
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
 
@@ -56,6 +56,29 @@ const TYPE_ORDERING: Record<FieldDiffType, number> = {
   added: 1,
   removed: 2,
 };
+
+/** A column as `fetchTableColumns` gives it, from a row of the live column read. */
+const parseMysqlColumn = (row: Record<string, any>): TableColumnInfo =>
+  ({
+    name: row.column_name,
+    type: {} as any,
+    sqlType: row.column_type,
+    notNull: row.is_nullable === "NO",
+    hasDefault: row.column_default !== null,
+    isIdentity: String(row.extra).includes("auto_increment"),
+    primaryKey: Boolean(Number(row.is_primary_key)),
+    generated: /\bGENERATED\b/i.test(String(row.extra)),
+    ...(row.foreign_table_name
+      ? {
+          foreignKey: {
+            table: row.foreign_table_name,
+            field: row.foreign_column_name,
+            onDelete: normalizeForeignKeyAction(row.delete_rule),
+            constraintName: row.foreign_key_constraint_name,
+          },
+        }
+      : {}),
+  }) as TableColumnInfo;
 
 export default class MysqlAdaptor<
   TDriver extends Connection | Pool = Connection | Pool,
@@ -219,9 +242,19 @@ export default class MysqlAdaptor<
       : { first: undefined, results: [] };
   }
 
-  async fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>> {
-    const result = await this.execute(sql`
+  /** `AND <column> IN (…)` for the tables a live read is of; empty for every table. */
+  private tablesCondition(column: string, tables?: readonly Table[]): string {
+    return tables ? ` AND ${column} IN (${tables.map((table) => this.valueToSql(String(table.id))).join(", ")})` : "";
+  }
+
+  // Two schema-wide reads: every column with its keys, and every index's columns in order. MySQL
+  // has no partial indexes, so an index's key columns and uniqueness are its whole definition.
+  override async fetchLiveSchema(tables?: readonly Table[]): Promise<Map<string, LiveTableSchema>> {
+    if (tables && !tables.length) return new Map();
+    const columns = await this.execute(
+      raw(`
       SELECT
+        c.table_name AS table_name,
         c.column_name AS column_name,
         c.column_type AS column_type,
         c.is_nullable AS is_nullable,
@@ -241,31 +274,39 @@ export default class MysqlAdaptor<
       LEFT JOIN information_schema.referential_constraints rc
         ON rc.constraint_schema = fk.constraint_schema
         AND rc.constraint_name = fk.constraint_name
-      WHERE c.table_schema = DATABASE()
-        AND c.table_name = ${String(table.id)}
-      ORDER BY c.ordinal_position
-    `);
+      WHERE c.table_schema = DATABASE()${this.tablesCondition("c.table_name", tables)}
+      ORDER BY c.table_name, c.ordinal_position`),
+    );
+    const indexes = await this.execute(
+      raw(`
+      SELECT table_name AS table_name, index_name AS index_name, non_unique AS non_unique, column_name AS column_name
+      FROM information_schema.statistics
+      WHERE table_schema = DATABASE() AND index_name <> 'PRIMARY'${this.tablesCondition("table_name", tables)}
+      ORDER BY table_name, index_name, seq_in_index`),
+    );
+    const schema = new Map<string, LiveTableSchema>();
+    for (const row of columns.results as Record<string, any>[]) {
+      const name = String(row.table_name);
+      if (!schema.has(name)) schema.set(name, { columns: [], indexes: [] });
+      schema.get(name)!.columns.push(parseMysqlColumn(row));
+    }
+    for (const row of indexes.results as Record<string, any>[]) {
+      const table = schema.get(String(row.table_name));
+      if (!table) continue;
+      // The index MySQL creates for a foreign key, named after it, belongs to the key.
+      if (table.columns.some((column) => column.foreignKey?.constraintName === String(row.index_name))) continue;
+      let index = table.indexes.find((candidate) => candidate.name === String(row.index_name));
+      if (!index) {
+        index = { name: String(row.index_name), unique: Number(row.non_unique) === 0, columns: [], partial: false };
+        table.indexes.push(index);
+      }
+      index.columns.push(String(row.column_name));
+    }
+    return schema;
+  }
 
-    return mapSqlResult<any, TableColumnInfo, number>(result, (row) => ({
-      name: row.column_name,
-      type: {} as any,
-      sqlType: row.column_type,
-      notNull: row.is_nullable === "NO",
-      hasDefault: row.column_default !== null,
-      isIdentity: String(row.extra).includes("auto_increment"),
-      primaryKey: Boolean(row.is_primary_key),
-      generated: /\bGENERATED\b/i.test(String(row.extra)),
-      ...(row.foreign_table_name
-        ? {
-            foreignKey: {
-              table: row.foreign_table_name,
-              field: row.foreign_column_name,
-              onDelete: normalizeForeignKeyAction(row.delete_rule),
-              constraintName: row.foreign_key_constraint_name,
-            },
-          }
-        : {}),
-    }));
+  protected override dropIndexStatement(table: Table, name: string): Statement {
+    return raw(`DROP INDEX ${this.quoteIdentifier(name)} ON ${this.quoteIdentifier(String(table.id))}`);
   }
 
   async executeUpdate<TTable extends Table>(
@@ -515,25 +556,6 @@ export default class MysqlAdaptor<
     }
   }
 
-  async syncTableIndexes(table: Table): Promise<void> {
-    for (const index of table.indexes) {
-      if (index.where) {
-        throw new Error("MySQL and MariaDB do not support partial indexes");
-      }
-      const existing = await this.execute(sql`
-        SELECT 1
-        FROM information_schema.statistics
-        WHERE table_schema = DATABASE()
-          AND table_name = ${String(table.id)}
-          AND index_name = ${index.id}
-        LIMIT 1
-      `);
-      if (existing.results.length === 0) {
-        await this.execute(this.createIndexStatement(table, index));
-      }
-    }
-  }
-
   createIndexStatement(table: Table, index: TableIndex): Statement {
     if (index.where) {
       throw new Error("MySQL and MariaDB do not support partial indexes");
@@ -548,29 +570,38 @@ export default class MysqlAdaptor<
 
   override createTableStatement(table: Table, name?: string): Statement {
     const constraint = this.primaryKeyConstraintSql(table);
-    return sql`CREATE TABLE IF NOT EXISTS ${raw(this.quoteIdentifier(name ?? String(table.id)))} (
+    const tableName = name ?? String(table.id);
+    // MySQL parses a column's own REFERENCES and ignores it: a foreign key is a table constraint,
+    // named as `processDiff` names one it adds.
+    const foreignKeys = Object.values(table.fields).flatMap((field) => {
+      const foreignKeyMeta = getMetaItem(field.schema, foreignKey);
+      if (!foreignKeyMeta) return [];
+      const column = this.quoteIdentifier(String(field.key));
+      return [
+        raw(
+          `CONSTRAINT ${this.quoteIdentifier(`${tableName}_${String(field.key)}_fkey`)} FOREIGN KEY (${column}) REFERENCES ${this.quoteIdentifier(String(foreignKeyMeta.data.field.table.id))} (${this.quoteIdentifier(String(foreignKeyMeta.data.field.key))}) ON DELETE ${(foreignKeyMeta.data.onDelete ?? "no action").toUpperCase()}`,
+        ),
+      ];
+    });
+    return sql`CREATE TABLE IF NOT EXISTS ${raw(this.quoteIdentifier(tableName))} (
       ${join(
         Object.values(table.fields)
-          .map((field) => {
-            const foreignKeyMeta = getMetaItem(field.schema, foreignKey);
-            const typeSql = this.typeToSql(field.schema);
-            return raw(
+          .map((field) =>
+            raw(
               [
                 this.quoteIdentifier(String(field.key)),
-                typeSql,
+                this.typeToSql(field.schema),
                 this.computedColumnSql(table, field),
                 this.isInlinePrimaryKey(table, field) ? "PRIMARY KEY" : "",
                 // MariaDB refuses NOT NULL on a generated column; its expression decides.
                 isZodRequired(field.schema) && !getMetaItem(field.schema, computed) ? "NOT NULL" : "",
-                foreignKeyMeta
-                  ? `REFERENCES ${this.quoteIdentifier(String(foreignKeyMeta.data.field.table.id))} (${this.quoteIdentifier(String(foreignKeyMeta.data.field.key))}) ON DELETE ${(foreignKeyMeta.data.onDelete ?? "no action").toUpperCase()}`
-                  : "",
               ]
                 .filter(Boolean)
                 .join(" "),
-            );
-          })
-          .concat(constraint ? [raw(constraint)] : []),
+            ),
+          )
+          .concat(constraint ? [raw(constraint)] : [])
+          .concat(foreignKeys),
         ", ",
       )}
     ) DEFAULT CHARSET=utf8mb4 COLLATE=${raw(this.textCollation)}`;

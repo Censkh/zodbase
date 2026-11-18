@@ -40,6 +40,16 @@ export default class TursoAdaptor extends SqliteAdaptor<Client> {
     return exactFloatLiterals(text);
   }
 
+  // One libSQL batch: a single round trip for all of them.
+  protected override async executeReads(statements: Statement[]): Promise<SqlResult[]> {
+    if (statements.length === 0) return [];
+    const results = await this.driver.batch(
+      statements.map((statement) => this.sqlText(statement)),
+      "read",
+    );
+    return results.map((result) => this.mapResult({ results: result.rows, first: result.rows[0] }));
+  }
+
   async execute(statement: Statement): Promise<SqlResult> {
     if (typeof statement?.[TO_SQL_SYMBOL] !== "function") {
       throw new Error("Invalid statement");

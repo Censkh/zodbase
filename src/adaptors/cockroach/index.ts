@@ -2,18 +2,16 @@ import type * as zod from "zod";
 import { getMetaItem } from "zod-meta";
 import type DatabaseAdaptor from "../../DatabaseAdaptor";
 import { quoteIdentifier } from "../../Escaping";
-import {
-  computed,
-  mapSqlResult,
-  normalizeForeignKeyAction,
-  raw,
-  sql,
-  type Table,
-  type TableColumnInfo,
-} from "../../index";
-import type { SelectQuery, SqlResult } from "../../QueryBuilder";
+import { computed, raw, sql, type Table } from "../../index";
+import type { SelectQuery } from "../../QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
-import PostgresAdaptor from "../postgres";
+import type { LiveTableSchema } from "../../Table";
+import PostgresAdaptor, {
+  addLiveIndexes,
+  type LiveIndexRow,
+  type PostgresColumnRow,
+  parsePostgresColumn,
+} from "../postgres";
 import { spliceNulCharacters } from "../SqlText";
 import { cockroachLocality, cockroachRegion } from "./metadata";
 
@@ -60,15 +58,20 @@ export default class CockroachAdaptor extends PostgresAdaptor {
     return getMetaItem(schema, cockroachRegion) ? '"public"."crdb_internal_region"' : super.typeToSql(schema);
   }
 
-  override async syncTableLocality(table: Table): Promise<void> {
+  override async syncTableLocality(table: Table, live?: LiveTableSchema): Promise<boolean> {
     const expected = this.tableLocality(table);
-    if (!expected) return;
-    const { first } = await this.execute(
-      sql`SELECT locality FROM [SHOW TABLES] WHERE table_name = ${String(table.id)} AND schema_name = current_schema()`,
-    );
+    if (!expected) return false;
+    const locality =
+      live?.locality ??
+      (
+        await this.execute(
+          sql`SELECT locality FROM [SHOW TABLES] WHERE table_name = ${String(table.id)} AND schema_name = current_schema()`,
+        )
+      ).first?.locality;
     // SHOW TABLES can omit identifier quotes for simple names.
-    if (String(first?.locality).replace(/"/g, "") === expected.replace(/"/g, "")) return;
+    if (String(locality).replace(/"/g, "") === expected.replace(/"/g, "")) return false;
     await this.execute(this.setLocalityStatement(table, expected));
+    return true;
   }
 
   override tableSettingStatements(table: Table): Statement[] {
@@ -120,86 +123,116 @@ export default class CockroachAdaptor extends PostgresAdaptor {
     await this.execute(sql`ALTER TABLE ${table.id} ALTER PRIMARY KEY USING COLUMNS (${raw(quoteIdentifier(key))})`);
   }
 
-  async fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>> {
-    const columnResult = await this.execute(sql`
-      SHOW
-      COLUMNS FROM
-      ${table.id}
-    `);
-    const indexResult = await this.execute(sql`
-      SHOW
-      INDEX FROM
-      ${table.id}
-    `);
-    const constraintResult = await this.execute(sql`
-      SHOW
-      CONSTRAINTS FROM
-      ${table.id}
-    `);
-    const foreignKeyResult = await this.execute(sql`
+  /**
+   * Four schema-wide reads in one round trip: every visible column, every index's columns
+   * (`information_schema.statistics`, which marks the columns the engine adds itself, such as a
+   * regional table's `crdb_region`, as implicit), every index's predicate and comment, and every
+   * table's locality.
+   */
+  override async fetchLiveSchema(tables?: readonly Table[]): Promise<Map<string, LiveTableSchema>> {
+    if (tables && !tables.length) return new Map();
+    const [columns, statistics, indexes, localities] = await this.readTogether([
+      raw(`
       SELECT
-        kcu.column_name,
-        tc.constraint_name,
-        ccu.table_name AS foreign_table_name,
-        ccu.column_name AS foreign_column_name,
-        rc.delete_rule
-      FROM information_schema.table_constraints tc
-      JOIN information_schema.key_column_usage kcu
-        ON tc.constraint_schema = kcu.constraint_schema
-        AND tc.constraint_name = kcu.constraint_name
-      JOIN information_schema.constraint_column_usage ccu
-        ON tc.constraint_schema = ccu.constraint_schema
-        AND tc.constraint_name = ccu.constraint_name
-      JOIN information_schema.referential_constraints rc
-        ON tc.constraint_schema = rc.constraint_schema
-        AND tc.constraint_name = rc.constraint_name
-      WHERE tc.table_name = ${String(table.id)}
-        AND tc.table_schema = current_schema()
-        AND tc.constraint_type = 'FOREIGN KEY'
-    `);
-    const foreignKeys = new Map(
-      foreignKeyResult.results.map((row: any) => [
-        row.column_name,
-        {
-          table: row.foreign_table_name,
-          field: row.foreign_column_name,
-          onDelete: normalizeForeignKeyAction(row.delete_rule),
-          constraintName: row.constraint_name,
-        },
-      ]),
+        c.table_name,
+        c.column_name,
+        c.data_type,
+        c.is_nullable,
+        c.column_default,
+        c.generation_expression,
+        false AS is_primary_key,
+        fk.constraint_name AS foreign_key_constraint_name,
+        fk.foreign_table_name,
+        fk.foreign_column_name,
+        fk.delete_rule
+      FROM information_schema.columns c
+      LEFT JOIN (
+        SELECT
+          kcu.table_name,
+          kcu.column_name,
+          tc.constraint_name,
+          ccu.table_name AS foreign_table_name,
+          ccu.column_name AS foreign_column_name,
+          rc.delete_rule
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_schema = kcu.constraint_schema
+          AND tc.constraint_name = kcu.constraint_name
+        JOIN information_schema.constraint_column_usage ccu
+          ON tc.constraint_schema = ccu.constraint_schema
+          AND tc.constraint_name = ccu.constraint_name
+        JOIN information_schema.referential_constraints rc
+          ON tc.constraint_schema = rc.constraint_schema
+          AND tc.constraint_name = rc.constraint_name
+        WHERE tc.table_schema = current_schema() AND tc.constraint_type = 'FOREIGN KEY'
+      ) fk ON fk.table_name = c.table_name AND fk.column_name = c.column_name
+      WHERE c.table_schema = current_schema() AND c.is_hidden = 'NO'${this.tablesCondition("c.table_name", tables)}
+      ORDER BY c.table_name, c.ordinal_position`),
+      raw(`
+      SELECT table_name, index_name, non_unique, column_name
+      FROM information_schema.statistics
+      WHERE table_schema = current_schema() AND implicit = 'NO' AND storing = 'NO'${this.tablesCondition("table_name", tables)}
+      ORDER BY table_name, index_name, seq_in_index`),
+      raw(`
+      SELECT
+        t.relname AS table_name,
+        i.relname AS index_name,
+        ix.indisprimary AS is_primary,
+        ix.indpred IS NOT NULL AS is_partial,
+        obj_description(i.oid, 'pg_class') AS comment
+      FROM pg_catalog.pg_index ix
+      JOIN pg_catalog.pg_class i ON i.oid = ix.indexrelid
+      JOIN pg_catalog.pg_class t ON t.oid = ix.indrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+      WHERE n.nspname = current_schema()${this.tablesCondition("t.relname", tables)}`),
+      raw(
+        `SELECT table_name, locality FROM [SHOW TABLES] WHERE schema_name = current_schema()${this.tablesCondition("table_name", tables)}`,
+      ),
+    ]);
+    const details = new Map(
+      (indexes!.results as Record<string, unknown>[]).map((row) => [`${row.table_name}\u0000${row.index_name}`, row]),
     );
-
-    const primaryKeyIndexes = new Set(
-      constraintResult.results
-        .filter((constraint) => constraint.constraint_type === "PRIMARY KEY")
-        .map((constraint) => constraint.constraint_name),
-    );
-
-    const primaryKeyColumns = new Set<string>();
-    for (const index of indexResult.results) {
-      if (primaryKeyIndexes.has(index.index_name) && !index.storing && !index.implicit) {
-        primaryKeyColumns.add(index.column_name);
-      }
+    const schema = new Map<string, LiveTableSchema>();
+    for (const row of columns!.results as PostgresColumnRow[]) {
+      if (!schema.has(row.table_name)) schema.set(row.table_name, { columns: [], indexes: [] });
+      schema.get(row.table_name)!.columns.push(parsePostgresColumn(row));
     }
-
-    return mapSqlResult<any, TableColumnInfo, number>(columnResult, (row) => {
-      if (row.is_hidden) {
-        return;
+    const indexRows: LiveIndexRow[] = [];
+    for (const row of statistics!.results as Record<string, string>[]) {
+      const detail = details.get(`${row.table_name}\u0000${row.index_name}`);
+      const table = schema.get(row.table_name!);
+      if (!table) continue;
+      // The primary key's columns, without those the engine adds (a regional table's crdb_region).
+      if (detail?.is_primary === true) {
+        const column = table.columns.find((candidate) => candidate.name === row.column_name);
+        if (column) column.primaryKey = true;
+        continue;
       }
+      indexRows.push({
+        table_name: row.table_name!,
+        index_name: row.index_name!,
+        is_unique: row.non_unique === "NO",
+        is_partial: Boolean(detail?.is_partial),
+        comment: (detail?.comment as string | null | undefined) ?? null,
+        column_name: row.column_name!,
+      });
+    }
+    addLiveIndexes(schema, indexRows);
+    for (const row of localities!.results as { table_name: string; locality: string | null }[]) {
+      const table = schema.get(row.table_name);
+      if (table && row.locality) table.locality = row.locality;
+    }
+    return schema;
+  }
 
-      const foreignKey = foreignKeys.get(row.column_name) as TableColumnInfo["foreignKey"];
-      return {
-        name: row.column_name,
-        type: {} as any,
-        sqlType: row.data_type,
-        notNull: !row.is_nullable,
-        hasDefault: row.column_default !== null,
-        isIdentity: undefined,
-        primaryKey: primaryKeyColumns.has(row.column_name),
-        generated: Boolean(row.generation_expression),
-        ...(foreignKey ? { foreignKey } : {}),
-      };
-    });
+  protected override indexReference(table: Table, name: string): string {
+    return `${quoteIdentifier(String(table.id))}@${quoteIdentifier(name)}`;
+  }
+
+  // CockroachDB drops a unique index only with CASCADE, which also drops a foreign key that relies
+  // on it: syncing the referencing table adds that key again.
+  protected override dropIndexStatement(table: Table, name: string): Statement {
+    return raw(`DROP INDEX IF EXISTS ${this.indexReference(table, name)} CASCADE`);
   }
 }
 

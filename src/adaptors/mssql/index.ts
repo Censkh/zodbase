@@ -26,7 +26,7 @@ import {
 } from "../../QueryBuilder";
 import { isRelationalQuery } from "../../RelationalQuery";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
-import type { TableIndex } from "../../Table";
+import type { LiveTableSchema, TableIndex } from "../../Table";
 
 /** Compatible with a connected node-mssql ConnectionPool or Transaction. */
 export interface MssqlDriver {
@@ -38,6 +38,35 @@ export interface MssqlTransaction extends MssqlDriver {
   commit(): PromiseLike<unknown>;
   rollback(): PromiseLike<unknown>;
 }
+
+/** A column as `fetchTableColumns` gives it, from a row of the live column read. */
+const parseMssqlColumn = (row: Record<string, any>, table: Table | undefined): TableColumnInfo =>
+  ({
+    name: row.name,
+    type: {} as any,
+    sqlType: row.sql_type,
+    notNull: !row.is_nullable,
+    hasDefault: Boolean(row.default_object_id),
+    isIdentity: Boolean(row.is_identity),
+    primaryKey: Boolean(row.is_primary_key),
+    generated: Boolean(row.is_computed),
+    ...(row.fk_name
+      ? {
+          foreignKey: {
+            table: row.referenced_table,
+            field: row.referenced_column,
+            constraintName: row.fk_name,
+            // SQL Server has no RESTRICT: a NO ACTION key is the restrict its definition asks for.
+            onDelete:
+              row.delete_rule === "NO_ACTION" &&
+              table?.fields[row.name] &&
+              getMetaItem(table.fields[row.name]!.schema, foreignKey)?.data.onDelete === "restrict"
+                ? "restrict"
+                : normalizeForeignKeyAction(row.delete_rule.replaceAll("_", " ")),
+          },
+        }
+      : {}),
+  }) as TableColumnInfo;
 
 export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
   // SQL Server's WITH is recursive whenever a query names itself, and takes no keyword.
@@ -302,53 +331,66 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
     );
   }
 
-  async fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>> {
-    const result = await this.execute(
-      raw(`SELECT c.name, TYPE_NAME(c.user_type_id) AS sql_type, c.is_nullable, c.is_identity, c.default_object_id,
+  /** `AND <column> IN (…)` for the tables a live read is of; empty for every table. */
+  private tablesCondition(column: string, tables?: readonly Table[]): string {
+    return tables ? ` AND ${column} IN (${tables.map((table) => this.valueToSql(String(table.id))).join(", ")})` : "";
+  }
+
+  // Two schema-wide reads: every column with its keys, and every index's key columns
+  // in order. SQL Server normalises a filtered index's predicate as it stores it, so an index is
+  // compared by its columns, uniqueness and whether it has a filter.
+  override async fetchLiveSchema(tables?: readonly Table[]): Promise<Map<string, LiveTableSchema>> {
+    if (tables && !tables.length) return new Map();
+    const columns = await this.execute(
+      raw(`SELECT t.name AS table_name, c.name, TYPE_NAME(c.user_type_id) AS sql_type, c.is_nullable, c.is_identity, c.default_object_id, c.is_computed,
       CASE WHEN EXISTS (SELECT 1 FROM sys.indexes i JOIN sys.index_columns ic ON i.object_id=ic.object_id AND i.index_id=ic.index_id WHERE i.object_id=c.object_id AND i.is_primary_key=1 AND ic.column_id=c.column_id) THEN 1 ELSE 0 END AS is_primary_key,
       fk.name AS fk_name, rt.name AS referenced_table, rc.name AS referenced_column, fk.delete_referential_action_desc AS delete_rule
       FROM sys.columns c
+      JOIN sys.tables t ON t.object_id=c.object_id AND t.schema_id=SCHEMA_ID()
       LEFT JOIN sys.foreign_key_columns fkc ON fkc.parent_object_id=c.object_id AND fkc.parent_column_id=c.column_id
       LEFT JOIN sys.foreign_keys fk ON fk.object_id=fkc.constraint_object_id
       LEFT JOIN sys.tables rt ON rt.object_id=fkc.referenced_object_id
       LEFT JOIN sys.columns rc ON rc.object_id=fkc.referenced_object_id AND rc.column_id=fkc.referenced_column_id
-      WHERE c.object_id=OBJECT_ID(${this.valueToSql(this.quoteIdentifier(String(table.id)))}, N'U') ORDER BY c.column_id`),
+      WHERE 1=1${this.tablesCondition("t.name", tables)} ORDER BY t.name, c.column_id`),
     );
-    return mapSqlResult(result, (row: any) => ({
-      name: row.name,
-      type: {} as any,
-      sqlType: row.sql_type,
-      notNull: !row.is_nullable,
-      hasDefault: Boolean(row.default_object_id),
-      isIdentity: Boolean(row.is_identity),
-      primaryKey: Boolean(row.is_primary_key),
-      ...(row.fk_name
-        ? {
-            foreignKey: {
-              table: row.referenced_table,
-              field: row.referenced_column,
-              constraintName: row.fk_name,
-              onDelete:
-                row.delete_rule === "NO_ACTION" &&
-                table.fields[row.name] &&
-                getMetaItem(table.fields[row.name]!.schema, foreignKey)?.data.onDelete === "restrict"
-                  ? "restrict"
-                  : normalizeForeignKeyAction(row.delete_rule.replaceAll("_", " ")),
-            },
-          }
-        : {}),
-    }));
+    const indexes = await this.execute(
+      raw(`SELECT t.name AS table_name, i.name AS index_name, i.is_unique, i.has_filter, col.name AS column_name
+      FROM sys.indexes i
+      JOIN sys.tables t ON t.object_id=i.object_id AND t.schema_id=SCHEMA_ID()
+      JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id AND ic.key_ordinal > 0
+      JOIN sys.columns col ON col.object_id=ic.object_id AND col.column_id=ic.column_id
+      WHERE i.is_primary_key=0 AND i.name IS NOT NULL${this.tablesCondition("t.name", tables)}
+      ORDER BY t.name, i.name, ic.key_ordinal`),
+    );
+    const columnRows = columns.results as Record<string, any>[];
+    const indexRows = indexes.results as Record<string, any>[];
+    const declared = new Map((tables ?? []).map((table) => [String(table.id), table]));
+    const schema = new Map<string, LiveTableSchema>();
+    for (const row of columnRows) {
+      const name = String(row.table_name);
+      if (!schema.has(name)) schema.set(name, { columns: [], indexes: [] });
+      schema.get(name)!.columns.push(parseMssqlColumn(row, declared.get(name)));
+    }
+    for (const row of indexRows) {
+      const table = schema.get(String(row.table_name));
+      if (!table) continue;
+      let index = table.indexes.find((candidate) => candidate.name === String(row.index_name));
+      if (!index) {
+        index = {
+          name: String(row.index_name),
+          unique: Boolean(row.is_unique),
+          columns: [],
+          partial: Boolean(row.has_filter),
+        };
+        table.indexes.push(index);
+      }
+      index.columns.push(String(row.column_name));
+    }
+    return schema;
   }
 
-  async syncTableIndexes(table: Table): Promise<void> {
-    const target = this.quoteIdentifier(String(table.id));
-    for (const index of table.indexes) {
-      await this.execute(
-        raw(
-          `IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(${this.valueToSql(target)}) AND name=${this.valueToSql(index.id)}) ${this.createIndexStatement(table, index)[TO_SQL_SYMBOL]()}`,
-        ),
-      );
-    }
+  protected override dropIndexStatement(table: Table, name: string): Statement {
+    return raw(`DROP INDEX IF EXISTS ${this.quoteIdentifier(name)} ON ${this.quoteIdentifier(String(table.id))}`);
   }
 
   createIndexStatement(table: Table, index: TableIndex): Statement {

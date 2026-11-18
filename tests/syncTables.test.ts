@@ -38,10 +38,7 @@ const GadgetTable = createTable({
 });
 GadgetTable.addIndex("sync_gadget_label", [GadgetTable.$label]);
 
-// MySQL-compatible adaptors don't introspect schemas.
-const factories = TEST_DATABASE_FACTORIES.filter(({ name }) => !["mysql", "mariadb"].includes(name));
-
-describe.each(factories)("syncTables: $name", ({ create }) => {
+describe.each(TEST_DATABASE_FACTORIES)("syncTables: $name ($connection)", ({ name: engine, create }) => {
   let context: TestDatabaseContext;
   beforeEach(async () => {
     context = await create();
@@ -73,7 +70,13 @@ describe.each(factories)("syncTables: $name", ({ create }) => {
 
   it("restores an index dropped from an otherwise current table", async () => {
     await context.db.syncTables([OwnerTable, WidgetTable]);
-    await context.db.execute(raw('DROP INDEX "sync_widget_name"'));
+    await context.db.execute(
+      raw(
+        engine === "mysql" || engine === "mariadb"
+          ? "DROP INDEX `sync_widget_name` ON `sync_widget`"
+          : `DROP INDEX ${engine === "cockroach" ? '"sync_widget"@' : ""}"sync_widget_name"`,
+      ),
+    );
 
     await context.db.syncTables([OwnerTable, WidgetTable]);
 

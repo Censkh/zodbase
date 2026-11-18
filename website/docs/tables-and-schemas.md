@@ -29,6 +29,15 @@ Use `metaStore` to attach database metadata such as `primaryKey()` to a field. Z
 await db.syncTable(Projects);
 ```
 
+To bring a whole schema up to date, pass every table to `syncTables`. It reads the tables at once, in a few schema-wide queries, then writes only what differs, so a schema that is already current costs those reads and nothing more. It returns what it changed, one entry per table it changed, and leaves tables you don't pass alone:
+
+```ts
+const changes = await db.syncTables([Users, Projects, Tasks]);
+for (const { table, created, columns, indexes } of changes) console.info("synced", table, { created, columns, indexes });
+```
+
+Each entry says whether it created the table, which columns it added, removed or changed, whether it changed the primary key, which indexes it created or rebuilt, and whether it changed where the table's rows live. `syncTable(table)` syncs one table the same way and returns its entry, or `undefined` when nothing changed.
+
 Synchronization is repeatable. When an existing column gains `primaryKey()` metadata, it adds the missing primary key and preserves existing rows. Duplicate values are rejected rather than deleted or rewritten.
 
 PostgreSQL and MySQL-compatible adaptors add a primary-key constraint. SQLite-compatible adaptors rebuild the table. CockroachDB replaces its implicit primary key. Replacing a different explicit primary key is not supported by automatic synchronization.

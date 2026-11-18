@@ -31,11 +31,42 @@ export interface SchemaTableInfo {
 
 /**
  * A table as the database holds it, in the detail syncing needs: its columns as `fetchTableColumns`
- * reads them, and its secondary indexes and unique constraints as `SchemaTableInfo` lists them.
+ * reads them, its secondary indexes and unique constraints, and where its rows live.
  */
 export interface LiveTableSchema {
   columns: TableColumnInfo[];
-  indexes: SchemaIndexInfo[];
+  indexes: LiveIndexInfo[];
+  /** The table's locality clause where the database places rows (CockroachDB), as it reads it. */
+  locality?: string;
+}
+
+/** An index or unique constraint as the database holds it, in the detail that tells it apart. */
+export interface LiveIndexInfo extends SchemaIndexInfo {
+  /** Its key columns in order, without those the engine adds itself. */
+  columns: string[];
+  /** Whether it indexes only the rows a condition holds for. */
+  partial: boolean;
+  /**
+   * The definition zodbase created it from (`DatabaseAdaptor.indexDefinition`), where the database
+   * keeps it: SQLite keeps an index's statement; PostgreSQL and CockroachDB, the comment zodbase
+   * gives it. Undefined for an index made otherwise.
+   */
+  definition?: string;
+}
+
+/** What syncing a table changed: only tables it changed are reported. */
+export interface TableSyncChanges {
+  table: string;
+  /** Whether it created the table. */
+  created: boolean;
+  /** The columns it added, removed or changed. */
+  columns: string[];
+  /** Whether it changed the table's primary key. */
+  primaryKey: boolean;
+  /** The indexes it created or rebuilt. */
+  indexes: string[];
+  /** Whether it changed where the table's rows live. */
+  locality: boolean;
 }
 
 export interface SchemaIndexInfo {

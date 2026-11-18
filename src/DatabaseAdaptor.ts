@@ -31,7 +31,21 @@ import { compileRelationalQuery, type SelectDialect } from "./RelationalQuery";
 import { divideSql, IncomingValue, SqlExpression } from "./SqlExpression";
 import { type Statement, TO_SQL_SYMBOL } from "./Statement";
 import { canShareSubquery, isSubquery } from "./Subquery";
-import { getPrimaryKey, type LiveTableSchema, type SchemaTableInfo, type TableIndex, writableFieldKeys } from "./Table";
+import {
+  getPrimaryKey,
+  type LiveIndexInfo,
+  type LiveTableSchema,
+  type SchemaTableInfo,
+  type TableIndex,
+  writableFieldKeys,
+} from "./Table";
+
+/** An index's creating statement as its definition: its spacing and `IF NOT EXISTS` aside. */
+export const normalizeIndexDefinition = (statement: string): string =>
+  statement
+    .replace(/\s+/g, " ")
+    .replace(/ IF NOT EXISTS /i, " ")
+    .trim();
 
 /**
  * The driver an adaptor runs statements with: one ready to use, or, with `lazy: true`, a function
@@ -730,23 +744,99 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   }
 
   /** Every table in the current schema, as `SchemaTableInfo` describes it. Read-only. */
-  describeSchema(): Promise<SchemaTableInfo[]> {
-    throw new Error("This adaptor does not support schema introspection");
+  async describeSchema(): Promise<SchemaTableInfo[]> {
+    const live = await this.fetchLiveSchema();
+    if (!live) throw new Error("This adaptor does not support schema introspection");
+    return [...live.entries()].map(([name, { columns, indexes }]) => ({
+      name,
+      columns: columns.map((column) => column.name),
+      indexes: indexes.map(({ name, unique }) => ({ name, unique })),
+    }));
   }
 
   /**
-   * Every table in the current schema by name, with its columns and indexes, read in a few round
-   * trips for all tables at once; undefined when the adaptor can only read them table by table, so
-   * `syncTables` syncs each table on its own. Read-only.
+   * The tables by name, with their columns, indexes and locality, read for all of them at once in a
+   * few schema-wide queries rather than several per table: those of `tables`, or every table in the
+   * current schema without them. A table the database doesn't hold is absent. Undefined when the
+   * adaptor can only read tables one at a time (`fetchTableColumns`). Read-only.
    */
-  async fetchLiveSchema(): Promise<Map<string, LiveTableSchema> | undefined> {
+  async fetchLiveSchema(_tables?: readonly Table[]): Promise<Map<string, LiveTableSchema> | undefined> {
     return undefined;
   }
 
-  abstract fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>>;
-  abstract syncTableIndexes(table: Table): Promise<void>;
+  /** The table's columns as the database holds them: the live schema's read of that one table. */
+  async fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>> {
+    const live = await this.fetchLiveSchema([table]);
+    if (!live) throw new Error("[zodbase] This adaptor reads neither its live schema nor a table's columns");
+    const columns = live.get(String(table.id))?.columns ?? [];
+    return { results: columns, first: columns[0] };
+  }
+
   /** The statement that creates one of a table's indexes. */
   abstract createIndexStatement(table: Table, index: TableIndex): Statement;
+
+  /**
+   * What tells one of a table's indexes apart from another of its name: the statement that creates
+   * it, its spacing and `IF NOT EXISTS` aside. SQLite keeps it as the index's statement; others keep
+   * it as the index's comment (`indexDefinitionStatements`).
+   */
+  indexDefinition(table: Table, index: TableIndex): string {
+    return normalizeIndexDefinition(this.createIndexStatement(table, index)[TO_SQL_SYMBOL]());
+  }
+
+  /** Statements that record an index's definition, after it is created, where it isn't kept already. */
+  protected indexDefinitionStatements(_table: Table, _index: TableIndex): Statement[] {
+    return [];
+  }
+
+  /** The statements that create an index, with what records its definition. */
+  createIndexStatements(table: Table, index: TableIndex): Statement[] {
+    return [this.createIndexStatement(table, index), ...this.indexDefinitionStatements(table, index)];
+  }
+
+  /** The statement that drops one of a table's indexes, to rebuild it. */
+  protected dropIndexStatement(_table: Table, name: string): Statement {
+    return raw(`DROP INDEX IF EXISTS ${this.quoteIdentifier(name)}`);
+  }
+
+  /**
+   * Whether the database's index is the one the table declares: the same key columns in order,
+   * uniqueness and, where the database keeps its definition, the same definition; where it doesn't
+   * (an index made before zodbase recorded them), whether both are partial.
+   */
+  indexMatches(table: Table, index: TableIndex, live: LiveIndexInfo): boolean {
+    const columns = index.fields.map((field) => String(field.key));
+    if (live.unique !== Boolean(index.unique)) return false;
+    if (live.columns.length !== columns.length || live.columns.some((column, i) => column !== columns[i])) return false;
+    return live.definition !== undefined
+      ? live.definition === this.indexDefinition(table, index)
+      : live.partial === Boolean(index.where);
+  }
+
+  /**
+   * Creates the table's indexes the database lacks, and rebuilds those whose definition changed,
+   * against `live` (the table's indexes as the database holds them) or a fresh read of them.
+   * Returns the names of the indexes it created or rebuilt.
+   */
+  async syncTableIndexes(table: Table, live?: readonly LiveIndexInfo[]): Promise<string[]> {
+    if (!table.indexes.length) return [];
+    const schema = live ? undefined : await this.fetchLiveSchema([table]);
+    if (!live && !schema) {
+      // An adaptor that can't read its indexes creates those it lacks (`CREATE INDEX IF NOT EXISTS`).
+      for (const index of table.indexes) await this.execute(this.createIndexStatement(table, index));
+      return [];
+    }
+    const current = live ?? schema?.get(String(table.id))?.indexes ?? [];
+    const changed: string[] = [];
+    for (const index of table.indexes) {
+      const existing = current.find((candidate) => candidate.name === index.id);
+      if (existing && this.indexMatches(table, index, existing)) continue;
+      if (existing) await this.execute(this.dropIndexStatement(table, index.id));
+      for (const statement of this.createIndexStatements(table, index)) await this.execute(statement);
+      changed.push(index.id);
+    }
+    return changed;
+  }
 
   typeToSql(type: zod.ZodType<any>): string {
     if (isZodTypeExtends(type, zod.ZodObject)) {
@@ -811,7 +901,13 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     }
   }
 
-  async syncTableLocality(_table: Table): Promise<void> {}
+  /**
+   * Sets where the table's rows live when it isn't where the table declares, against `live` (the
+   * table as the database holds it) or a fresh read. Returns whether it changed it.
+   */
+  async syncTableLocality(_table: Table, _live?: LiveTableSchema): Promise<boolean> {
+    return false;
+  }
 
   /** Statements a new table needs beyond its columns and indexes, such as where its rows live. */
   tableSettingStatements(_table: Table): Statement[] {

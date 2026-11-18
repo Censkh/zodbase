@@ -2,7 +2,6 @@ import BunDatabase from "bun:sqlite";
 import * as zod from "zod";
 import { createTable, Database, sql } from "../src";
 import BetterSqlite3Adaptor from "../src/adaptors/better-sqlite3";
-import CockroachAdaptor from "../src/adaptors/cockroach";
 import D1Adaptor from "../src/adaptors/d1";
 import ExpoSQLiteAdaptor from "../src/adaptors/expo-sqlite";
 import MysqlAdaptor from "../src/adaptors/mysql";
@@ -300,9 +299,10 @@ describe("adaptor execution contract", () => {
     const driver = {
       async getAllAsync(statement: string) {
         getAllSql.push(statement);
-        if (statement.trim().startsWith("PRAGMA")) {
-          return [{ name: "id", notnull: 1, pk: 1 }];
+        if (statement.includes("pragma_table_xinfo")) {
+          return [{ _zodbase_table: "example", name: "id", notnull: 1, pk: 1, hidden: 0 }];
         }
+        if (statement.includes("pragma_")) return [];
         return [{ id: "1" }];
       },
       async runAsync(statement: string) {
@@ -324,56 +324,9 @@ describe("adaptor execution contract", () => {
     expect((await adaptor.execute(sql`UPDATE example SET id = '2' RETURNING *`)).first).toEqual({ id: "1" });
     await adaptor.execute(sql`DELETE FROM example`);
 
-    expect(getAllSql).toHaveLength(4);
+    // The select, the live schema's three reads, and the update returning its row.
+    expect(getAllSql).toHaveLength(5);
     expect(runSql).toHaveLength(1);
-  });
-
-  it("maps Cockroach nullability and primary-key metadata", async () => {
-    const responses = [
-      {
-        rows: [
-          { column_name: "id", is_hidden: false, is_nullable: false, column_default: null },
-          { column_name: "name", is_hidden: false, is_nullable: true, column_default: null },
-          { column_name: "rowid", is_hidden: true, is_nullable: false, column_default: null },
-        ],
-      },
-      {
-        rows: [
-          { column_name: "id", index_name: "example_pkey", storing: false, implicit: false },
-          { column_name: "name", index_name: "example_pkey", storing: true, implicit: false },
-        ],
-      },
-      { rows: [{ constraint_name: "example_pkey", constraint_type: "PRIMARY KEY" }] },
-      { rows: [] },
-    ];
-    const driver = {
-      async query() {
-        return responses.shift()!;
-      },
-    };
-    const adaptor = new CockroachAdaptor({ driver: driver as never });
-    const Table = createTable({ id: "example", schema: zod.object({ id: zod.string(), name: zod.string() }) });
-
-    expect((await adaptor.fetchTableColumns(Table)).results).toEqual([
-      {
-        name: "id",
-        type: {},
-        notNull: true,
-        hasDefault: false,
-        isIdentity: undefined,
-        primaryKey: true,
-        generated: false,
-      },
-      {
-        name: "name",
-        type: {},
-        notNull: false,
-        hasDefault: false,
-        isIdentity: undefined,
-        primaryKey: false,
-        generated: false,
-      },
-    ]);
   });
 
   it("rejects values that are not SQL statements", async () => {

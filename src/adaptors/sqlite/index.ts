@@ -6,7 +6,6 @@ import {
   computed,
   type FieldDiffType,
   isZodRequired,
-  mapSqlResult,
   normalizeForeignKeyAction,
   raw,
   sql,
@@ -15,7 +14,12 @@ import {
   type TableDiff,
   valueToSql,
 } from "../..";
-import DatabaseAdaptor, { type Conflict, groupUpsertRows, type PossiblySelectedResult } from "../../DatabaseAdaptor";
+import DatabaseAdaptor, {
+  type Conflict,
+  groupUpsertRows,
+  normalizeIndexDefinition,
+  type PossiblySelectedResult,
+} from "../../DatabaseAdaptor";
 import { quoteIdentifier } from "../../Escaping";
 import {
   buildConditionSql,
@@ -32,11 +36,69 @@ import {
 import { isRelationalQuery } from "../../RelationalQuery";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
 import { isSubquery } from "../../Subquery";
-import { type LiveTableSchema, type SchemaTableInfo, type TableIndex, writableFieldKeys } from "../../Table";
+import { type LiveTableSchema, type TableIndex, writableFieldKeys } from "../../Table";
 import { spliceNulCharacters } from "../SqlText";
 import { caseInsensitiveGlob } from "./CaseFolding";
 
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
+
+/**
+ * The tables in SQLite's PRAGMA rows, each row naming its table: one parse for a read of every table
+ * and of one alike.
+ */
+const parseSqliteSchema = (
+  columnRows: Record<string, unknown>[],
+  foreignKeyRows: Record<string, unknown>[],
+  indexRows: Record<string, unknown>[],
+): Map<string, LiveTableSchema> => {
+  const schema = new Map<string, LiveTableSchema>();
+  const tableOf = (row: Record<string, unknown>) => {
+    const name = String(row._zodbase_table);
+    if (!schema.has(name)) schema.set(name, { columns: [], indexes: [] });
+    return schema.get(name)!;
+  };
+  const foreignKeys = new Map(
+    foreignKeyRows.map((row) => [
+      `${row._zodbase_table}\u0000${row.from}`,
+      { table: String(row.table), field: String(row.to), onDelete: normalizeForeignKeyAction(String(row.on_delete)) },
+    ]),
+  );
+  for (const row of columnRows) {
+    const table = tableOf(row);
+    // Hidden 1 is a virtual table's hidden column; 2 and 3 are generated columns.
+    if (Number(row.hidden) === 1) continue;
+    const foreignKey = foreignKeys.get(`${row._zodbase_table}\u0000${row.name}`) as TableColumnInfo["foreignKey"];
+    table.columns.push({
+      name: String(row.name),
+      type: {} as any,
+      notNull: Number(row.notnull) === 1,
+      // pk is the column's position in the primary key, from 1; 0 for other columns.
+      primaryKey: Number(row.pk) > 0,
+      generated: Number(row.hidden) >= 2,
+      ...(foreignKey ? { foreignKey } : {}),
+    });
+  }
+  for (const row of indexRows) {
+    // A primary key's autoindex belongs to the table; UNIQUE constraints ("u") and created indexes
+    // ("c") are reported.
+    if (row.origin === "pk" || !schema.has(String(row._zodbase_table))) continue;
+    const table = tableOf(row);
+    const name = String(row.name);
+    let index = table.indexes.find((candidate) => candidate.name === name);
+    if (!index) {
+      index = {
+        name,
+        unique: Number(row.unique) === 1,
+        columns: [],
+        partial: Number(row.partial) === 1,
+        ...(typeof row.sql === "string" ? { definition: normalizeIndexDefinition(row.sql) } : {}),
+      };
+      table.indexes.push(index);
+    }
+    if (row.column !== null && row.column !== undefined) index.columns.push(String(row.column));
+  }
+  return schema;
+};
 
 const getRequiredBackfillMeta = (schema: zod.Schema<any>): BackfillMetaItem | undefined => {
   if (isZodRequired(schema)) {
@@ -210,12 +272,6 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     }
   }
 
-  async syncTableIndexes(table: Table): Promise<void> {
-    for (const index of table.indexes) {
-      await this.execute(this.createIndexStatement(table, index));
-    }
-  }
-
   createIndexStatement(table: Table, index: TableIndex): Statement {
     return sql`
         CREATE ${raw(index.unique ? "UNIQUE " : "")}INDEX IF NOT EXISTS ${raw(quoteIdentifier(index.id))}
@@ -340,14 +396,6 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     };
   }
 
-  override async describeSchema(): Promise<SchemaTableInfo[]> {
-    return [...(await this.fetchLiveSchema()).entries()].map(([name, { columns, indexes }]) => ({
-      name,
-      columns: columns.map((column) => column.name),
-      indexes,
-    }));
-  }
-
   /** Runs read-only statements, in one round trip where the driver can batch them. */
   protected async executeReads(statements: Statement[]): Promise<SqlResult[]> {
     const results: SqlResult[] = [];
@@ -355,83 +403,39 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     return results;
   }
 
-  // Every table's PRAGMA reads go together (executeReads): one round trip on D1, where reading them
-  // table by table takes two or three each.
-  override async fetchLiveSchema(): Promise<Map<string, LiveTableSchema>> {
-    const { results } = await this.execute(raw("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"));
-    const names = (results as { name: string }[]).map(({ name }) => name).filter((name) => !this.isInternalTable(name));
-    // table_xinfo, unlike table_info, lists generated columns (hidden 2 or 3).
-    const pragmas = ["table_xinfo", "foreign_key_list", "index_list"];
-    const reads = await this.executeReads(
-      names.flatMap((name) => pragmas.map((pragma) => raw(`PRAGMA ${pragma}(${quoteIdentifier(name)})`))),
+  /**
+   * Three schema-wide reads, together (executeReads): one round trip on D1 and libSQL. The PRAGMAs'
+   * table-valued forms read every table's columns, foreign keys and indexes at once, where the
+   * PRAGMA statements read one table each.
+   */
+  override async fetchLiveSchema(tables?: readonly Table[]): Promise<Map<string, LiveTableSchema>> {
+    const names = tables?.map((table) => String(table.id));
+    const only = names ? ` AND m.name IN (${names.map((name) => this.valueToSql(name)).join(", ")})` : "";
+    if (names && !names.length) return new Map();
+    const from = `FROM sqlite_master m`;
+    const where = `WHERE m.type = 'table'${only}`;
+    const [columns, foreignKeys, indexes] = await this.executeReads([
+      // table_xinfo, unlike table_info, lists generated columns (hidden 2 or 3).
+      raw(
+        `SELECT m.name AS "_zodbase_table", c.* ${from}, pragma_table_xinfo(m.name) c ${where} ORDER BY m.name, c.cid`,
+      ),
+      raw(`SELECT m.name AS "_zodbase_table", f.* ${from}, pragma_foreign_key_list(m.name) f ${where}`),
+      raw(
+        `SELECT m.name AS "_zodbase_table", l.name, l."unique", l.origin, l.partial, i.seqno, i.name AS "column", s.sql ${from}, pragma_index_list(m.name) l LEFT JOIN pragma_index_info(l.name) i LEFT JOIN sqlite_master s ON s.type = 'index' AND s.name = l.name ${where} ORDER BY m.name, l.name, i.seqno`,
+      ),
+    ]);
+    return parseSqliteSchema(
+      (columns!.results as Record<string, unknown>[]).filter(
+        (row) => !this.isInternalTable(String(row._zodbase_table)),
+      ),
+      foreignKeys!.results as Record<string, unknown>[],
+      indexes!.results as Record<string, unknown>[],
     );
-    const rows = (name: string, pragma: string) =>
-      reads[names.indexOf(name) * pragmas.length + pragmas.indexOf(pragma)]!.results as any[];
-    const schema = new Map<string, LiveTableSchema>();
-    for (const name of names) {
-      const foreignKeys = new Map(
-        rows(name, "foreign_key_list").map((row) => [
-          row.from,
-          { table: String(row.table), field: String(row.to), onDelete: normalizeForeignKeyAction(row.on_delete) },
-        ]),
-      );
-      schema.set(name, {
-        columns: rows(name, "table_xinfo")
-          .filter((row) => Number(row.hidden) !== 1)
-          .map((row) => {
-            const foreignKey = foreignKeys.get(row.name) as TableColumnInfo["foreignKey"];
-            return {
-              name: String(row.name),
-              type: {} as any,
-              notNull: Number(row.notnull) === 1,
-              // pk is the column's position in the primary key, from 1; 0 for other columns.
-              primaryKey: Number(row.pk) > 0,
-              generated: Number(row.hidden) >= 2,
-              ...(foreignKey ? { foreignKey } : {}),
-            };
-          }),
-        // A primary key's autoindex belongs to the table; UNIQUE constraints ("u") and created
-        // indexes ("c") are reported.
-        indexes: rows(name, "index_list")
-          .filter((row) => row.origin !== "pk")
-          .map((row) => ({ name: String(row.name), unique: Number(row.unique) === 1 })),
-      });
-    }
-    return schema;
   }
 
   /** Tables the engine keeps for itself, such as `sqlite_sequence`. */
   protected isInternalTable(name: string): boolean {
     return name.startsWith("sqlite_");
-  }
-
-  async fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>> {
-    // table_xinfo, unlike table_info, lists generated columns (hidden 2 or 3).
-    const result = await this.execute(sql`PRAGMA table_xinfo(${raw(table.id)})`);
-    const foreignKeyResult = await this.execute(sql`PRAGMA foreign_key_list(${raw(table.id)})`);
-    const foreignKeys = new Map(
-      foreignKeyResult.results.map((row: any) => [
-        row.from,
-        {
-          table: String(row.table),
-          field: String(row.to),
-          onDelete: normalizeForeignKeyAction(row.on_delete),
-        },
-      ]),
-    );
-    return mapSqlResult<any, TableColumnInfo, number>(result, (row) => {
-      if (Number(row.hidden) === 1) return;
-      const foreignKey = foreignKeys.get(row.name) as TableColumnInfo["foreignKey"];
-      return {
-        name: row.name,
-        type: {} as any,
-        notNull: row.notnull === 1,
-        // pk is the column's position in the primary key, from 1; 0 for other columns.
-        primaryKey: row.pk > 0,
-        generated: Number(row.hidden) >= 2,
-        ...(foreignKey ? { foreignKey } : {}),
-      };
-    });
   }
 
   async executeUpdate<TTable extends Table>(

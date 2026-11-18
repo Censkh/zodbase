@@ -108,21 +108,27 @@ describe("lazy drivers", () => {
     const driver = {
       async query(statement: string) {
         statements.push(statement);
-        if (statement.includes("information_schema.columns"))
-          return {
-            rows: [
-              {
-                column_name: "updatedAt",
-                data_type: "real",
-                is_nullable: "NO",
-                column_default: null,
-                is_identity: "NO",
-                is_primary_key: false,
-              },
-            ],
-          };
-        if (statement.includes("SELECT MAX")) return { rows: [{ revision: 1789021300000 }] };
-        return { rows: [] };
+        const answer = (part: string) => {
+          if (part.includes("information_schema.columns"))
+            return {
+              rows: [
+                {
+                  table_name: "lazy_revisions",
+                  column_name: "updatedAt",
+                  data_type: "real",
+                  is_nullable: "NO",
+                  column_default: null,
+                  is_identity: "NO",
+                  is_primary_key: false,
+                },
+              ],
+            };
+          if (part.includes("SELECT MAX")) return { rows: [{ revision: 1789021300000 }] };
+          return { rows: [] };
+        };
+        // A query of several statements (the live schema read) is answered once each.
+        const parts = statement.split(";\n");
+        return parts.length > 1 ? parts.map(answer) : answer(statement);
       },
     };
     const database = new Database({ adaptor: new PostgresAdaptor({ driver: () => driver as any, lazy: true }) });

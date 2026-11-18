@@ -41,7 +41,7 @@ import {
 import { isRelationalQuery } from "../../RelationalQuery";
 import { SqlExpression } from "../../SqlExpression";
 import { type Statement, TO_SQL_SYMBOL } from "../../Statement";
-import { type SchemaTableInfo, type TableIndex, writableFieldKeys } from "../../Table";
+import { type LiveTableSchema, type SchemaTableInfo, type TableIndex, writableFieldKeys } from "../../Table";
 
 type BackfillMetaItem = ZodMetaItem<BackfillOptions>;
 
@@ -65,6 +65,84 @@ const TYPE_ORDERING: Record<FieldDiffType, number> = {
   modified: 0,
   added: 1,
   removed: 2,
+};
+
+/** A row of the live column read: `information_schema.columns` with the column's keys. */
+export interface PostgresColumnRow {
+  table_name: string;
+  column_name: string;
+  data_type?: string;
+  is_nullable: string | boolean;
+  column_default: unknown;
+  is_identity?: string;
+  is_generated?: string;
+  generation_expression?: string;
+  is_primary_key: boolean | string;
+  foreign_key_constraint_name?: string | null;
+  foreign_table_name?: string | null;
+  foreign_column_name?: string | null;
+  delete_rule?: string | null;
+}
+
+/** A column as `fetchTableColumns` gives it, from a row of the live column read. */
+export const parsePostgresColumn = (row: PostgresColumnRow): TableColumnInfo =>
+  ({
+    name: row.column_name,
+    type: {} as any,
+    sqlType: row.data_type,
+    notNull: row.is_nullable === "NO" || row.is_nullable === false,
+    hasDefault: row.column_default !== null,
+    isIdentity: row.is_identity === "YES",
+    primaryKey: row.is_primary_key === true || row.is_primary_key === "t",
+    generated: row.is_generated === "ALWAYS" || Boolean(row.generation_expression),
+    ...(row.foreign_table_name
+      ? {
+          foreignKey: {
+            table: row.foreign_table_name,
+            field: String(row.foreign_column_name),
+            onDelete: normalizeForeignKeyAction(String(row.delete_rule)),
+            constraintName: row.foreign_key_constraint_name ?? undefined,
+          },
+        }
+      : {}),
+  }) as TableColumnInfo;
+
+/** The comment zodbase gives an index it creates starts so, followed by its definition. */
+export const INDEX_DEFINITION_PREFIX = "zodbase:";
+
+/** A row of a live index read: one of an index's key columns, in order. */
+export interface LiveIndexRow {
+  table_name: string;
+  index_name: string;
+  is_unique: boolean | string;
+  is_partial: boolean | string;
+  comment?: string | null;
+  column_name: string | null;
+}
+
+const truthy = (value: unknown) => value === true || value === "t" || value === 1 || value === "1";
+
+/** Adds each index of the live index read to its table in `schema`, its key columns in order. */
+export const addLiveIndexes = (schema: Map<string, LiveTableSchema>, rows: readonly LiveIndexRow[]) => {
+  for (const row of rows) {
+    const table = schema.get(row.table_name);
+    if (!table) continue;
+    let index = table.indexes.find((candidate) => candidate.name === row.index_name);
+    if (!index) {
+      const comment = typeof row.comment === "string" ? row.comment : undefined;
+      index = {
+        name: row.index_name,
+        unique: truthy(row.is_unique),
+        columns: [],
+        partial: truthy(row.is_partial),
+        ...(comment?.startsWith(INDEX_DEFINITION_PREFIX)
+          ? { definition: comment.slice(INDEX_DEFINITION_PREFIX.length) }
+          : {}),
+      };
+      table.indexes.push(index);
+    }
+    if (row.column_name !== null) index.columns.push(row.column_name);
+  }
 };
 
 export default class PostgresAdaptor<
@@ -343,33 +421,51 @@ export default class PostgresAdaptor<
   /** Narrows the information_schema.columns query to the columns a table's rows show. */
   protected visibleColumnCondition = "";
 
-  async fetchTableColumns(table: Table): Promise<SqlResult<TableColumnInfo>> {
-    const columnResult = await this.execute(sql`
-      SELECT 
+  /** Statements read together: in one round trip where the driver can (`executeTogether`). */
+  protected async readTogether(statements: Statement[]): Promise<SqlResult[]> {
+    const together = await this.executeTogether(statements);
+    if (together) return together;
+    const results: SqlResult[] = [];
+    for (const statement of statements) results.push(await this.execute(statement));
+    return results;
+  }
+
+  /** `AND <column> IN (…)` for the tables a live read is of; empty for every table. */
+  protected tablesCondition(column: string, tables?: readonly Table[]): string {
+    return tables ? ` AND ${column} IN (${tables.map((table) => this.valueToSql(String(table.id))).join(", ")})` : "";
+  }
+
+  // Two schema-wide reads in one round trip: every column with its key, and every index.
+  override async fetchLiveSchema(tables?: readonly Table[]): Promise<Map<string, LiveTableSchema>> {
+    if (tables && !tables.length) return new Map();
+    const [columns, indexes] = await this.readTogether([
+      raw(`
+      SELECT
+        c.table_name,
         c.column_name,
         c.data_type,
         c.is_nullable,
         c.column_default,
         c.is_identity,
         c.is_generated,
-        CASE WHEN pk.constraint_type = 'PRIMARY KEY' THEN true ELSE false END as is_primary_key,
+        pk.column_name IS NOT NULL AS is_primary_key,
         fk.constraint_name AS foreign_key_constraint_name,
         fk.foreign_table_name,
         fk.foreign_column_name,
         fk.delete_rule
       FROM information_schema.columns c
       LEFT JOIN (
-        SELECT kcu.column_name, tc.constraint_type
+        SELECT kcu.table_name, kcu.column_name
         FROM information_schema.table_constraints tc
         JOIN information_schema.key_column_usage kcu
           ON tc.constraint_schema = kcu.constraint_schema
           AND tc.constraint_name = kcu.constraint_name
-        WHERE tc.table_name = ${String(table.id)}
-          AND tc.table_schema = current_schema()
-          AND tc.constraint_type = 'PRIMARY KEY'
-      ) pk ON c.column_name = pk.column_name
+          AND tc.table_name = kcu.table_name
+        WHERE tc.table_schema = current_schema() AND tc.constraint_type = 'PRIMARY KEY'
+      ) pk ON pk.table_name = c.table_name AND pk.column_name = c.column_name
       LEFT JOIN (
         SELECT
+          kcu.table_name,
           kcu.column_name,
           tc.constraint_name,
           ccu.table_name AS foreign_table_name,
@@ -385,36 +481,49 @@ export default class PostgresAdaptor<
         JOIN information_schema.referential_constraints rc
           ON tc.constraint_schema = rc.constraint_schema
           AND tc.constraint_name = rc.constraint_name
-        WHERE tc.table_name = ${String(table.id)}
-          AND tc.table_schema = current_schema()
-          AND tc.constraint_type = 'FOREIGN KEY'
-      ) fk ON c.column_name = fk.column_name
-      WHERE c.table_name = ${String(table.id)}
-        AND c.table_schema = current_schema()
-    `);
+        WHERE tc.table_schema = current_schema() AND tc.constraint_type = 'FOREIGN KEY'
+      ) fk ON fk.table_name = c.table_name AND fk.column_name = c.column_name
+      WHERE c.table_schema = current_schema()${this.tablesCondition("c.table_name", tables)}
+      ORDER BY c.table_name, c.ordinal_position`),
+      raw(`
+      SELECT
+        t.relname AS table_name,
+        i.relname AS index_name,
+        ix.indisunique AS is_unique,
+        ix.indpred IS NOT NULL AS is_partial,
+        obj_description(i.oid, 'pg_class') AS comment,
+        a.attname AS column_name
+      FROM pg_catalog.pg_index ix
+      JOIN pg_catalog.pg_class i ON i.oid = ix.indexrelid
+      JOIN pg_catalog.pg_class t ON t.oid = ix.indrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+      CROSS JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, position)
+      LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+      WHERE n.nspname = current_schema() AND NOT ix.indisprimary AND k.position <= ix.indnkeyatts${this.tablesCondition("t.relname", tables)}
+      ORDER BY t.relname, i.relname, k.position`),
+    ]);
+    const schema = new Map<string, LiveTableSchema>();
+    for (const row of columns!.results as PostgresColumnRow[]) {
+      if (!schema.has(row.table_name)) schema.set(row.table_name, { columns: [], indexes: [] });
+      schema.get(row.table_name)!.columns.push(parsePostgresColumn(row));
+    }
+    addLiveIndexes(schema, indexes!.results as LiveIndexRow[]);
+    return schema;
+  }
 
-    return mapSqlResult<any, TableColumnInfo, number>(columnResult, (row) => {
-      return {
-        name: row.column_name,
-        type: {} as any,
-        sqlType: row.data_type,
-        notNull: row.is_nullable === "NO",
-        hasDefault: row.column_default !== null,
-        isIdentity: row.is_identity === "YES",
-        primaryKey: row.is_primary_key,
-        generated: row.is_generated === "ALWAYS",
-        ...(row.foreign_table_name
-          ? {
-              foreignKey: {
-                table: row.foreign_table_name,
-                field: row.foreign_column_name,
-                onDelete: normalizeForeignKeyAction(row.delete_rule),
-                constraintName: row.foreign_key_constraint_name,
-              },
-            }
-          : {}),
-      };
-    });
+  // PostgreSQL normalises an index's predicate as it stores it, so the definition zodbase made it
+  // from is kept as its comment.
+  protected override indexDefinitionStatements(table: Table, index: TableIndex): Statement[] {
+    return [
+      raw(
+        `COMMENT ON INDEX ${this.indexReference(table, index.id)} IS ${this.valueToSql(`${INDEX_DEFINITION_PREFIX}${this.indexDefinition(table, index)}`)}`,
+      ),
+    ];
+  }
+
+  /** How a statement names one of a table's indexes. */
+  protected indexReference(_table: Table, name: string): string {
+    return quoteIdentifier(name);
   }
 
   async executeUpdate<TTable extends Table>(
@@ -699,12 +808,6 @@ export default class PostgresAdaptor<
         ? sql`ALTER TABLE ${table.id} DROP CONSTRAINT ${raw(quoteIdentifier(current))}, ADD CONSTRAINT ${raw(quoteIdentifier(name))} PRIMARY KEY (${columns})`
         : sql`ALTER TABLE ${table.id} ADD CONSTRAINT ${raw(quoteIdentifier(name))} PRIMARY KEY (${columns})`,
     );
-  }
-
-  async syncTableIndexes(table: Table): Promise<void> {
-    for (const index of table.indexes) {
-      await this.execute(this.createIndexStatement(table, index));
-    }
   }
 
   createIndexStatement(table: Table, index: TableIndex): Statement {

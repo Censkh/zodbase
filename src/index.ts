@@ -55,7 +55,15 @@ import type {
   ValueOfTable,
 } from "./QueryBuilder";
 import { type Statement, TO_SQL_SYMBOL, type ToSql } from "./Statement";
-import { getPrimaryKey, type SchemaDrift, type SchemaTableInfo, type Table, type TableColumnInfo } from "./Table";
+import {
+  getPrimaryKey,
+  type LiveTableSchema,
+  type SchemaDrift,
+  type SchemaTableInfo,
+  type Table,
+  type TableColumnInfo,
+  type TableSyncChanges,
+} from "./Table";
 import { isZodRequired, isZodTypeExtends } from "./ZodUtils";
 
 export * from "./index.common";
@@ -659,47 +667,72 @@ export class Database {
     return tables
       .flatMap((table) => [
         this.adaptor.createTableStatement(table),
-        ...table.indexes.map((index) => this.adaptor.createIndexStatement(table, index)),
+        ...table.indexes.flatMap((index) => this.adaptor.createIndexStatements(table, index)),
         ...this.adaptor.tableSettingStatements(table),
       ])
       .map((statement) => statement[TO_SQL_SYMBOL]().trim());
   }
 
-  async syncTable<TTable extends Table>(table: TTable): Promise<void> {
-    await this.connected();
-    await this.options.adaptor.createTable(table);
-
-    const diff = this.diffTable(table, (await this.options.adaptor.fetchTableColumns(table)).results);
-
-    if (diff.fields.length > 0 || diff.primaryKey) {
-      await this.adaptor.processDiff(table, diff);
-    }
-
-    if (table.indexes.length > 0) {
-      await this.adaptor.syncTableIndexes(table);
-    }
-    await this.adaptor.syncTableLocality(table);
+  /** Syncs one table as `syncTables` does, returning what it changed, or undefined for nothing. */
+  async syncTable<TTable extends Table>(table: TTable): Promise<TableSyncChanges | undefined> {
+    return (await this.syncTables([table]))[0];
   }
 
   /**
-   * Syncs each table as `syncTable` would. Where the adaptor reads the whole schema at once
-   * (`fetchLiveSchema`), a table that already has its columns and indexes costs no further round
-   * trips, so syncing an up-to-date schema takes a few queries rather than several per table.
+   * Brings each table up to its definition: creates it, adds, removes and changes columns, its
+   * primary key and foreign keys, creates and rebuilds indexes, and sets where its rows live. The
+   * tables are read together first (`fetchLiveSchema`), in a few schema-wide queries, so a current
+   * schema costs those reads and no writes; tables outside `tables` are left alone. Returns what it
+   * changed, one entry per table it changed.
    */
-  async syncTables(tables: readonly Table[]): Promise<void> {
+  async syncTables(tables: readonly Table[]): Promise<TableSyncChanges[]> {
     await this.connected();
-    const live = await this.adaptor.fetchLiveSchema();
+    const live = await this.adaptor.fetchLiveSchema(tables);
+    const changes: TableSyncChanges[] = [];
     for (const table of tables) {
-      const current = live?.get(String(table.id));
-      const diff = current && this.diffTable(table, current.columns);
-      if (!current || !diff || diff.fields.length > 0 || diff.primaryKey) {
-        await this.syncTable(table);
-        continue;
-      }
-      const indexes = new Set(current.indexes.map((index) => index.name));
-      if (table.indexes.some((index) => !indexes.has(index.id))) await this.adaptor.syncTableIndexes(table);
-      await this.adaptor.syncTableLocality(table);
+      // `null`: the database doesn't hold it; `undefined`: the adaptor reads tables one at a time.
+      const current = live ? (live.get(String(table.id)) ?? null) : undefined;
+      const change = await this.syncLiveTable(table, current);
+      if (change.created || change.columns.length || change.primaryKey || change.indexes.length || change.locality)
+        changes.push(change);
     }
+    return changes;
+  }
+
+  private async syncLiveTable(table: Table, current: LiveTableSchema | null | undefined): Promise<TableSyncChanges> {
+    const change: TableSyncChanges = {
+      table: String(table.id),
+      created: false,
+      columns: [],
+      primaryKey: false,
+      indexes: [],
+      locality: false,
+    };
+    const columns = current === undefined ? (await this.adaptor.fetchTableColumns(table)).results : current?.columns;
+    if (!columns?.length) {
+      await this.adaptor.createTable(table);
+      change.created = true;
+      change.indexes = await this.adaptor.syncTableIndexes(table, []);
+      change.locality = await this.adaptor.syncTableLocality(table);
+      return change;
+    }
+    const diff = this.diffTable(table, columns);
+    if (diff.fields.length > 0 || diff.primaryKey) {
+      try {
+        await this.adaptor.processDiff(table, diff);
+      } catch (error) {
+        // Dropped since it was read: created as it is now defined.
+        if ((await this.adaptor.fetchTableColumns(table)).results.length) throw error;
+        return this.syncLiveTable(table, null);
+      }
+      change.columns = diff.fields.map((field) => String(field.key));
+      change.primaryKey = Boolean(diff.primaryKey);
+    }
+    // Changing columns can drop the indexes on them, so those are read again.
+    const changedColumns = change.columns.length > 0 || change.primaryKey;
+    change.indexes = await this.adaptor.syncTableIndexes(table, changedColumns ? undefined : current?.indexes);
+    change.locality = await this.adaptor.syncTableLocality(table, current ?? undefined);
+    return change;
   }
 
   /** Every table in the database's current schema: its columns, indexes and unique constraints. */

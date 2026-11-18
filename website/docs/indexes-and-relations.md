@@ -25,6 +25,8 @@ Users.addIndex("users_active_name_unique", [Users.$name], {
 
 This asks for uniqueness among active users. Partial indexes depend on the adaptor and database; MySQL does not support a `WHERE` predicate on an index. Existing duplicate data must be resolved before adding a unique index. Review and apply index changes through `syncTable`.
 
+Synchronizing creates an index the database lacks, and rebuilds one whose definition changed under the same name: its columns, their order, its uniqueness or its condition. Rebuilding drops the index and creates it again, so its table goes without it in between. Zodbase records each index's definition where the database keeps it: SQLite keeps an index's statement, and PostgreSQL and CockroachDB get it as the index's comment. An index made before Zodbase recorded its definition is compared by its columns, uniqueness and whether it has a condition. On CockroachDB, rebuilding a unique index also drops a foreign key that relies on it, which synchronizing the referencing table adds again. An index the table no longer declares stays: dropping one is a migration's.
+
 ## Declare a foreign key
 
 ```ts

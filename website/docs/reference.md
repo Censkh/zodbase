@@ -11,7 +11,8 @@ This reference summarizes the current API. Zodbase is under active development; 
 | --- | --- |
 | `createTable({ id, schema })` | A typed table with `$field` bindings. |
 | `table.addIndex(name, fields, options?)` | Registers an index on the table definition. |
-| `db.syncTable(table)` | Creates or applies supported changes to the stored table. |
+| `db.syncTable(table)` | Creates or applies supported changes to the stored table; returns what it changed. |
+| `db.syncTables(tables)` | Syncs every table after reading them at once; returns what it changed per table. |
 
 ## Reads
 
