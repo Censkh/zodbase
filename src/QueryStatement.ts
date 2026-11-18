@@ -15,8 +15,8 @@ export const COMPILE = Symbol("zodbase.compile");
 
 /**
  * Anything that compiles to a statement for the executing database: a query statement (`union`,
- * `withCtes`), a select builder, or an insert, update or delete builder. Every API that takes a
- * statement (`withCtes`, `union`, `exists`, `in`, `scalar`, `execute`, `compile`) takes any of them.
+ * `db.with`), a select builder, or an insert, update or delete builder. Every API that takes a
+ * statement (`db.with`, `union`, `unionAll`, `exists`, `in`, `scalar`, `execute`, `compile`) takes any of them.
  */
 export type Compilable =
   | QueryStatement
