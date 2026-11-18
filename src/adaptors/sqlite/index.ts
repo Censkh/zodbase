@@ -15,7 +15,7 @@ import {
   type TableDiff,
   valueToSql,
 } from "../..";
-import DatabaseAdaptor, { groupUpsertRows, type PossiblySelectedResult } from "../../DatabaseAdaptor";
+import DatabaseAdaptor, { type Conflict, groupUpsertRows, type PossiblySelectedResult } from "../../DatabaseAdaptor";
 import { quoteIdentifier } from "../../Escaping";
 import {
   buildConditionSql,
@@ -48,6 +48,11 @@ const TYPE_ORDERING: Record<FieldDiffType, number> = {
 };
 
 export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDriver> {
+  // SQLite's columns convert what they store by their affinity: a cast would turn `true` into 0.
+  protected override insertSelectValueSql(value: string): string {
+    return value;
+  }
+
   override async createTable(table: Table, name?: string) {
     await this.execute(raw("PRAGMA foreign_keys = ON"));
     return super.createTable(table, name);
@@ -377,32 +382,34 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     return result;
   }
 
-  async executeUpsert<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
+  async executeUpsert<TTable extends Table>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>,
-    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
+    conflict: Conflict,
   ): Promise<SqlResult<void, 0>> {
-    const sql = this.buildUpsertSql(table, values as any, fields);
+    const sql = this.buildUpsertSql(table, values as any, conflict);
     return (await this.execute(sql)) as any;
   }
 
-  override async executeUpsertMany<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
+  override async executeUpsertMany<TTable extends Table>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>[],
-    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
+    conflict: Conflict,
   ): Promise<SqlResult<void, 0>> {
-    const target = raw(fields.map((field) => quoteIdentifier(String(field.key))).join(", "));
     for (const rows of groupUpsertRows(
       values as Record<string, unknown>[],
-      fields.map((field) => String(field.key)),
+      conflict.fields.map((field) => String(field.key)),
     )) {
       const keys = Object.keys(rows[0]!);
       await this.execute(sql`INSERT INTO ${table.id} (${raw(keys.map(quoteIdentifier))})
-                 VALUES ${raw(rows.map((row) => sql`${keys.map((key) => row[key])}`))}
-                 ON CONFLICT (${target})
-                 DO UPDATE SET ${raw(keys.map((key) => raw(`${quoteIdentifier(key)} = excluded.${quoteIdentifier(key)}`)))}`);
+                 VALUES ${raw(rows.map((row) => sql`${keys.map((key) => row[key])}`))}${raw(this.onConflictSql(conflict, keys))}`);
     }
     return { results: [], first: undefined };
+  }
+
+  // SQLite reads `INSERT … SELECT … ON CONFLICT` as a join's ON unless the select has a WHERE.
+  protected override insertSelectSource(select: Statement, conflict?: Conflict): Statement {
+    return conflict ? sql`SELECT * FROM (${select}) WHERE true` : select;
   }
 
   executeCount<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
@@ -456,19 +463,12 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
                  WHERE ${buildConditionSql(this, where)}${raw(shouldReturn ? ` RETURNING ${this.selectFields(table)}` : "")}`;
   }
 
-  protected buildUpsertSql<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
+  protected buildUpsertSql<TTable extends Table>(
     table: TTable,
     values: Partial<ValueOfTable<TTable>>,
-    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
+    conflict: Conflict,
   ): Statement {
-    const target = raw(fields.map((field) => quoteIdentifier(String(field.key))).join(", "));
     return sql`INSERT INTO ${table.id} (${raw(Object.keys(values).map(quoteIdentifier))})
-                 VALUES ${Object.values(values)}
-                 ON CONFLICT (${target})
-                 DO UPDATE SET ${raw(
-                   Object.entries(values).map(
-                     ([key, value]) => sql`${raw(quoteIdentifier(key))} = ${raw(valueToSql(value, true))}`,
-                   ),
-                 )}`;
+                 VALUES ${Object.values(values)}${raw(this.onConflictSql(conflict, Object.keys(values)))}`;
   }
 }

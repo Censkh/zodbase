@@ -14,6 +14,7 @@ import {
   type ValueOfTable,
   validateSelectCondition,
 } from "./QueryBuilder";
+import { isCompilable, toQueryStatement } from "./QueryStatement";
 import { TO_SQL_SYMBOL } from "./Statement";
 import type { Table } from "./Table";
 
@@ -40,7 +41,11 @@ const snapshotValidatedCondition = (condition: SelectCondition): SelectCondition
     ? { ...condition, conditions: condition.conditions.map(snapshotValidatedCondition) }
     : "exists" in condition
       ? condition
-      : { ...condition, value: snapshotValue(condition.value) };
+      : {
+          ...condition,
+          // A builder (`in(select)`) becomes the statement it is now; a copy would lose what makes it one.
+          value: isCompilable(condition.value) ? toQueryStatement(condition.value) : snapshotValue(condition.value),
+        };
 };
 
 export const snapshotQuery = (query: SelectQuery): SelectQuery => ({

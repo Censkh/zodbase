@@ -328,7 +328,7 @@ describe.each(TEST_DATABASE_FACTORIES)("database contract: $name", ({ name, crea
     ).toThrow("needs its at");
     await expect(
       (async () => await db.select(Touches).where(Touches.$at.lessThan(incoming(Touches.$at))))(),
-    ).rejects.toThrow("has a value only in the .where(…) of an update of rows");
+    ).rejects.toThrow("has a value only in an update of rows");
   });
 
   it("upsertMany inserts and updates rows by key, keeping a repeated key's last row", async () => {

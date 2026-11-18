@@ -1,6 +1,7 @@
 import type * as zod from "zod";
 import { getMetaItem, type ZodMetaItem } from "zod-meta";
 import DatabaseAdaptor, {
+  type Conflict,
   type DatabaseAdaptorOptions,
   groupUpsertRows,
   type PossiblySelectedResult,
@@ -64,19 +65,6 @@ const TYPE_ORDERING: Record<FieldDiffType, number> = {
   modified: 0,
   added: 1,
   removed: 2,
-};
-
-/**
- * What an upsert sets on a conflict: each column but the conflict key's, which the existing row
- * already has. Setting a key column, even to its own value, is a key change to CockroachDB, which then
- * checks the key is unique in every region of a regional-by-row table and gives up the auto-commit
- * fast path. A row of only key columns sets its first, so the upsert still returns the row.
- */
-const conflictAssignments = (columns: readonly string[], keys: readonly string[]) => {
-  const assigned = columns.filter((column) => !keys.includes(column));
-  return (assigned.length ? assigned : keys.slice(0, 1))
-    .map((column) => `${quoteIdentifier(column)} = excluded.${quoteIdentifier(column)}`)
-    .join(", ");
 };
 
 export default class PostgresAdaptor<
@@ -152,6 +140,8 @@ export default class PostgresAdaptor<
   }
 
   protected override materializeRepeatedSubqueries = true;
+
+  protected override supportsWritesInWith = true;
 
   protected override selectDialect = "postgres" as const;
 
@@ -229,19 +219,11 @@ export default class PostgresAdaptor<
   override buildInsertStatement(
     table: Table,
     rows: readonly Record<string, unknown>[],
-    options: { returning: boolean; conflict?: { fields: readonly SingleFieldBinding[]; action: "nothing" | "update" } },
+    options: { returning: boolean; conflict?: Conflict },
   ): Statement {
     const columns = writableFieldKeys(table);
     const { conflict } = options;
-    const target = conflict?.fields.map((field) => quoteIdentifier(String(field.key))).join(", ");
-    const onConflict = !conflict
-      ? ""
-      : conflict.action === "nothing"
-        ? ` ON CONFLICT (${target}) DO NOTHING`
-        : ` ON CONFLICT (${target}) DO UPDATE SET ${conflictAssignments(
-            columns,
-            conflict.fields.map((field) => String(field.key)),
-          )}`;
+    const onConflict = conflict ? this.onConflictSql(conflict, columns) : "";
     return sql`INSERT INTO ${table.id} (${raw(columns.map(quoteIdentifier))})
                           VALUES ${raw(this.valueTuples(rows, columns))}${raw(onConflict)}${raw(
                             options.returning ? ` RETURNING ${this.selectFields(table)}` : "",
@@ -425,34 +407,28 @@ export default class PostgresAdaptor<
     return result;
   }
 
-  async executeUpsert<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
+  async executeUpsert<TTable extends Table>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>,
-    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
+    conflict: Conflict,
   ): Promise<SqlResult<void, 0>> {
-    const sql = this.buildUpsertSql(table, values as any, fields);
+    const sql = this.buildUpsertSql(table, values as any, conflict);
     return this.decodeResult(table, await this.execute(sql)) as any;
   }
 
-  override async executeUpsertMany<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
+  override async executeUpsertMany<TTable extends Table>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>[],
-    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
+    conflict: Conflict,
   ): Promise<SqlResult<void, 0>> {
-    const target = raw(fields.map((field) => quoteIdentifier(String(field.key))).join(", "));
     for (const rows of groupUpsertRows(
       values as Record<string, unknown>[],
-      fields.map((field) => String(field.key)),
+      conflict.fields.map((field) => String(field.key)),
     )) {
       const keys = Object.keys(rows[0]!);
       await this.execute(sql`INSERT INTO ${table.id} (${raw(keys.map(quoteIdentifier))})
-                             VALUES ${raw(rows.map((row) => sql`(${raw(keys.map((key) => valueToSql(row[key], true)))})`))}
-                             ON CONFLICT (${target})
-                             DO UPDATE SET ${raw(
-                               conflictAssignments(
-                                 keys,
-                                 fields.map((field) => String(field.key)),
-                               ),
+                             VALUES ${raw(rows.map((row) => sql`(${raw(keys.map((key) => valueToSql(row[key], true)))})`))}${raw(
+                               this.onConflictSql(conflict, keys),
                              )}`);
     }
     return { results: [], first: undefined };
@@ -509,19 +485,14 @@ export default class PostgresAdaptor<
                WHERE ${buildConditionSql(this, where, true)}${raw(shouldReturn ? ` RETURNING ${this.selectFields(table)}` : "")}`;
   }
 
-  protected buildUpsertSql<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
+  protected buildUpsertSql<TTable extends Table>(
     table: TTable,
     values: Partial<ValueOfTable<TTable>>,
-    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
+    conflict: Conflict,
   ): Statement {
-    const target = raw(fields.map((field) => quoteIdentifier(String(field.key))).join(", "));
     return sql`INSERT INTO ${table.id} (${raw(Object.keys(values).map(quoteIdentifier))})
-               VALUES (${raw(Object.values(values).map((v) => valueToSql(v, true)))}) ON CONFLICT (${target})
-               DO UPDATE SET ${raw(
-                 conflictAssignments(
-                   Object.keys(values),
-                   fields.map((field) => String(field.key)),
-                 ),
+               VALUES (${raw(Object.values(values).map((v) => valueToSql(v, true)))})${raw(
+                 this.onConflictSql(conflict, Object.keys(values)),
                )}
                RETURNING ${raw(this.selectFields(table))}`;
   }

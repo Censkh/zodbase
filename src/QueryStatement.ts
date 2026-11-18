@@ -1,5 +1,5 @@
 import type DatabaseAdaptor from "./DatabaseAdaptor";
-import { join, raw, sql } from "./index";
+import { sql } from "./index";
 import { assertSelectArguments, SELECT_QUERY, type SelectQuery } from "./QueryBuilder";
 import type { Statement } from "./Statement";
 import { snapshotQuery } from "./Subquery";
@@ -41,22 +41,35 @@ export const toQueryStatement = (value: Compilable): QueryStatement => {
   return new QueryStatement((adaptor) => value[COMPILE](adaptor));
 };
 
+/** `first UNION second`: the rows of both, each once. */
 export const union = (first: Compilable, second: Compilable) => {
   const [left, right] = [toQueryStatement(first), toQueryStatement(second)];
   return new QueryStatement((adaptor) => sql`${left.compile(adaptor)} UNION ${right.compile(adaptor)}`);
 };
 
-/** The table definitions supply the names and column bindings for references to each CTE. */
-export const withCtes = (
-  entries: readonly { table: Table; query: Compilable }[],
-  body: Compilable,
-  options: { recursive?: boolean } = {},
-) => {
-  const compiledBody = toQueryStatement(body);
-  const compiledEntries = entries.map(({ table, query }) => ({ table, query: toQueryStatement(query) }));
-  return new QueryStatement((adaptor) => {
-    if (!compiledEntries.length) return compiledBody.compile(adaptor);
-    const definitions = compiledEntries.map(({ table, query }) => sql`${table.id} AS (${query.compile(adaptor)})`);
-    return sql`WITH ${raw(options.recursive ? "RECURSIVE " : "")}${join(definitions, ", ")} ${compiledBody.compile(adaptor)}`;
-  });
+/** `first UNION ALL second`: the rows of both, duplicates kept, without the work of removing them. */
+export const unionAll = (first: Compilable, second: Compilable) => {
+  const [left, right] = [toQueryStatement(first), toQueryStatement(second)];
+  return new QueryStatement((adaptor) => sql`${left.compile(adaptor)} UNION ALL ${right.compile(adaptor)}`);
 };
+
+/**
+ * The named queries a statement run through `db.with(…)` starts with (`WITH name AS (query), …`).
+ * Each entry's table names the query and gives the bindings that read its columns.
+ */
+export interface WithClause {
+  readonly entries: readonly { readonly table: Table; readonly query: QueryStatement; readonly write: boolean }[];
+  readonly recursive: boolean;
+}
+
+/** `clause` with one more named query. */
+export const extendWithClause = (
+  clause: WithClause | undefined,
+  table: Table,
+  query: QueryStatement,
+  write: boolean,
+  recursive: boolean,
+): WithClause => ({
+  entries: [...(clause?.entries ?? []), { table, query, write }],
+  recursive: recursive || Boolean(clause?.recursive),
+});

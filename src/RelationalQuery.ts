@@ -14,7 +14,7 @@ import { isZodTypeExtends } from "./ZodUtils";
 
 export type SelectDialect = "postgres" | "sqlite" | "mysql" | "mariadb" | "mssql";
 export const isRelationalQuery = (query: SelectQuery) =>
-  Boolean(query.joins?.length || query.projection || query.includes || query.table.sourceTable);
+  Boolean(query.joins?.length || query.projection || query.includes || query.table.sourceTable || query.with);
 export const isTable = (value: unknown): value is Table =>
   !!value &&
   typeof value === "object" &&

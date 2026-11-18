@@ -1,6 +1,6 @@
 import * as z from "zod";
 import { getMetaItem } from "zod-meta";
-import DatabaseAdaptor, { keyCondition, type PossiblySelectedResult } from "../../DatabaseAdaptor";
+import DatabaseAdaptor, { type Conflict, keyCondition, type PossiblySelectedResult } from "../../DatabaseAdaptor";
 import {
   backfill,
   computed,
@@ -40,6 +40,9 @@ export interface MssqlTransaction extends MssqlDriver {
 }
 
 export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
+  // SQL Server's WITH is recursive whenever a query names itself, and takes no keyword.
+  protected override recursiveWithKeyword = "";
+
   override quoteIdentifier(value: string): string {
     return `[${value.replace(/]/g, "]]")}]`;
   }
@@ -194,15 +197,20 @@ export default class MssqlAdaptor extends DatabaseAdaptor<MssqlDriver> {
     >;
   }
 
-  async executeUpsert<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
+  async executeUpsert<TTable extends Table>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>,
-    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
+    conflict: Conflict,
   ): Promise<SqlResult<void, 0>> {
+    if (conflict.where) throw new Error("[zodbase] SQL Server can't name a partial index as a conflict target");
     const keys = Object.keys(values);
     const q = (key: string) => this.quoteIdentifier(key);
+    const name = q(String(table.id));
+    const on = conflict.fields.map((field) => `${name}.${q(String(field.key))} = source.${q(String(field.key))}`);
+    // The target keeps its own name, so an update's values can name its columns as a select would.
+    const set = this.conflictAssignments(conflict, keys, (column) => `source.${q(column)}`);
     // HOLDLOCK gives serializable key-range protection against concurrent insert races.
-    const text = `MERGE ${q(String(table.id))} WITH (HOLDLOCK) AS target USING (VALUES (${keys.map((key) => this.valueToSql((values as any)[key], true)).join(", ")})) AS source (${keys.map(q).join(", ")}) ON ${fields.map((field) => `target.${q(String(field.key))} = source.${q(String(field.key))}`).join(" AND ")} WHEN MATCHED THEN UPDATE SET ${keys.map((key) => `target.${q(key)} = source.${q(key)}`).join(", ")} WHEN NOT MATCHED THEN INSERT (${keys.map(q).join(", ")}) VALUES (${keys.map((key) => `source.${q(key)}`).join(", ")})${this.insertReturningSql(table, "before-values")};`;
+    const text = `MERGE ${name} WITH (HOLDLOCK) USING (VALUES (${keys.map((key) => this.valueToSql((values as any)[key], true)).join(", ")})) AS source (${keys.map(q).join(", ")}) ON ${on.join(" AND ")} WHEN MATCHED THEN UPDATE SET ${set} WHEN NOT MATCHED THEN INSERT (${keys.map(q).join(", ")}) VALUES (${keys.map((key) => `source.${q(key)}`).join(", ")})${this.insertReturningSql(table, "before-values")};`;
     return this.decodeResult(table, await this.execute(raw(text))) as SqlResult<void, 0>;
   }
 

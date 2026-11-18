@@ -1,6 +1,18 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as zod from "zod";
-import { add, createTable, type Database, exists, expression, metaStore, primaryKey, sql, withCtes } from "../src";
+import {
+  add,
+  createTable,
+  type Database,
+  exists,
+  expression,
+  incoming,
+  metaStore,
+  primaryKey,
+  sql,
+  union,
+  unionAll,
+} from "../src";
 import {
   acquireTestDatabaseContainers,
   releaseTestDatabaseContainers,
@@ -135,6 +147,18 @@ describe.each(TEST_DATABASE_FACTORIES)("writes: $name", ({ name, create }) => {
     expect((await stored()).map((row) => row.name)).toEqual(["Apples", "Big", "Cherries"]);
   });
 
+  it("updates and deletes the rows a condition holding a select matches", async () => {
+    await db.insert(Counters, counters);
+    await db.insert(Copies, [{ id: "a", label: "Apples" }]);
+    const copied = db.select(Copies, { id: Copies.$id });
+    await db.update(Counters, { count: 0 }).where(Counters.$id.in(copied));
+    await db.delete(Counters).where(Counters.$id.notIn(copied).and(Counters.$count.greaterThan(2)));
+    expect(await stored()).toEqual([
+      { id: "a", name: "Apples", count: 0 },
+      { id: "b", name: "Bananas", count: 2 },
+    ]);
+  });
+
   it("refuses to update or delete without a where condition", async () => {
     await db.insert(Counters, counters);
     await expect(Promise.resolve(db.update(Counters, { name: "All" }))).rejects.toThrow("without where condition");
@@ -176,11 +200,173 @@ describe.each(TEST_DATABASE_FACTORIES)("writes: $name", ({ name, create }) => {
     await db.insert(Counters, counters);
     await db
       .insert(Copies)
-      .fromSelect(db.select(Counters, { id: Counters.$id, label: Counters.$name }).where(Counters.$count.lessThan(3)));
+      .select(db.select(Counters, { id: Counters.$id, label: Counters.$name }).where(Counters.$count.lessThan(3)));
     expect((await db.select(Copies).orderBy(Copies.$id, "ASC")).results).toEqual([
       { id: "a", label: "Apples" },
       { id: "b", label: "Bananas" },
     ]);
+  });
+
+  it("skips or updates the selected rows that conflict with existing ones", async () => {
+    await db.insert(Copies, { id: "a", label: "Kept" });
+    const select = db.select(Counters, { id: Counters.$id, label: Counters.$name });
+    await db.insert(Counters, counters);
+    await db
+      .insert(Copies)
+      .select(select.clone().where(Counters.$id.in(["a", "b"])))
+      .onConflict(Copies.$id)
+      .doNothing();
+    expect((await db.select(Copies).orderBy(Copies.$id, "ASC")).results).toEqual([
+      { id: "a", label: "Kept" },
+      { id: "b", label: "Bananas" },
+    ]);
+    await db.insert(Copies).select(select.clone()).onConflict(Copies.$id).doUpdate();
+    expect((await db.select(Copies).orderBy(Copies.$id, "ASC")).results).toEqual([
+      { id: "a", label: "Apples" },
+      { id: "b", label: "Bananas" },
+      { id: "c", label: "Cherries" },
+    ]);
+  });
+
+  it("updates a conflicting row to values combining it with the incoming row", async () => {
+    await db.insert(Counters, counters);
+    // The existing count plus the inserted one; the name stays.
+    const increment = { count: add(Counters.$count, incoming(Counters.$count)) };
+    await db.insert(Counters, { id: "a", name: "Ignored", count: 10 }).onConflict(Counters.$id).doUpdate(increment);
+    await db
+      .insert(Counters, [
+        { id: "b", name: "Ignored", count: 20 },
+        { id: "d", name: "Dates", count: 4 },
+      ])
+      .onConflict(Counters.$id)
+      .doUpdate(increment);
+    expect(await stored()).toEqual([
+      { id: "a", name: "Apples", count: 11 },
+      { id: "b", name: "Bananas", count: 22 },
+      { id: "c", name: "Cherries", count: 3 },
+      { id: "d", name: "Dates", count: 4 },
+    ]);
+  });
+
+  it.skipIf(mysql)("names a partial unique index as the conflict target", async () => {
+    const Labels = createTable({
+      id: "writes_label",
+      schema: zod.object({
+        id: zod.string().meta(metaStore([primaryKey()])),
+        label: zod.string(),
+        current: zod.boolean(),
+      }),
+    });
+    // One current row per label; past ones may share it.
+    Labels.addIndex("writes_label_current", [Labels.$label], { unique: true, where: Labels.$current.equals(true) });
+    await db.syncTable(Labels);
+    await db.insert(Labels, [
+      { id: "old", label: "x", current: false },
+      { id: "now", label: "x", current: true },
+    ]);
+    await db
+      .insert(Labels, { id: "new", label: "x", current: true })
+      .onConflict(Labels.$label, { where: Labels.$current.equals(true) })
+      .doUpdate({ current: false });
+    await db
+      .insert(Labels, { id: "other", label: "y", current: true })
+      .onConflict(Labels.$label, {
+        where: Labels.$current.equals(true),
+      })
+      .doNothing();
+    expect((await db.select(Labels).orderBy(Labels.$id, "ASC")).results).toEqual([
+      { id: "now", label: "x", current: false },
+      { id: "old", label: "x", current: false },
+      { id: "other", label: "y", current: true },
+    ]);
+  });
+
+  it("reads a named query's rows through its table, typed, and counts them", async () => {
+    await db.insert(Counters, counters);
+    const Small = createTable({ id: "small_counter", schema: Counters.schema });
+    const scoped = db.with(Small, db.select(Counters).where(Counters.$count.lessThan(3)));
+    expect((await scoped.select(Small).orderBy(Small.$id, "ASC")).results).toEqual(counters.slice(0, 2));
+    expect(await scoped.select(Small).count()).toBe(2);
+    expect(await scoped.select(Small).count({ upTo: 1 })).toBe(1);
+    // A select of the scope used as a subquery takes its WITH along.
+    expect(
+      (
+        await db.select(Counters, { id: Counters.$id }).where(Counters.$id.in(scoped.select(Small, { id: Small.$id })))
+      ).results
+        .map((row) => row.id)
+        .toSorted(),
+    ).toEqual(["a", "b"]);
+  });
+
+  it("keeps the duplicates of a union all, which a union removes", async () => {
+    await db.insert(Counters, counters);
+    const Names = createTable({ id: "writes_names", schema: zod.object({ name: zod.string() }) });
+    const apples = db.select(Counters, { name: Counters.$name }).where(Counters.$id.equals("a"));
+    const all = await db.with(Names, unionAll(apples, apples.clone())).select(Names);
+    const distinct = await db.with(Names, union(apples, apples.clone())).select(Names);
+    expect(all.results).toEqual([{ name: "Apples" }, { name: "Apples" }]);
+    expect(distinct.results).toEqual([{ name: "Apples" }]);
+  });
+
+  it.skipIf(postgres)("refuses a write after a WITH clause where the database can't build one", async () => {
+    await db.insert(Counters, counters);
+    const Small = createTable({ id: "small_counter", schema: Counters.schema });
+    const scoped = db.with(Small, db.select(Counters).where(Counters.$count.lessThan(3)));
+    await expect(
+      Promise.resolve(scoped.delete(Counters).where(Counters.$id.in(scoped.select(Small, { id: Small.$id })))),
+    ).rejects.toThrow("after a WITH clause");
+    expect(await stored()).toEqual(counters);
+  });
+
+  it("inserts rows only where a condition holds", async () => {
+    await db.insert(Counters, counters[0]!);
+    const apples = exists(db.select(Counters, { id: Counters.$id }).where(Counters.$id.equals("a")));
+    const zucchini = exists(db.select(Counters, { id: Counters.$id }).where(Counters.$id.equals("z")));
+    await db
+      .insert(Copies, [
+        { id: "x", label: "First" },
+        { id: "y", label: "Second" },
+      ])
+      .where(apples);
+    await db.insert(Copies, { id: "z", label: "Never" }).where(zucchini);
+    // A conflicting row is skipped as an insert of values skips it.
+    await db
+      .insert(Copies, [
+        { id: "x", label: "Again" },
+        { id: "w", label: "New" },
+      ])
+      .where(apples)
+      .onConflict(Copies.$id)
+      .doNothing();
+    expect((await db.select(Copies).orderBy(Copies.$id, "ASC")).results).toEqual([
+      { id: "w", label: "New" },
+      { id: "x", label: "First" },
+      { id: "y", label: "Second" },
+    ]);
+  });
+
+  it.skipIf(mysql)("returns the rows a conditional insert wrote, and none where it held for none", async () => {
+    await db.insert(Counters, counters[0]!);
+    const held = exists(db.select(Counters, { id: Counters.$id }).where(Counters.$id.equals("a")));
+    const missing = exists(db.select(Counters, { id: Counters.$id }).where(Counters.$id.equals("z")));
+    expect((await db.insert(Copies, { id: "x", label: "Kept" }).where(held).returning("id")).results).toEqual([
+      { id: "x" },
+    ]);
+    expect((await db.insert(Copies, { id: "y", label: "Lost" }).where(missing).returning("id")).results).toEqual([]);
+  });
+
+  it("upserts a row whose values include a subquery", async () => {
+    await db.insert(Counters, counters);
+    const name = (id: string) => db.select(Counters, { label: Counters.$name }).where(Counters.$id.equals(id));
+    await db
+      .insert(Copies, { id: "c", label: name("a") })
+      .onConflict(Copies.$id)
+      .doUpdate();
+    await db
+      .insert(Copies, { id: "c", label: name("b") })
+      .onConflict(Copies.$id)
+      .doUpdate();
+    expect((await db.select(Copies)).results).toEqual([{ id: "c", label: "Bananas" }]);
   });
 
   it("gives each write in a batch the result awaiting it alone would", async () => {
@@ -235,22 +421,19 @@ describe.each(TEST_DATABASE_FACTORIES)("writes: $name", ({ name, create }) => {
       .returning();
     const copy = db
       .insert(Copies)
-      .fromSelect(db.select(Updated, { id: Updated.$id, label: Updated.$name }))
+      .select(db.select(Updated, { id: Updated.$id, label: Updated.$name }))
       .returning("id");
     const Copied = createTable({ id: "copied", schema: zod.object({ id: zod.string() }) });
-    const { results } = await db.execute(
-      withCtes(
-        [
-          { table: Updated, query: update },
-          { table: Copied, query: copy },
-        ],
-        db
-          .select(Updated, { id: Updated.$id, copied: expression(sql`true`, zod.boolean()) })
-          .where(exists(db.select(Copied, { id: Copied.$id })))
-          .orderBy(Updated.$id, "ASC"),
-      ),
-    );
-    expect(results.map((row) => row.id)).toEqual(["a", "b"]);
+    const { results } = await db
+      .with(Updated, update)
+      .with(Copied, copy)
+      .select(Updated, { id: Updated.$id, copied: expression(sql`true`, zod.boolean()) })
+      .where(exists(db.select(Copied, { id: Copied.$id })))
+      .orderBy(Updated.$id, "ASC");
+    expect(results).toEqual([
+      { id: "a", copied: true },
+      { id: "b", copied: true },
+    ]);
     expect((await db.select(Copies).orderBy(Copies.$id, "ASC")).results).toEqual([
       { id: "a", label: "Apples" },
       { id: "b", label: "Bananas" },

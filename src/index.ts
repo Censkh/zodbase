@@ -1,6 +1,15 @@
 import { assertSelectArguments, type InsertValues, isFieldReference, SELECT_QUERY } from "./QueryBuilder";
-import { COMPILE, type Compilable, isCompilable, QueryStatement, toQueryStatement } from "./QueryStatement";
+import {
+  COMPILE,
+  type Compilable,
+  extendWithClause,
+  isCompilable,
+  QueryStatement,
+  toQueryStatement,
+  type WithClause,
+} from "./QueryStatement";
 import { isRelationalQuery } from "./RelationalQuery";
+import { SqlExpression } from "./SqlExpression";
 import { snapshotQuery } from "./Subquery";
 import {
   createDelete,
@@ -40,6 +49,7 @@ import type {
   SingleFieldBinding,
   SqlResult,
   SqlResultTimings,
+  StringKeys,
   UpdateValues,
   ValueOfTable,
 } from "./QueryBuilder";
@@ -404,12 +414,50 @@ const createSelectQueryBuilder = <TTable extends Table, TKey extends BindingKeys
   }, builder) as any;
 };
 
+/** Loads (`Database.load`) of one table's rows by one field, under one condition, waiting to run together. */
+interface PendingLoads {
+  readonly field: SingleFieldBinding;
+  readonly where: SelectCondition | undefined;
+  readonly values: Map<
+    string,
+    { value: unknown; waiting: { resolve(row: unknown): void; reject(error: unknown): void }[] }
+  >;
+}
+
+/** The most values one statement of loads reads by. */
+const LOAD_CHUNK_SIZE = 500;
+
+/**
+ * A text two conditions share exactly when they compile to the same SQL, or undefined where that
+ * can't be told from the condition alone (subqueries, field references, expressions).
+ */
+const conditionKey = (condition: SelectCondition | undefined): string | undefined => {
+  if (!condition) return "";
+  if ("exists" in condition) return undefined;
+  if ("conditions" in condition) {
+    const parts = condition.conditions.map((child) => (child ? conditionKey(child) : ""));
+    return parts.some((part) => part === undefined) ? undefined : `${condition.type}(${parts.join(",")})`;
+  }
+  const { value } = condition;
+  if (isFieldReference(value) || isCompilable(value) || value instanceof SqlExpression) return undefined;
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+  return `${String(condition.field.table.id)}.${String(condition.field.key)} ${condition.operator} ${text}`;
+};
+
 export class Database {
   private readonly options: ResolvedDatabaseOptions;
+  private readonly loads = new Map<string, PendingLoads>();
 
   constructor(
     options: DatabaseOptions,
     private readonly transactionScoped = false,
+    /** The named queries every statement it builds starts with (`with`). */
+    private readonly withClause?: WithClause,
   ) {
     this.options = {
       ...options,
@@ -452,6 +500,84 @@ export class Database {
     return adaptor[RESOLVE_ADAPTOR] ? adaptor[RESOLVE_ADAPTOR]() : adaptor;
   }
 
+  /**
+   * The row whose `field` (a unique one, such as the primary key) is `value`, or undefined. Loads of
+   * the same table and field under the same `where` that this database starts in the same turn of
+   * the event loop read their rows together, in one `WHERE field IN (…)` statement rather than one
+   * each; a transaction's loads never share one with others. A failed statement rejects every load
+   * it held.
+   */
+  load<TValue, TKey extends StringKeys<TValue>>(
+    field: SingleFieldBinding<TValue, TKey>,
+    value: TValue[TKey],
+    options: { where?: SelectCondition<TValue> } = {},
+  ): Promise<TValue | undefined> {
+    const condition = conditionKey(options.where);
+    const valueKey = JSON.stringify(value);
+    const read = (values: unknown[]) => {
+      const matching = (field as SingleFieldBinding).in(values as never) as SelectCondition;
+      return this.select(field.table).where(options.where ? matching.and(options.where) : matching);
+    };
+    // A condition that can't be compared with others reads on its own.
+    if (condition === undefined || valueKey === undefined)
+      return Promise.resolve(read([value]).one()).then(({ first }) => first as TValue | undefined);
+    const key = `${String(field.table.id)}\u0000${String(field.key)}\u0000${condition}`;
+    let pending = this.loads.get(key);
+    if (!pending) {
+      const created: PendingLoads = { field, where: options.where, values: new Map() };
+      pending = created;
+      this.loads.set(key, created);
+      setTimeout(() => {
+        this.loads.delete(key);
+        void this.runLoads(created, read);
+      }, 0);
+    }
+    const entry = pending.values.get(valueKey) ?? { value, waiting: [] };
+    pending.values.set(valueKey, entry);
+    return new Promise((resolve, reject) => entry.waiting.push({ resolve: resolve as (row: unknown) => void, reject }));
+  }
+
+  private async runLoads(
+    pending: PendingLoads,
+    read: (values: unknown[]) => Promise<SqlResult<Record<string, unknown>>>,
+  ): Promise<void> {
+    const entries = [...pending.values.values()];
+    try {
+      const chunks: (typeof entries)[] = [];
+      for (let index = 0; index < entries.length; index += LOAD_CHUNK_SIZE)
+        chunks.push(entries.slice(index, index + LOAD_CHUNK_SIZE));
+      const results = await Promise.all(chunks.map((chunk) => read(chunk.map((entry) => entry.value))));
+      const rows = new Map<string, unknown>();
+      for (const { results: found } of results)
+        for (const row of found) rows.set(JSON.stringify(row[String(pending.field.key)]), row);
+      for (const entry of entries)
+        for (const waiting of entry.waiting) waiting.resolve(rows.get(JSON.stringify(entry.value)));
+    } catch (error) {
+      for (const entry of entries) for (const waiting of entry.waiting) waiting.reject(error);
+    }
+  }
+
+  /**
+   * A database whose selects, inserts, updates and deletes start with `WITH table AS (query)`: they
+   * read the query's rows through `table`, whose fields name its columns (a `createTable` of the
+   * query's shape, never synced). Chain `with` for several. On PostgreSQL and CockroachDB the query
+   * may be an insert, update or delete with `returning`, and the statement after it sees what it
+   * returned; elsewhere a WITH clause holds selects only, and a write runs after one on PostgreSQL
+   * and CockroachDB only.
+   */
+  with(table: Table, query: Compilable): Database {
+    return this.scoped(extendWithClause(this.withClause, table, toQueryStatement(query), isWrite(query), false));
+  }
+
+  /** `with`, where the query may read its own table: `WITH RECURSIVE`, as a union of a seed and a step. */
+  withRecursive(table: Table, query: Compilable): Database {
+    return this.scoped(extendWithClause(this.withClause, table, toQueryStatement(query), isWrite(query), true));
+  }
+
+  private scoped(clause: WithClause): Database {
+    return new Database(this.options, this.transactionScoped, clause);
+  }
+
   transaction<TResult>(callback: (transaction: Database) => Promise<TResult>): Promise<TResult> {
     if (this.transactionScoped) {
       throw new Error("Nested transactions are not supported");
@@ -464,6 +590,7 @@ export class Database {
             adaptor,
           },
           true,
+          this.withClause,
         ),
       ),
     );
@@ -494,25 +621,26 @@ export class Database {
       orderBy: [],
       limit: undefined,
       offset: undefined,
+      with: this.withClause,
     };
     return createSelectQueryBuilder(query, this.options.adaptor) as any;
   }
 
   /** Deletes the rows `.where(…)` matches; running it without a condition throws. */
   delete<TTable extends Table>(table: TTable): DeleteWrite<TTable> {
-    return createDelete(() => this.options.adaptor, table);
+    return createDelete(() => this.options.adaptor, table, undefined, this.withClause);
   }
 
   /**
    * Inserts a row, or several. Await it, or chain `.returning(…)` for the rows it wrote and
-   * `.onConflict(key).doNothing()` / `.doUpdate()` for rows that conflict with existing ones. With
-   * only a table, `.fromSelect(select)` inserts what the select gives.
+   * `.onConflict(key).doNothing()` / `.doUpdate(…)` for rows that conflict with existing ones. With
+   * only a table, `.select(query)` inserts what the query gives.
    */
   insert<TTable extends Table>(
     table: TTable,
   ): {
-    /** `INSERT INTO table (columns) <select>`: the select's projection names the columns. */
-    fromSelect(select: SelectQueryBuilder<any, any, any, any, any>): InsertSelectWrite<TTable>;
+    /** `INSERT INTO table (columns) <query>`: the query's projection names the columns. */
+    select(query: SelectQueryBuilder<any, any, any, any, any>): InsertSelectWrite<TTable>;
   };
   insert<TTable extends Table>(table: TTable, values: InputOfTable<TTable>): InsertWrite<TTable, true>;
   insert<TTable extends Table>(table: TTable, values: InputOfTable<TTable>[]): InsertWrite<TTable, false>;
@@ -520,10 +648,12 @@ export class Database {
   insert<TTable extends Table>(table: TTable, values: InsertValues<TTable>): SubqueryInsertWrite<TTable, true>;
   insert<TTable extends Table>(table: TTable, values?: InsertValues<TTable> | InsertValues<TTable>[]): unknown {
     const adaptor = () => this.options.adaptor;
-    if (values === undefined) return { fromSelect: (select: any) => createInsertSelect(adaptor, table, select) };
+    const clause = this.withClause;
+    if (values === undefined)
+      return { select: (query: any) => createInsertSelect(adaptor, table, query, undefined, clause) };
     return Array.isArray(values)
-      ? createInsert(adaptor, table, values, false)
-      : createInsert(adaptor, table, [values], true);
+      ? createInsert(adaptor, table, values, false, undefined, clause)
+      : createInsert(adaptor, table, [values], true, undefined, clause);
   }
 
   /** Updates each row `.by(key)` finds to that row's own values. */
@@ -535,9 +665,10 @@ export class Database {
     values: UpdateValues<TTable> | Partial<InputOfTable<TTable>>[],
   ): UpdateWrite<TTable> | UpdateRows<TTable> {
     const adaptor = () => this.options.adaptor;
-    if (!Array.isArray(values)) return createUpdate(adaptor, table, values);
+    const clause = this.withClause;
+    if (!Array.isArray(values)) return createUpdate(adaptor, table, values, undefined, clause);
     return {
-      by: (key) => createUpdateRows(adaptor, table, values, Array.isArray(key) ? key : [key as any]),
+      by: (key) => createUpdateRows(adaptor, table, values, Array.isArray(key) ? key : [key as any], undefined, clause),
     } as UpdateRows<TTable>;
   }
 
@@ -761,9 +892,11 @@ export { exists } from "./Bindings";
 export type { default as DatabaseAdaptor } from "./DatabaseAdaptor";
 export * from "./MetaTypes";
 export type { SelectCondition, SelectQueryBuilder } from "./QueryBuilder";
-export { type Compilable, union, withCtes } from "./QueryStatement";
+export { type Compilable, union, unionAll } from "./QueryStatement";
 export { add, coalesce, divide, expression, IncomingValue, incoming, scalar, subtract, sum } from "./SqlExpression";
 export type {
+  ConflictActions,
+  ConflictOptions,
   DeleteWrite,
   InsertSelectWrite,
   InsertWrite,

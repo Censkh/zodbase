@@ -43,11 +43,11 @@ driver.close();
 
 ## Composing statements
 
-Any builder (select, insert, update or delete) is a SQL statement wherever one is taken. A select's flat projection names become the SQL column names. Combine statements with `union` and `withCtes`, using `createTable` to define the names and schemas of the CTE bindings. Execute the statement with `db.execute()` or pass a single-column statement to `field.in()`. Use `exists(statement)` for existence predicates and `field.containsText(text)` for case-insensitive searches that treat wildcard characters literally.
+Any builder (select, insert, update or delete) is a SQL statement wherever one is taken. A select's flat projection names become the SQL column names. Combine statements with `union` and `unionAll`, and name one with `db.with(table, query)` (or `db.withRecursive`), whose selects and writes then start with `WITH table AS (query)`; `createTable` gives the named query's columns their bindings. Pass a single-column statement to `field.in()`. Use `exists(statement)` for existence predicates and `field.containsText(text)` for case-insensitive searches that treat wildcard characters literally.
 
 Use `expression(statement, schema)` to assign a SQL expression to a column in `db.update()`. Plain values still go through the table schema. Use `db.compile()` when a composed statement needs to be interpolated into a SQL expression.
 
-On PostgreSQL and CockroachDB, `db.update(…).where(…).returning()` and `db.insert(table).fromSelect(…)` serve as writable CTEs in a single `db.execute()` call. Use `db.batch([...])` to run independent writes atomically, in one round trip there.
+On PostgreSQL and CockroachDB, `db.with(table, db.update(…).where(…).returning())` names a write's returned rows for the statement after it, such as `db.insert(table).select(…)`, all in one statement. Use `db.batch([...])` to run independent writes atomically, in one round trip there, and `db.load(Table.$id, id)` to read rows by key together: loads started in the same tick share one `IN (…)` query.
 
 ## Keep going
 

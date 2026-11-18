@@ -25,8 +25,8 @@ import type {
   StringKeys,
   ValueOfTable,
 } from "./QueryBuilder";
-import { isScalarSelect, SELECT_QUERY } from "./QueryBuilder";
-import type { QueryStatement } from "./QueryStatement";
+import { buildConditionSql, isScalarSelect, SELECT_QUERY } from "./QueryBuilder";
+import type { QueryStatement, WithClause } from "./QueryStatement";
 import { compileRelationalQuery, type SelectDialect } from "./RelationalQuery";
 import { divideSql, IncomingValue, SqlExpression } from "./SqlExpression";
 import { type Statement, TO_SQL_SYMBOL } from "./Statement";
@@ -42,6 +42,20 @@ export interface DatabaseAdaptorOptions<TDriver = any> {
 export interface PossiblySelectedResult<TValue = any, TLimit extends number = number>
   extends SqlResult<TValue, TLimit> {
   selected: boolean;
+}
+
+/** What an insert does with a row that conflicts with an existing one on a unique key (`onConflict`). */
+export interface Conflict {
+  /** The unique key's columns, in order. */
+  readonly fields: readonly SingleFieldBinding[];
+  /** The condition of the partial unique index the key is, which names that index as the target. */
+  readonly where?: SelectCondition;
+  readonly action: "nothing" | "update";
+  /**
+   * What an update sets, parsed: `incoming(field)` in it is the value the row brought. Without it,
+   * every column the row gives but the key's takes the row's value.
+   */
+  readonly set?: Record<string, unknown>;
 }
 
 /**
@@ -196,7 +210,79 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   protected selectDialect?: SelectDialect;
   protected relationalSelect(query: SelectQuery, scalar = false, named = false) {
     if (!this.selectDialect) throw new Error("This adaptor does not support relational queries");
-    return compileRelationalQuery(this, this.selectDialect, query, scalar, named);
+    if (!query.with) return compileRelationalQuery(this, this.selectDialect, query, scalar, named);
+    const compiled = compileRelationalQuery(this, this.selectDialect, { ...query, with: undefined }, scalar, named);
+    return { ...compiled, sql: this.prefixWith(query.with, raw(compiled.sql))[TO_SQL_SYMBOL]() };
+  }
+
+  /** Whether a `WITH` clause may hold inserts, updates and deletes: PostgreSQL and CockroachDB only. */
+  protected supportsWritesInWith = false;
+  /** The keyword a recursive `WITH` clause takes; SQL Server's takes none. */
+  protected recursiveWithKeyword = "RECURSIVE ";
+
+  /** `statement` starting with `clause` (`WITH name AS (query), …`). */
+  prefixWith(clause: WithClause, statement: Statement): Statement {
+    if (!clause.entries.length) return statement;
+    if (clause.entries.some((entry) => entry.write) && !this.supportsWritesInWith)
+      throw new Error("[zodbase] Only PostgreSQL and CockroachDB run inserts, updates and deletes in a WITH clause");
+    const definitions = clause.entries.map(
+      ({ table, query }) => sql`${raw(this.quoteIdentifier(String(table.id)))} AS (${query.compile(this)})`,
+    );
+    return sql`WITH ${raw(clause.recursive ? this.recursiveWithKeyword : "")}${join(definitions, ", ")} ${statement}`;
+  }
+
+  /**
+   * How `incoming(field)` compiles where it has a value: set on an adaptor `withIncoming` gives an
+   * upsert's update, and absent elsewhere, where building it throws.
+   */
+  incomingSql?: (column: string) => string;
+
+  /** This adaptor with `incoming(field)` compiling to `sqlFor(column)`. */
+  protected withIncoming(sqlFor: (column: string) => string): this {
+    return Object.create(this, { incomingSql: { value: sqlFor } });
+  }
+
+  /**
+   * The assignments a conflict's update makes: its `set`, or each column the row gives but the key's,
+   * which the existing row already has. Setting a key column, even to its own value, is a key change
+   * to CockroachDB, which then checks the key is unique in every region of a regional-by-row table
+   * and gives up the auto-commit fast path. A row of only key columns sets its first, so the upsert
+   * still returns the row. `incomingSql` is the inserted row's value of a column.
+   */
+  protected conflictAssignments(
+    conflict: Conflict,
+    columns: readonly string[],
+    incomingSql: (column: string) => string,
+  ): string {
+    const quote = (name: string) => this.quoteIdentifier(name);
+    if (conflict.set) {
+      const scoped = this.withIncoming(incomingSql);
+      const assignments = Object.entries(conflict.set)
+        .filter(([, value]) => value !== undefined)
+        .map(([column, value]) => `${quote(column)} = ${scoped.valueToSql(value, true)}`);
+      if (!assignments.length) throw new Error("[zodbase] A conflict's update needs values to set");
+      return assignments.join(", ");
+    }
+    const keys = conflict.fields.map((field) => String(field.key));
+    const assigned = columns.filter((column) => !keys.includes(column));
+    return (assigned.length ? assigned : keys.slice(0, 1))
+      .map((column) => `${quote(column)} = ${incomingSql(column)}`)
+      .join(", ");
+  }
+
+  /**
+   * `ON CONFLICT (key) [WHERE condition] DO NOTHING | DO UPDATE SET …`, as PostgreSQL, CockroachDB
+   * and SQLite write it, for rows that give `columns`.
+   */
+  protected onConflictSql(conflict: Conflict, columns: readonly string[]): string {
+    const quote = (name: string) => this.quoteIdentifier(name);
+    const target = `(${conflict.fields.map((field) => quote(String(field.key))).join(", ")})${
+      conflict.where
+        ? ` WHERE ${buildConditionSql(this, conflict.where, { includeTable: false })[TO_SQL_SYMBOL]()}`
+        : ""
+    }`;
+    if (conflict.action === "nothing") return ` ON CONFLICT ${target} DO NOTHING`;
+    return ` ON CONFLICT ${target} DO UPDATE SET ${this.conflictAssignments(conflict, columns, (column) => `excluded.${quote(column)}`)}`;
   }
   protected buildRelationalSelectSql(query: SelectQuery, scalar: boolean, named = false): Statement {
     if (scalar && !isScalarSelect(query)) throw new Error("Scalar subqueries must select exactly one plain column");
@@ -341,26 +427,26 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     where: SelectCondition<ValueOfTable<TTable>>,
     shouldReturn?: boolean,
   ): Promise<PossiblySelectedResult<ValueOfTable<TTable>>>;
-  abstract executeUpsert<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
+  /** Inserts the row, or updates the one it conflicts with as `conflict` (an update) says. */
+  abstract executeUpsert<TTable extends Table>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>,
-    /** The conflict target: the columns of the key the row is matched on, in order. */
-    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
+    conflict: Conflict,
   ): Promise<SqlResult<void, 0>>;
   /**
-   * Upserts each row by `fields`, as `executeUpsert` would. Adaptors that can write the rows in one
-   * statement override this; the default writes them one at a time.
+   * Upserts each row, as `executeUpsert` would. Adaptors that can write the rows in one statement
+   * override this; the default writes them one at a time.
    */
-  async executeUpsertMany<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
+  async executeUpsertMany<TTable extends Table>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>[],
-    fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
+    conflict: Conflict,
   ): Promise<SqlResult<void, 0>> {
     for (const rows of groupUpsertRows(
       values,
-      fields.map((field) => String(field.key)),
+      conflict.fields.map((field) => String(field.key)),
     ))
-      for (const row of rows) await this.executeUpsert(table, row, fields);
+      for (const row of rows) await this.executeUpsert(table, row, conflict);
     return { results: [], first: undefined };
   }
   abstract executeUpdateMany<
@@ -400,7 +486,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   async executeInsertIgnoring<TTable extends Table>(
     table: TTable,
     rows: InputOfTable<TTable>[],
-    fields: readonly SingleFieldBinding[],
+    conflict: Conflict,
     shouldReturn = false,
   ): Promise<SqlResult<ValueOfTable<TTable>>> {
     if (!rows.length) return { results: [], first: undefined };
@@ -409,15 +495,15 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     const into = `${quote(String(table.id))} (${columns.map(quote).join(", ")})`;
     const values = this.valueTuples(rows as Record<string, unknown>[], columns);
     if (this.selectDialect === "mysql" || this.selectDialect === "mariadb") {
+      if (conflict.where) throw new Error("[zodbase] MySQL can't name a partial index as a conflict target");
       if (shouldReturn) throw new Error("[zodbase] MySQL can't return the rows an insert that skips conflicts wrote");
       await this.execute(raw(`INSERT IGNORE INTO ${into} VALUES ${values}`));
       return { results: [], first: undefined };
     }
     if (this.selectDialect === "mssql") throw new Error("[zodbase] SQL Server can't skip conflicting inserts");
-    const target = fields.map((field) => quote(String(field.key))).join(", ");
     const result = await this.execute(
       raw(
-        `INSERT INTO ${into} VALUES ${values} ON CONFLICT (${target}) DO NOTHING${shouldReturn ? this.insertReturningSql(table, "after-values") : ""}`,
+        `INSERT INTO ${into} VALUES ${values}${this.onConflictSql(conflict, columns)}${shouldReturn ? this.insertReturningSql(table, "after-values") : ""}`,
       ),
     );
     return shouldReturn ? (this.decodeResult(table, result) as any) : { results: [], first: undefined };
@@ -427,11 +513,68 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
    * `INSERT INTO table (columns) <select>`, returning the inserted rows when asked: the select's
    * projection gives the columns' values in order.
    */
-  buildInsertSelectSql(table: Table, columns: readonly string[], select: Statement, shouldReturn: boolean): Statement {
+  buildInsertSelectSql(
+    table: Table,
+    columns: readonly string[],
+    select: Statement,
+    shouldReturn: boolean,
+    conflict?: Conflict,
+  ): Statement {
     const quote = (name: string) => this.quoteIdentifier(name);
+    if (conflict && this.selectDialect === "mssql")
+      throw new Error("[zodbase] SQL Server can't handle conflicts in an insert from a select");
     return sql`INSERT INTO ${raw(quote(String(table.id)))} (${raw(columns.map(quote).join(", "))})${raw(
       shouldReturn ? this.insertReturningSql(table, "before-values") : "",
-    )} ${select}${raw(shouldReturn ? this.insertReturningSql(table, "after-values") : "")}`;
+    )} ${this.insertSelectSource(select, conflict)}${raw(conflict ? this.onConflictSql(conflict, columns) : "")}${raw(
+      shouldReturn ? this.insertReturningSql(table, "after-values") : "",
+    )}`;
+  }
+
+  /**
+   * `INSERT INTO table (columns) SELECT <row> [WHERE condition] UNION ALL …`: each row's values,
+   * only where `condition` holds when given. A value may be a scalar subquery. `condition` stands on
+   * its own (`exists(…)`, a subquery): no table is in scope for it.
+   */
+  buildConditionalInsertSql(
+    table: Table,
+    rows: readonly Record<string, unknown>[],
+    condition: SelectCondition | undefined,
+    shouldReturn: boolean,
+    conflict?: Conflict,
+  ): Statement {
+    const columns = writableFieldKeys(table);
+    const fields = table.fields as Record<string, { schema: zod.ZodType }>;
+    const where = condition ? ` WHERE ${buildConditionSql(this, condition, true)[TO_SQL_SYMBOL]()}` : "";
+    const selects = rows.map(
+      (row) =>
+        `SELECT ${columns
+          .map((column) => {
+            const value = row[column];
+            const literal = isSubquery(value)
+              ? `(${this.buildSelectSql(value[SELECT_QUERY].query, true)[TO_SQL_SYMBOL]()})`
+              : this.valueToSql(value, true);
+            return `${this.insertSelectValueSql(literal, fields[column]!.schema)} AS ${this.quoteIdentifier(column)}`;
+          })
+          .join(", ")}${this.tablelessSelectSql}${where}`,
+    );
+    return this.buildInsertSelectSql(table, columns, raw(selects.join(" UNION ALL ")), shouldReturn, conflict);
+  }
+
+  /** What a select of no table takes before a WHERE: MySQL's `FROM DUAL`. */
+  protected tablelessSelectSql = "";
+
+  /**
+   * A value an insert selects, cast to its column's type: unlike an insert's values, a select's
+   * literals take no type from the column they go to.
+   */
+  protected insertSelectValueSql(value: string, schema: zod.ZodType): string {
+    const type = this.typeToSql(schema);
+    return type === "NULL" ? value : `CAST(${value} AS ${type})`;
+  }
+
+  /** The select an insert takes its rows from, as the dialect reads it before a conflict clause. */
+  protected insertSelectSource(select: Statement, _conflict?: Conflict): Statement {
+    return select;
   }
 
   /**
@@ -444,7 +587,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     _rows: readonly Record<string, unknown>[],
     _options: {
       returning: boolean;
-      conflict?: { fields: readonly SingleFieldBinding[]; action: "nothing" | "update" };
+      conflict?: Conflict;
     },
   ): Statement | undefined {
     return undefined;

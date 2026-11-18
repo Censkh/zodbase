@@ -36,17 +36,42 @@ await db.insert(Users, rows).onConflict(Users.$id).doNothing();
 await db.insert(Users, { id: "ada", name: "Ada Lovelace", active: true }).onConflict(Users.$id).doUpdate();
 ```
 
-The conflict target is a field backed by a primary key or unique constraint, or the fields of a composite key in order (`onConflict([Users.$region, Users.$id])`). `doUpdate` sets every column to the inserted row's value. MySQL and MariaDB skip conflicts with `INSERT IGNORE`; SQL Server can't skip them.
+The conflict target is a field backed by a primary key or unique constraint, or the fields of a composite key in order (`onConflict([Users.$region, Users.$id])`). `doUpdate()` sets every column the row gives but the key's to the inserted row's value. MySQL and MariaDB skip conflicts with `INSERT IGNORE`; SQL Server can't skip them.
+
+Give `doUpdate` values to set only those. In them, `incoming(field)` is the value the inserted row brings, so the existing row can be combined with it:
+
+```ts
+import { add, incoming } from "zodbase";
+
+// Add each day's count to what is stored for it.
+await db
+  .insert(DailyTotals, rows)
+  .onConflict([DailyTotals.$day, DailyTotals.$metric])
+  .doUpdate({ total: add(DailyTotals.$total, incoming(DailyTotals.$total)) });
+```
+
+Rows with the same key in one insert keep the last. When the key is a partial unique index, name it by its condition: `onConflict(Users.$email, { where: Users.$deletedAt.equals(null) })`. PostgreSQL, CockroachDB and SQLite take it; MySQL and MariaDB match any unique key and refuse a condition, as SQL Server does.
+
+## Insert only where a condition holds
+
+```ts
+// Record the reply only while its ticket is still open.
+await db
+  .insert(Replies, reply)
+  .where(exists(db.select(Tickets, { id: Tickets.$id }).where(Tickets.$id.equals(reply.ticketId).and(Tickets.$open.equals(true)))));
+```
+
+This sends `INSERT … SELECT <values> WHERE <condition>`, each value cast to its column's type, so the check and the write are one statement. The condition stands on its own, such as `exists(…)`: no table is in scope for it. It takes `onConflict` and `returning` as any insert does, and its values may include scalar subqueries; a subquery insert with `onConflict` is sent the same way.
 
 ## Insert what a select gives
 
 ```ts
-await db.insert(Archive).fromSelect(
+await db.insert(Archive).select(
   db.select(Users, { id: Users.$id, name: Users.$name }).where(Users.$active.equals(false)),
 );
 ```
 
-The select's projection names the destination columns, in order. The rows never reach JavaScript.
+The select's projection names the destination columns, in order. The rows never reach JavaScript. Conflicts are handled as an insert of values handles them, `.onConflict(key).doNothing()` or `.doUpdate(…)`, except on SQL Server.
 
 ## Update selected fields
 
@@ -131,17 +156,21 @@ The writes are stored together or not at all. Each result is what awaiting that 
 
 ## Compose writes into one statement
 
-Every builder (select, insert, update, delete) is a statement wherever one is taken: `withCtes`, `union`, `exists`, `in(...)`, `scalar` and `db.execute`. On PostgreSQL and CockroachDB, an update or insert with `.returning(...)` is a writable CTE:
+Every builder (select, insert, update, delete) is a statement wherever one is taken: `db.with`, `union`, `unionAll`, `exists`, `in(...)`, `scalar` and `db.execute`.
+
+`db.with(table, query)` gives a database whose selects and writes start with `WITH table AS (query)`, reading the query's rows through `table`, a `createTable` of its shape that is never synced. Chain `.with(…)` for several, and use `db.withRecursive` for a query that reads its own table, such as a union of a seed and a step. Selects of it are typed and parsed as any other.
+
+On PostgreSQL and CockroachDB, the query may be an insert, update or delete with `.returning(...)`, and the statement after it sees the rows it returned, all in one statement:
 
 ```ts
-const Updated = createTable({ id: "updated_user", schema: Users.schema });
-await db.execute(
-  withCtes(
-    [{ table: Updated, query: db.update(Users, { active: false }).where(Users.$id.equals("ada")).returning() }],
-    db.select(Updated),
-  ),
-);
+const Deactivated = createTable({ id: "deactivated", schema: Users.schema });
+await db
+  .with(Deactivated, db.update(Users, { active: false }).where(Users.$lastSeen.lessThan(cutoff)).returning())
+  .insert(AuditLog)
+  .select(db.select(Deactivated, { userId: Deactivated.$id, action: expression(sql`'deactivated'`, z.string()) }));
 ```
+
+Elsewhere a WITH clause holds selects only, and only selects run after one.
 
 ## Use a scalar subquery as an insert value
 
@@ -166,7 +195,7 @@ Subqueries must select exactly one column with a compatible output type. Use a u
 
 Literal fields still receive Zod validation, defaults and transforms. Subquery fields bypass JavaScript validation/defaults/transforms and are checked by database constraints. Subquery inserts require an object schema without object-level refinements (those cannot be evaluated before the SQL result exists). The SELECT structure is captured when constructing the insert.
 
-Use `.returning()` for computed values; an insert of subquery values has no parsed `.rows` and can't handle conflicts. PostgreSQL, CockroachDB and SQLite-family adaptors return values using the same statement's `RETURNING`. The MySQL adaptor (including MariaDB) supports awaiting subquery inserts but rejects `.returning()` before writing. D1 write-only transactions support plain subquery inserts in their atomic batch, but cannot return rows from inside the transaction.
+Use `.returning()` for computed values; an insert of subquery values has no parsed `.rows`. PostgreSQL, CockroachDB and SQLite-family adaptors return values using the same statement's `RETURNING`. The MySQL adaptor (including MariaDB) supports awaiting subquery inserts but rejects `.returning()` before writing. D1 write-only transactions support plain subquery inserts in their atomic batch, but cannot return rows from inside the transaction.
 
 An async function must not return a SELECT builder directly: JavaScript awaits thenables automatically. Return `{ homeRegion: query }` if a helper needs to return an unevaluated subquery.
 

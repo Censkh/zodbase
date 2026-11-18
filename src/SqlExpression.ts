@@ -26,15 +26,18 @@ export class SqlExpression<T extends zod.ZodType = zod.ZodType> implements ToSql
 }
 
 /**
- * The value an update of rows (`update(table, rows).by(key)`) gives `field` for the row it is
- * updating, for its `.where(…)` to compare a stored value with: `.where(T.$at.lessThan(incoming(T.$at)))`.
- * Every row must give the field. Anywhere else it has no value, and building it throws.
+ * The value the row being written brings for `field`: in the `.where(…)` of an update of rows
+ * (`update(table, rows).by(key)`), to compare a stored value with
+ * (`.where(T.$at.lessThan(incoming(T.$at)))`), and in an upsert's `doUpdate(values)`, to combine
+ * with the existing row's (`{ count: add(T.$count, incoming(T.$count)) }`). Anywhere else it has no
+ * value, and building it throws.
  */
 export class IncomingValue<T = unknown> extends SqlExpression {
   constructor(readonly field: FieldReference<T>) {
-    super(() => {
+    super((adaptor) => {
+      if (adaptor?.incomingSql) return adaptor.incomingSql(String(field.key));
       throw new Error(
-        `[zodbase] incoming(${String(field.key)}) has a value only in the .where(…) of an update of rows`,
+        `[zodbase] incoming(${String(field.key)}) has a value only in an update of rows' .where(…) or an upsert's doUpdate(…)`,
       );
     }, field.schema);
   }

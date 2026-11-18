@@ -1,7 +1,7 @@
 import { Database as Sqlite } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import * as z from "zod";
-import { createTable, Database, exists, union, withCtes } from "../src";
+import { createTable, Database, exists, union } from "../src";
 import BunSqliteAdaptor from "../src/adaptors/bun-sqlite";
 
 test("composes recursive statements with named projections and literal text predicates", async () => {
@@ -24,11 +24,7 @@ test("composes recursive statements with named projections and literal text pred
     // A select is checked when it becomes a statement, as one that can't run never compiles.
     expect(() => union(seed.clone().limit(-1), seed)).toThrow("Invalid limit");
     const children = db.select(Tree, { id: Tree.$id }).innerJoin(Branch, Tree.$parentId.equals(Branch.$id));
-    const branches = withCtes(
-      [{ table: Branch, query: union(seed, children) }],
-      db.select(Branch, { id: Branch.$id }),
-      { recursive: true },
-    );
+    const branches = db.withRecursive(Branch, union(seed, children)).select(Branch, { id: Branch.$id });
     const ids = await db.select(Tree, { id: Tree.$id }).where(Tree.$id.in(branches)).orderBy(Tree.$id, "ASC");
     expect(ids.results).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
     const missing = db.select(Tree, { id: Tree.$id }).where(Tree.$id.equals(0));

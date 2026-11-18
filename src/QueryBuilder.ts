@@ -12,7 +12,7 @@ export const query = <T extends object>(table: Table<T>) => QueryBuilder<T> => {
 }
 */
 import { join, type OrderDirection, raw, sql, type Table } from "./index";
-import { type Compilable, isCompilable, toQueryStatement } from "./QueryStatement";
+import { type Compilable, isCompilable, toQueryStatement, type WithClause } from "./QueryStatement";
 import type { IncomingValue } from "./SqlExpression";
 import { SqlExpression } from "./SqlExpression";
 import { type Statement, TO_SQL_SYMBOL, type ToSql } from "./Statement";
@@ -270,6 +270,8 @@ export interface SelectQuery<TTable extends Table = Table, TLimit extends number
   offset: number | undefined;
   /** One of the table's indexes that databases with index hints read the rows through. */
   index?: string;
+  /** The named queries it starts with, from `db.with(…)`. */
+  with?: WithClause;
 }
 
 export interface Selection {
@@ -412,7 +414,7 @@ export const assertSelectArguments = (query: SelectQuery) => {
   // The name is spliced into SQL text, so only the table's declared indexes are accepted.
   if (query.index !== undefined) {
     if (!query.table.indexes.some(({ id }) => id === query.index)) throw new Error("Invalid index");
-    if (query.joins?.length || query.includes || query.projection || query.table.sourceTable)
+    if (query.joins?.length || query.includes || query.projection || query.table.sourceTable || query.with)
       throw new Error("An index hint applies to a single-table select");
   }
 };

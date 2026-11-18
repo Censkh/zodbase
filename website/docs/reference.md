@@ -34,14 +34,16 @@ Every write is a builder: awaiting it runs it.
 | API | Behavior |
 | --- | --- |
 | `db.insert(table, row \| rows)` | Parses and inserts one record or several; `.rows` gives the parsed rows. |
-| `.onConflict(key).doNothing()` / `.doUpdate()` | Skips rows that conflict on `key`, or updates the existing rows to them. |
-| `db.insert(table).fromSelect(select)` | Inserts what a select gives; its projection names the columns. |
+| `.onConflict(key, { where? }).doNothing()` / `.doUpdate(values?)` | Skips rows that conflict on `key` (a partial unique index by its `where`), or updates the existing rows: to `values`, where `incoming(field)` is the inserted value, or to every column the row gives. |
+| `.where(condition)` on an insert | Inserts the rows only where a standalone condition, such as `exists(…)`, holds. |
+| `db.insert(table).select(query)` | Inserts what a select gives; its projection names the columns. Takes `onConflict`. |
 | `db.update(table, patch).where(condition)` | Updates supplied fields; values can be expressions such as `add(field, 1)`. |
 | `db.update(table, records).by(key)` | Updates each record found by a key field, or a compound key's fields. |
 | `db.update(table, records).by(key).where(condition)` | Updates each record only where the condition holds; `incoming(field)` is the record's value for a field. |
 | `db.delete(table).where(condition)` | Deletes only with an explicit condition. |
 | `.returning(...keys)` | Runs the write, returning the stored rows (or just `keys`). |
 | `db.batch([...writes])` | Runs the writes atomically, in one round trip on PostgreSQL and CockroachDB. |
+| `db.load(field, value, { where? })` | The row whose unique `field` is `value`; loads started in the same tick share one `IN (…)` query. |
 
 ## Other operations
 
@@ -49,7 +51,7 @@ Every write is a builder: awaiting it runs it.
 | --- | --- |
 | `db.transaction(async tx => ...)` | [Transactions](/transactions/) |
 | `sql`, `raw`, `join`, `TO_SQL_SYMBOL`, `db.execute`, `db.compile` | [SQL helpers](/sql/) |
-| `withCtes`, `union`, `exists`, `scalar` | [Insert, update, and delete](/mutations/#compose-writes-into-one-statement) |
+| `db.with`, `db.withRecursive`, `union`, `unionAll`, `exists`, `scalar` | [Insert, update, and delete](/mutations/#compose-writes-into-one-statement) |
 | `rsqlToCondition(table, filter)` | [RSQL filters](/rsql/) |
 | `primaryKey`, `foreignKey`, `backfill` | [Tables and schemas](/tables-and-schemas/) |
 | `updatedAt`, `monotonicTimestamp` | [Runtime and configuration](/configuration/) |

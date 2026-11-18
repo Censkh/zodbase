@@ -2,6 +2,7 @@ import type { Connection, Pool, RowDataPacket } from "mysql2/promise";
 import * as zod from "zod";
 import { getMetaItem, type ZodMetaItem } from "zod-meta";
 import DatabaseAdaptor, {
+  type Conflict,
   type DatabaseAdaptorOptions,
   keyCondition,
   type PossiblySelectedResult,
@@ -59,6 +60,12 @@ const TYPE_ORDERING: Record<FieldDiffType, number> = {
 export default class MysqlAdaptor<
   TDriver extends Connection | Pool = Connection | Pool,
 > extends DatabaseAdaptor<TDriver> {
+  protected override tablelessSelectSql = " FROM DUAL";
+
+  // MySQL converts a selected value to its column's type on insert, and its CAST names other types.
+  protected override insertSelectValueSql(value: string): string {
+    return value;
+  }
   protected override supportsSubqueryReturning = false;
   override async transaction<TResult>(callback: (adaptor: DatabaseAdaptor) => Promise<TResult>): Promise<TResult> {
     if ("getConnection" in this.driver) {
@@ -270,21 +277,34 @@ export default class MysqlAdaptor<
     return result;
   }
 
-  async executeUpsert<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
+  async executeUpsert<TTable extends Table>(
     table: TTable,
     values: Partial<InputOfTable<TTable>>,
-    _fields: readonly SingleFieldBinding<ValueOfTable<TTable>, TKey>[],
+    conflict: Conflict,
   ): Promise<SqlResult<void, 0>> {
     const keys = Object.keys(values);
     const statement = sql`INSERT INTO ${raw(this.quoteIdentifier(String(table.id)))} (${raw(
       keys.map((key) => this.quoteIdentifier(key)),
-    )}) VALUES (${raw(Object.values(values).map((value) => valueToSql(value, true)))})
-      ON DUPLICATE KEY UPDATE ${raw(
-        keys
-          .map((key) => `${this.quoteIdentifier(key)} = ${valueToSql((values as Record<string, unknown>)[key], true)}`)
-          .join(", "),
-      )}`;
+    )}) VALUES (${raw(Object.values(values).map((value) => valueToSql(value, true)))})${raw(
+      this.onConflictSql(conflict, keys),
+    )}`;
     return this.execute(statement) as Promise<SqlResult<void, 0>>;
+  }
+
+  /**
+   * MySQL matches a row on any of the table's unique keys (`ON DUPLICATE KEY UPDATE`), so it can't
+   * name a partial index; skipping sets a key column to itself, and `incoming(field)` is `VALUES(field)`.
+   */
+  protected override onConflictSql(conflict: Conflict, columns: readonly string[]): string {
+    if (conflict.where) throw new Error("[zodbase] MySQL can't name a partial index as a conflict target");
+    const quote = (name: string) => this.quoteIdentifier(name);
+    if (conflict.action === "nothing") {
+      // Qualified, as a select's columns may share its name.
+      const [field] = conflict.fields;
+      const key = `${quote(String(field!.table.id))}.${quote(String(field!.key))}`;
+      return ` ON DUPLICATE KEY UPDATE ${key} = ${key}`;
+    }
+    return ` ON DUPLICATE KEY UPDATE ${this.conflictAssignments(conflict, columns, (column) => `VALUES(${quote(column)})`)}`;
   }
 
   async executeCount<TTable extends Table, TKey extends StringKeys<ValueOfTable<TTable>>>(
