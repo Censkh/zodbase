@@ -560,6 +560,12 @@ export const createUpdateRows = <TTable extends Table>(
 export interface DeleteWrite<TTable extends Table> extends Write {
   /** Narrows the rows it deletes; several calls must all hold. */
   where(condition: SelectCondition<ValueOfTable<TTable>>): DeleteWrite<TTable>;
+  /**
+   * Runs the delete, returning the rows it deleted (just `keys` of each, when given), as one
+   * statement: PostgreSQL and CockroachDB only, such as in a `db.with(…)` whose statement adds up
+   * the rows it removed.
+   */
+  returning(...keys: BindingKeys<ValueOfTable<TTable>>[]): Write<SqlDefiniteResult<ValueOfTable<TTable>, number>>;
 }
 
 export const createDelete = <TTable extends Table>(
@@ -570,21 +576,40 @@ export const createDelete = <TTable extends Table>(
 ): DeleteWrite<TTable> => {
   // Checked when it runs: an invalid condition rejects the delete, before any SQL.
   const condition = where;
-  const plan: WritePlan = {
-    async run(target) {
-      await target.executeDelete(table, snapshotCondition(requireWhere("Delete", condition)) as any);
-      return EMPTY;
-    },
-    build(target) {
-      const statement = target.buildDeleteStatement(table, snapshotCondition(requireWhere("Delete", condition)));
-      return statement && { statement, read: noRows };
-    },
+  const plan = (keys: readonly string[] | undefined): WritePlan => {
+    const returning = keys !== undefined;
+    const build = (target: DatabaseAdaptor) => {
+      const statement = target.buildDeleteStatement(
+        table,
+        snapshotCondition(requireWhere("Delete", condition)),
+        returning,
+      );
+      return (
+        statement && {
+          statement,
+          read: (result: SqlResult) => (returning ? pickKeys(target.decode(table, result), keys) : noRows(result)),
+        }
+      );
+    };
+    return {
+      async run(target) {
+        if (returning) {
+          const built = build(target);
+          if (!built) throw new Error("[zodbase] This database can't return the rows a delete removed");
+          return built.read(await target.execute(built.statement));
+        }
+        await target.executeDelete(table, snapshotCondition(requireWhere("Delete", condition)) as any);
+        return EMPTY;
+      },
+      build,
+    };
   };
   return write(
     adaptor,
-    plan,
+    plan(undefined),
     {
       where: (next: SelectCondition) => createDelete(adaptor, table, conditionAnd(condition, next), clause),
+      returning: (...keys: string[]) => write(adaptor, plan(keys.length ? keys : ["*"]), {}, clause),
     },
     clause,
   ) as unknown as DeleteWrite<TTable>;

@@ -55,6 +55,17 @@ const qualifiedField = (field: FieldReference<unknown>, adaptor?: DatabaseAdapto
   return `${quote(String(field.table.id))}.${quote(String(field.key))}`;
 };
 
+/** The larger of two numbers, such as a total kept from going below zero: `greatest(total, 0)`. */
+export const greatest = (left: NumericOperand, right: NumericOperand) => {
+  const first = numericOperand(left);
+  const second = numericOperand(right);
+  return new SqlExpression((adaptor) => {
+    const [a, b] = [first(adaptor), second(adaptor)];
+    // CASE rather than GREATEST, which SQLite and older SQL Server lack.
+    return `(CASE WHEN ${a} < ${b} THEN ${b} ELSE ${a} END)`;
+  }, zod.number());
+};
+
 /** Sum a numeric column. SQL returns NULL when there are no non-null inputs. */
 export const sum = (field: FieldReference<number | null | undefined> & ToSql) =>
   new SqlExpression((adaptor) => `SUM(${qualifiedField(field, adaptor)})`, zod.number().nullable());

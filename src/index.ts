@@ -901,7 +901,18 @@ export type { default as DatabaseAdaptor } from "./DatabaseAdaptor";
 export * from "./MetaTypes";
 export type { SelectCondition, SelectQueryBuilder } from "./QueryBuilder";
 export { type Compilable, union, unionAll } from "./QueryStatement";
-export { add, coalesce, divide, expression, IncomingValue, incoming, scalar, subtract, sum } from "./SqlExpression";
+export {
+  add,
+  coalesce,
+  divide,
+  expression,
+  greatest,
+  IncomingValue,
+  incoming,
+  scalar,
+  subtract,
+  sum,
+} from "./SqlExpression";
 export type {
   ConflictActions,
   ConflictOptions,

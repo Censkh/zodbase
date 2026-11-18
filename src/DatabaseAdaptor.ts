@@ -624,7 +624,7 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
   }
 
   /** The statement a delete runs, as `buildInsertStatement` gives an insert's. */
-  buildDeleteStatement(_table: Table, _where: SelectCondition): Statement | undefined {
+  buildDeleteStatement(_table: Table, _where: SelectCondition, _returning = false): Statement | undefined {
     return undefined;
   }
 

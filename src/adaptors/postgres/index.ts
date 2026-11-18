@@ -239,10 +239,10 @@ export default class PostgresAdaptor<
     return this.buildUpdateSql(table, values as any, where as any, returning);
   }
 
-  override buildDeleteStatement(table: Table, where: SelectCondition): Statement {
+  override buildDeleteStatement(table: Table, where: SelectCondition, returning = false): Statement {
     return sql`DELETE
                           FROM ${table}
-                          WHERE ${buildConditionSql(this, where, true)}`;
+                          WHERE ${buildConditionSql(this, where, true)}${raw(returning ? ` RETURNING ${this.selectFields(table)}` : "")}`;
   }
 
   /**

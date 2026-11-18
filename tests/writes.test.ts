@@ -6,6 +6,7 @@ import {
   type Database,
   exists,
   expression,
+  greatest,
   incoming,
   metaStore,
   notExists,
@@ -212,6 +213,23 @@ describe.each(TEST_DATABASE_FACTORIES)("writes: $name", ({ name, create }) => {
       .where(notExists(db.select(Copies, { id: Copies.$id }).where(Copies.$id.equals(Counters.$id))))
       .orderBy(Counters.$id, "ASC");
     expect(results).toEqual([{ id: "a" }, { id: "c" }]);
+  });
+
+  it("keeps a value from going below a floor with greatest", async () => {
+    await db.insert(Counters, counters);
+    await db.update(Counters, { count: greatest(add(Counters.$count, -2), 0) }).where(Counters.$id.in(["a", "c"]));
+    expect((await stored()).map((row) => row.count)).toEqual([0, 2, 1]);
+  });
+
+  it.skipIf(!postgres)("returns the rows a delete removed, as a named query's rows", async () => {
+    await db.insert(Counters, counters);
+    const Removed = createTable({ id: "removed_counter", schema: Counters.schema });
+    const removed = db.delete(Counters).where(Counters.$count.lessThan(3)).returning();
+    expect((await db.with(Removed, removed).select(Removed, { total: sum(Removed.$count) })).results).toEqual([
+      { total: 3 },
+    ]);
+    expect((await stored()).map((row) => row.id)).toEqual(["c"]);
+    expect((await db.delete(Counters).where(Counters.$id.equals("c")).returning("id")).results).toEqual([{ id: "c" }]);
   });
 
   it("refuses to update or delete without a where condition", async () => {
