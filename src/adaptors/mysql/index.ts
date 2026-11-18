@@ -294,6 +294,12 @@ export default class MysqlAdaptor<
     return this.execute(statement) as Promise<SqlResult<void, 0>>;
   }
 
+  // The selected rows, read through a derived table of their own: the conflict's assignments name
+  // the target table's columns, which a select of that same table would make ambiguous.
+  protected override insertSelectSource(select: Statement, conflict?: Conflict): Statement {
+    return conflict ? sql`SELECT * FROM (${select}) AS ${raw(this.quoteIdentifier("_zodbase_rows"))}` : select;
+  }
+
   /**
    * MySQL matches a row on any of the table's unique keys (`ON DUPLICATE KEY UPDATE`), so it can't
    * name a partial index; skipping sets a key column to itself, and `incoming(field)` is `VALUES(field)`.

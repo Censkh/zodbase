@@ -63,7 +63,7 @@ const query = db.select(Users, { id: Users.$id, name: Users.$name })
 if (searchTerm) query.where(Users.$name.like(`${searchTerm}%`));
 ```
 
-SQL LIKE uses `%` for any sequence and `_` for one character. Whether comparison is case-sensitive depends on your database and collation.
+SQL LIKE uses `%` for any sequence and `_` for one character; a backslash makes either, or itself, match literally (`"100\\%"` matches `100%`), and a pattern can't end with one. Whether comparison is case-sensitive depends on your database and collation.
 
 ## Field operators
 

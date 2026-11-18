@@ -498,6 +498,11 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     return this.execute(statement) as any;
   }
 
+  // SQLite returns the rows a delete removes, as PostgreSQL does.
+  override buildDeleteStatement(table: Table, where: SelectCondition, returning = false): Statement {
+    return sql`DELETE FROM ${table} WHERE ${buildConditionSql(this, where, true)}${raw(returning ? ` RETURNING ${this.selectFields(table)}` : "")}`;
+  }
+
   executeDelete<TTable extends Table>(
     table: TTable,
     where: SelectCondition<ValueOfTable<TTable>>,

@@ -381,7 +381,7 @@ describe.each(TEST_DATABASE_FACTORIES)("writes: $name ($connection)", ({ name, c
     expect(distinct.results).toEqual([{ name: "Apples" }]);
   });
 
-  it.skipIf(postgres)("refuses a write after a WITH clause where the database can't build one", async () => {
+  it.skipIf(!mysql)("refuses a write after a WITH clause where the database can't build one", async () => {
     await db.insert(Counters, counters);
     const Small = createTable({ id: "small_counter", schema: Counters.schema });
     const scoped = db.with(Small, db.select(Counters).where(Counters.$count.lessThan(3)));
@@ -389,6 +389,14 @@ describe.each(TEST_DATABASE_FACTORIES)("writes: $name ($connection)", ({ name, c
       Promise.resolve(scoped.delete(Counters).where(Counters.$id.in(scoped.select(Small, { id: Small.$id })))),
     ).rejects.toThrow("after a WITH clause");
     expect(await stored()).toEqual(counters);
+  });
+
+  it.skipIf(mysql)("deletes after a WITH clause the rows its named query gives", async () => {
+    await db.insert(Counters, counters);
+    const Small = createTable({ id: "small_counter", schema: Counters.schema });
+    const scoped = db.with(Small, db.select(Counters).where(Counters.$count.lessThan(3)));
+    await scoped.delete(Counters).where(Counters.$id.in(scoped.select(Small, { id: Small.$id })));
+    expect((await stored()).map((row) => row.id)).toEqual(["c"]);
   });
 
   it("inserts rows only where a condition holds", async () => {

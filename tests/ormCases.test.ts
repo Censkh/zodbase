@@ -24,7 +24,7 @@ const createNotes = () =>
     }),
   });
 
-describe.each(TEST_DATABASE_FACTORIES)("ORM cases: $name", ({ name: engine, create }) => {
+describe.each(TEST_DATABASE_FACTORIES)("ORM cases: $name ($connection)", ({ name: engine, create }) => {
   let context: TestDatabaseContext;
   let Notes: ReturnType<typeof createNotes>;
   beforeEach(async () => {
@@ -59,6 +59,24 @@ describe.each(TEST_DATABASE_FACTORIES)("ORM cases: $name", ({ name: engine, crea
       "NUL character",
     );
     expect(await context.db.select(Notes).count()).toBe(0);
+  });
+
+  it("escapes LIKE's wildcards with a backslash, and refuses a pattern ending in one", async () => {
+    const texts = ["100%", "1000", "a_b", "axb", "c\\d", "cd"];
+    await context.db.insert(
+      Notes,
+      texts.map((text, index) => note(`t${index}`, { text })),
+    );
+    const like = async (pattern: string) =>
+      (
+        await context.db.select(Notes, { text: Notes.$text }).where(Notes.$text.like(pattern)).orderBy(Notes.$id, "ASC")
+      ).results.map((row) => row.text);
+    expect(await like("100\\%")).toEqual(["100%"]);
+    expect(await like("100%")).toEqual(["100%", "1000"]);
+    expect(await like("a\\_b")).toEqual(["a_b"]);
+    expect(await like("a_b")).toEqual(["a_b", "axb"]);
+    expect(await like("c\\\\d")).toEqual(["c\\d"]);
+    await expect((async () => await like("100\\"))()).rejects.toThrow("escape character");
   });
 
   it("matches a condition of thousands of ORs", async () => {

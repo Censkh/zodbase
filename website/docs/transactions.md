@@ -32,7 +32,9 @@ try {
 }
 ```
 
-A thrown value or failed database operation causes rollback on transactional adaptors. Do not catch and suppress an error inside the callback if you need the whole transaction to roll back. Nested transactions are not supported.
+A thrown value or failed database operation causes rollback on transactional adaptors. A statement that fails fails its transaction even when the callback catches the error and goes on: the transaction rolls back and rejects with that error, in every database, as PostgreSQL and CockroachDB refuse the rest of such a transaction anyway. To try a write that may fail, run it in a transaction of its own. Nested transactions are not supported.
+
+The `Database` the callback receives runs nothing once the transaction has ended: a statement on it rejects, rather than running outside the transaction.
 
 ## Adaptor behavior
 

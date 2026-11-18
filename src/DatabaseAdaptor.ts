@@ -347,10 +347,13 @@ export default abstract class DatabaseAdaptor<TDriver = any> {
     return mapSqlResult(await this.execute(raw(compiled.sql)), compiled.decode);
   }
   async executeQueryCount(query: SelectQuery): Promise<SqlResult> {
+    // A grouped query gives a row per group: counted as a constant, as its other columns are
+    // neither grouped nor aggregated, which every database but SQLite refuses.
+    const grouped = Boolean(query.groupBy?.length) && query.fields.every((field) => field.key === "*");
     const compiled = this.relationalSelect({
       ...query,
       includes: undefined,
-      projection: undefined,
+      projection: grouped ? { _row: new SqlExpression(() => "1", zod.number()) } : undefined,
       orderBy: [],
       limit: undefined,
       offset: undefined,

@@ -172,7 +172,7 @@ await db
   .select(db.select(Deactivated, { userId: Deactivated.$id, action: expression(sql`'deactivated'`, z.string()) }));
 ```
 
-Elsewhere a WITH clause holds selects only, and only selects run after one.
+Elsewhere a WITH clause holds selects only. SQLite runs a select, insert, update or delete after one; MySQL and MariaDB run only selects after one. A delete returns the rows it removed with `.returning(...)` on PostgreSQL, CockroachDB and SQLite. MySQL and MariaDB refuse an update or delete whose condition reads the table it writes ("can't specify target table"): read the rows' keys first, then write by them.
 
 ## Use a scalar subquery as an insert value
 

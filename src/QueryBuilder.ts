@@ -291,6 +291,14 @@ const buildValidatedConditionSql = (
     return sql`${raw(fieldSql)} ${raw(condition.operator)} (${toQueryStatement(condition.value).compile(adaptor)})`;
   }
 
+  // A backslash escapes `%`, `_` and itself in every database: SQLite has no escape character of
+  // its own, and the others refuse a pattern that ends in theirs.
+  if (condition.operator === "LIKE" && typeof condition.value === "string") {
+    if (/(?:^|[^\\])(?:\\\\)*\\$/.test(condition.value))
+      throw new Error("[zodbase] A LIKE pattern can't end with its escape character, a backslash");
+    return sql`${raw(fieldSql)} LIKE ${raw(adaptor.valueToSql(condition.value))} ESCAPE ${raw(adaptor.valueToSql("\\"))}`;
+  }
+
   let check = sql`${raw(condition.operator)}
   ${raw(isFieldReference(condition.value) ? `${adaptor.quoteIdentifier(String(condition.value.table.id))}.${adaptor.quoteIdentifier(String(condition.value.key))}` : adaptor.valueToSql(condition.value))}`;
 

@@ -394,6 +394,27 @@ const conditionKey = (condition: SelectCondition | undefined): string | undefine
   return `${String(condition.field.table.id)}.${String(condition.field.key)} ${condition.operator} ${text}`;
 };
 
+/** `adaptor`, reporting each of its statements that fails to `onFailure`. */
+const trackFailures = (adaptor: DatabaseAdaptor, onFailure: (error: unknown) => void): DatabaseAdaptor =>
+  new Proxy(adaptor, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (typeof value !== "function") return value;
+      return (...args: unknown[]) => {
+        const result = value.apply(target, args);
+        if (typeof result?.then === "function") result.then(undefined, onFailure);
+        return result;
+      };
+    },
+  });
+
+/** What a transaction's database runs once the transaction has ended: nothing. */
+const ENDED_TRANSACTION = new Proxy({} as DatabaseAdaptor, {
+  get: () => () => {
+    throw new Error("[zodbase] This transaction has ended: run its statements inside its callback");
+  },
+});
+
 export class Database {
   private readonly options: ResolvedDatabaseOptions;
   private readonly loads = new Map<string, PendingLoads>();
@@ -529,18 +550,27 @@ export class Database {
       throw new Error("Nested transactions are not supported");
     }
     return this.connected().then((connectedAdaptor) =>
-      connectedAdaptor.transaction((adaptor) =>
-        callback(
-          new Database(
-            {
-              ...this.options,
-              adaptor,
-            },
-            true,
-            this.withClause,
-          ),
-        ),
-      ),
+      connectedAdaptor.transaction(async (adaptor) => {
+        // A statement that fails fails the transaction, even when the callback catches it and goes
+        // on: PostgreSQL and CockroachDB refuse the rest of such a transaction, and the others
+        // would commit around the failure.
+        let failure: { error: unknown } | undefined;
+        const options = { ...this.options, adaptor: trackFailures(adaptor, (error) => (failure ??= { error })) };
+        try {
+          let result: TResult;
+          try {
+            result = await callback(new Database(options, true, this.withClause));
+          } catch (error) {
+            // The first failed statement, rather than PostgreSQL's refusal of the next one.
+            throw failure ? failure.error : error;
+          }
+          if (failure) throw failure.error;
+          return result;
+        } finally {
+          // A transaction kept past its callback runs nothing more, rather than outside it.
+          options.adaptor = ENDED_TRANSACTION;
+        }
+      }),
     );
   }
 
