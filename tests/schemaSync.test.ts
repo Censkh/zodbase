@@ -417,4 +417,50 @@ describe.each(TEST_DATABASE_FACTORIES)("schema sync: $name ($connection)", ({ na
     },
     120_000,
   );
+
+  it.skipIf(engine !== "cockroach")(
+    "keeps a regional table's region column in its primary key, though the engine marks it implicit",
+    async () => {
+      const { first } = await context.db.execute(sql`SELECT current_database() AS name`);
+      await context.db.execute(sql`ALTER DATABASE ${raw(`"${first!.name}"`)} PRIMARY REGION "aws-ap-southeast-1"`);
+      const Events = createTable({
+        id: "sync_regional_event",
+        schema: z
+          .object({ homeRegion: z.string().meta(metaStore([cockroachRegion()])), id: z.string(), name: z.string() })
+          .meta(metaStore([cockroachLocality({ type: "regional-by-row", regionColumn: "homeRegion" })])),
+        primaryKey: ["homeRegion", "id"],
+      });
+      // Made as a table that became regional by row: CockroachDB then shows its key as
+      // PRIMARY KEY (id), partitioned by "homeRegion", and marks that column implicit.
+      await context.db.execute(
+        raw(
+          'CREATE TABLE "sync_regional_event" ("homeRegion" "public"."crdb_internal_region" NOT NULL, "id" STRING NOT NULL, "name" STRING NOT NULL, PRIMARY KEY ("id"))',
+        ),
+      );
+      await context.db.execute(raw('ALTER TABLE "sync_regional_event" SET LOCALITY REGIONAL BY ROW AS "homeRegion"'));
+      const { results: shown } = await context.db.execute(
+        raw(
+          `SELECT column_name, "implicit" FROM [SHOW INDEX FROM "sync_regional_event"] WHERE index_name = 'sync_regional_event_pkey' AND NOT storing ORDER BY seq_in_index`,
+        ),
+      );
+      expect(shown).toEqual([
+        { column_name: "homeRegion", implicit: true },
+        { column_name: "id", implicit: false },
+      ]);
+      const read = (await live([Events])).get("sync_regional_event")!;
+      expect(read.columns.filter((column) => column.primaryKey).map((column) => column.name)).toEqual([
+        "homeRegion",
+        "id",
+      ]);
+      expect((await adaptorOf().fetchTableColumns(Events)).results).toEqual(read.columns);
+      const tracked = trackTrips(adaptorOf());
+      try {
+        expect(await context.db.syncTables([Events])).toEqual([]);
+        expect(tracked.writes()).toEqual([]);
+      } finally {
+        tracked.restore();
+      }
+    },
+    120_000,
+  );
 });

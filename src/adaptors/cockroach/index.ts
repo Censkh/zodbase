@@ -125,8 +125,8 @@ export default class CockroachAdaptor extends PostgresAdaptor {
 
   /**
    * Four schema-wide reads in one round trip: every visible column, every index's columns
-   * (`information_schema.statistics`, which marks the columns the engine adds itself, such as a
-   * regional table's `crdb_region`, as implicit), every index's predicate and comment, and every
+   * (`information_schema.statistics`, which marks the columns a regional table partitions by as
+   * implicit), every index's predicate and comment, and every
    * table's locality.
    */
   override async fetchLiveSchema(tables?: readonly Table[]): Promise<Map<string, LiveTableSchema>> {
@@ -169,9 +169,9 @@ export default class CockroachAdaptor extends PostgresAdaptor {
       WHERE c.table_schema = current_schema() AND c.is_hidden = 'NO'${this.tablesCondition("c.table_name", tables)}
       ORDER BY c.table_name, c.ordinal_position`),
       raw(`
-      SELECT table_name, index_name, non_unique, column_name
+      SELECT table_name, index_name, non_unique, column_name, implicit
       FROM information_schema.statistics
-      WHERE table_schema = current_schema() AND implicit = 'NO' AND storing = 'NO'${this.tablesCondition("table_name", tables)}
+      WHERE table_schema = current_schema() AND storing = 'NO'${this.tablesCondition("table_name", tables)}
       ORDER BY table_name, index_name, seq_in_index`),
       raw(`
       SELECT
@@ -202,12 +202,17 @@ export default class CockroachAdaptor extends PostgresAdaptor {
       const detail = details.get(`${row.table_name}\u0000${row.index_name}`);
       const table = schema.get(row.table_name!);
       if (!table) continue;
-      // The primary key's columns, without those the engine adds (a regional table's crdb_region).
+      // A regional table's primary key partitions by its region column, which the engine marks as
+      // implicit even when the table declares it (PRIMARY KEY ("homeRegion", id) shows as
+      // PRIMARY KEY (id)). It is part of the key all the same; only a hidden one, crdb_region, isn't
+      // one of the table's columns, so the lookup below leaves it out.
       if (detail?.is_primary === true) {
         const column = table.columns.find((candidate) => candidate.name === row.column_name);
         if (column) column.primaryKey = true;
         continue;
       }
+      // Another index's implicit columns are the engine's own partitioning, not its declared ones.
+      if (row.implicit === "YES") continue;
       indexRows.push({
         table_name: row.table_name!,
         index_name: row.index_name!,
