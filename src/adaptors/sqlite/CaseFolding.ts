@@ -26,15 +26,20 @@ const caseVariants = (char: string): string[] => {
 };
 
 /**
- * A GLOB pattern matching `pattern` case-insensitively, across every alphabet: SQLite's LIKE and
- * LOWER fold only ASCII letters, but GLOB, which compares exactly, takes classes of characters, so
- * each letter becomes the class of its case variants. `*` stays a wildcard when `wildcard` is
- * set; every other character, GLOB's `?` and `[` among them, matches itself.
+ * A GLOB pattern matching `LOWER(value)` against `pattern` case-insensitively, across every
+ * alphabet: SQLite's LIKE and LOWER fold only ASCII letters, but GLOB, which compares exactly,
+ * takes classes of characters. LOWER has already folded the value's ASCII letters, so a letter
+ * becomes the class of its other case variants only where it has some besides ASCII capitals
+ * (such as `k` and the Kelvin sign): an ASCII search stays as long as it is, within D1's 50-byte
+ * limit on a pattern, where a class for every letter made a 13-letter search too long. `*` stays
+ * a wildcard when `wildcard` is set; every other character, GLOB's `?` and `[` among them,
+ * matches itself.
  */
 export const caseInsensitiveGlob = (pattern: string, wildcard: boolean): string =>
   Array.from(pattern, (char) => {
     if (char === "*" && wildcard) return "*";
-    const variants = caseVariants(char);
+    const variants = caseVariants(char).filter((variant) => !/^[A-Z]$/.test(variant));
     if (variants.length > 1) return `[${variants.join("")}]`;
-    return char === "*" || char === "?" || char === "[" ? `[${char}]` : char;
+    const literal = variants[0] ?? char;
+    return literal === "*" || literal === "?" || literal === "[" ? `[${literal}]` : literal;
   }).join("");

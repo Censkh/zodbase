@@ -280,13 +280,14 @@ export default abstract class SqliteAdaptor<TDriver> extends DatabaseAdaptor<TDr
     return spliceNulCharacters(super.sqlText(statement), "char(0)");
   }
 
-  // SQLite's LIKE and LOWER fold only ASCII letters, so these match through GLOB character classes.
+  // SQLite's LIKE and LOWER fold only ASCII letters, so these match the lowered value through GLOB
+  // character classes for the rest.
   override buildPatternMatchSql(fieldSql: string, pattern: string, negate: boolean): Statement {
-    return sql`${raw(fieldSql)} ${raw(negate ? "NOT GLOB" : "GLOB")} ${caseInsensitiveGlob(pattern, true)}`;
+    return sql`LOWER(${raw(fieldSql)}) ${raw(negate ? "NOT GLOB" : "GLOB")} ${caseInsensitiveGlob(pattern, true)}`;
   }
 
   override buildContainsTextSql(fieldSql: string, text: string): Statement {
-    return sql`${raw(fieldSql)} GLOB ${`*${caseInsensitiveGlob(text, false)}*`}`;
+    return sql`LOWER(${raw(fieldSql)}) GLOB ${`*${caseInsensitiveGlob(text, false)}*`}`;
   }
 
   override buildSelectSql(select: SelectQuery, scalar = false, named = false): Statement {
