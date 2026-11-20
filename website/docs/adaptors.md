@@ -17,6 +17,7 @@ An adaptor translates Zodbase operations for a database driver. Choose your runt
 | [CockroachDB](/adaptors/cockroach/) | `pg` | Retries serialization failures |
 | [Turso / libSQL](/adaptors/turso/) | `@libsql/client` | libSQL write transaction |
 | [Expo SQLite](/adaptors/expo-sqlite/) | `expo-sqlite` | Explicit SQL transaction |
+| [Amazon DynamoDB](/adaptors/dynamodb/) | `@aws-sdk/client-dynamodb` | Single-request batch writes; interactive transactions rejected |
 
 The [shared SQLite base](/adaptors/sqlite/) documents common schema behavior and the extension point for other drivers. It is abstract, not a concrete connection adaptor.
 
